@@ -64,3 +64,17 @@ and [testing](TESTING.md).
 The snapshot exporter requires Linux with `renameat2(RENAME_NOREPLACE)` support. It fails closed on unsupported hosts or filesystems, so an existing or concurrently created destination is never replaced. Keep private reports outside both the source and candidate trees.
 
 Run the pinned Gitleaks binary with `--config <candidate>/.gitleaks.toml --max-archive-depth 2 --max-decode-depth 2 --redact`. The configuration extends all upstream rules and permits only exact demonstration values and non-credential code phrases; it does not exempt directories or test files. The scanner regression test also verifies detection of a token inserted on an otherwise permitted fixture path.
+
+## Container images
+
+`.github/workflows/publish-images.yml` builds the deployable service images and
+pushes them to GitHub Container Registry as `ghcr.io/<owner>/<name>`, with names
+matching `charts/aurum-ai/values.yaml`. Pushing a `vX.Y.Z` tag publishes `X.Y.Z`,
+`X.Y`, `latest` and `sha-<commit>`; a prerelease tag such as `v1.2.0-rc.1`
+publishes only its own version and the commit tag. A manual run of the workflow
+publishes only `sha-<commit>`. Authentication uses the workflow's own
+`GITHUB_TOKEN` with `packages: write`; no other secret is involved.
+
+Packages created by the first run are private on GitHub. Make each one public in
+its package settings if the images should be pullable anonymously. Deploy the
+chart with `image.registry=ghcr.io/<owner>` and `image.tag=<version>`.

@@ -1,0 +1,104 @@
+name: publish images
+
+# Builds the deployable service images and pushes them to GitHub Container
+# Registry as ghcr.io/<owner>/<name>. A `v*` tag publishes the version, its
+# major.minor line and `latest` (prereleases such as v1.2.0-rc.1 skip the last
+# two); a manual dispatch publishes only an immutable `sha-<commit>` tag.
+# Names match charts/aurum-ai/values.yaml, so the chart only needs
+# `image.registry: ghcr.io/<owner>` and `image.tag`.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: aurum-ai-backend, context: business-backend }
+          - { name: aurum-ai-conversation-runner, context: conversation-runner }
+          - { name: aurum-ai-tool-worker, context: tool-worker }
+          - { name: aurum-ai-skill-executor, context: skill-executor }
+          - { name: aurum-ai-skill-sandbox, context: skill-sandbox }
+          - { name: aurum-ai-rag-api, context: rag-api }
+          - { name: aurum-ai-rag-worker, context: rag-worker }
+          - { name: aurum-ai-web-tools, context: web-tools }
+          - { name: aurum-ai-frontend, context: business-ui }
+          - { name: aurum-ai-admin-ui, context: admin-ui }
+          - { name: aurum-ai-postgres, context: infra/postgres }
+          - { name: aurum-ai-web-egress, context: infra/web-egress }
+          - { name: aurum-ai-maintenance-egress, context: infra/maintenance-egress }
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # rag-worker's image is ~20 GB (docling pulls in CUDA-flavoured torch);
+      # the runner needs its preinstalled toolchains removed to fit it.
+      - name: Free disk space
+        if: matrix.name == 'aurum-ai-rag-worker'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+
+      - name: Compute tags
+        id: tags
+        env:
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ matrix.name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/$NAME"
+          tags="$image:sha-${SHA::12}"
+          version=""
+          if [ "$REF_TYPE" = tag ]; then
+            version="${REF_NAME#v}"
+            tags="$tags,$image:$version"
+            if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+              tags="$tags,$image:${BASH_REMATCH[1]}.${BASH_REMATCH[2]},$image:latest"
+            fi
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "version=${version:-sha-${SHA::12}}" >> "$GITHUB_OUTPUT"
+
+      # rag-worker gets no cache export: its layers exceed the repository's
+      # 10 GB Actions cache and would evict every other image's cache.
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ matrix.context }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.name }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+          cache-from: type=gha,scope=${{ matrix.context }}
+          cache-to: ${{ matrix.name == 'aurum-ai-rag-worker' && '' || format('type=gha,mode=max,scope={0}', matrix.context) }}
