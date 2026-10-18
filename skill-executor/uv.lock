@@ -47,14 +47,14 @@ boto3 = [
 
 [[package]]
 name = "aiodocker"
-version = "0.23.0"
+version = "0.27.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/78/cb/c0fa4944604a182db4c062fea84fbdd77d2e508932dd0052ec784040ac13/aiodocker-0.23.0.tar.gz", hash = "sha256:45ede291063c7d1c24e78a766013c25e85b354a3bdcca68fe2bca64348e4dee2", size = 135218, upload-time = "2024-09-23T04:52:54.975Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/19/f07d8532d7489ed8629847d004d0bbd286287286a76828be43aca7e6b106/aiodocker-0.27.0.tar.gz", hash = "sha256:74586f4929aee4563ee7db50996a1a39ac35e06c80701daad31f94aadb6551c7", size = 328202, upload-time = "2026-05-27T07:06:49.731Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/dc/7a34f2a50fef8a3e7e02618b8fec516fa29a91d2fe264ab49514f9affc82/aiodocker-0.23.0-py3-none-any.whl", hash = "sha256:8c7ff2fc9e557898ae77bc9c1af8916f269285f230aedf1abbb81436054baed4", size = 34712, upload-time = "2024-09-23T04:52:53.227Z" },
+    { url = "https://files.pythonhosted.org/packages/de/54/cd3aa680c9653b8708e164d610948e7a9aa50bba619705ac6169f61b0837/aiodocker-0.27.0-py3-none-any.whl", hash = "sha256:c55647bdcaf546dd4fc9b52794a9510575e126888dff478a9185f580a40dc45e", size = 55037, upload-time = "2026-05-27T07:06:48.316Z" },
 ]
 
 [[package]]
@@ -1606,7 +1606,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aioboto3", specifier = ">=13.4.0,<14.0.0" },
-    { name = "aiodocker", specifier = ">=0.23.0,<0.24.0" },
+    { name = "aiodocker", specifier = ">=0.23.0,<0.28.0" },
     { name = "fastapi", specifier = ">=0.141.0,<0.142.0" },
     { name = "kubernetes-asyncio", specifier = ">=36.1.0,<37.0.0" },
     { name = "opentelemetry-api", specifier = ">=1.29.0,<2.0.0" },
