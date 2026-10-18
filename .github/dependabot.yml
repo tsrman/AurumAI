@@ -13,13 +13,31 @@ updates:
       - "/tool-worker"
       - "/skill-executor"
       - "/rag-api"
-      - "/rag-worker"
       - "/web-tools"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
       python-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Upgraded manually across all services together with the lint fixes.
+      - dependency-name: "ruff"
+      # SDK 3+ targets the Langfuse v3 server; the deployment ships v2.
+      - dependency-name: "langfuse"
+        versions: [">=3"]
+
+  # rag-worker runs alone: resolving its torch/docling stack can take most of
+  # a Dependabot job's time budget, which cancelled the shared Python run.
+  # Keep its ignore rules identical to the entry above.
+  - package-ecosystem: "uv"
+    directories:
+      - "/rag-worker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      rag-worker-minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
       # Upgraded manually across all services together with the lint fixes.
