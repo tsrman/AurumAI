@@ -483,9 +483,7 @@ async def test_get_or_create_cleans_stale_redis_entry(fake_redis: FakeRedis) -> 
             "ip_address": "10.0.0.3",
         }
     )
-    manager.docker.containers.get.side_effect = DockerError(
-        status=404, data={"message": "No such container"}
-    )
+    manager.docker.containers.get.side_effect = DockerError(404, "No such container")
 
     ref = await manager.get_or_create("conv-stale", "user-1", "org-1")
 
@@ -1766,7 +1764,7 @@ async def test_cleanup_stale_pool_removes_dead_containers(fake_redis: FakeRedis)
         json.dumps({"container_id": "dead", "container_name": "runner-pool-dead", "created_at": 1.0})
     ]
     manager.docker.containers.get = AsyncMock(
-        side_effect=DockerError(status=404, data={"message": "No such container"})
+        side_effect=DockerError(404, "No such container")
     )
 
     removed = await manager.cleanup_stale_pool()

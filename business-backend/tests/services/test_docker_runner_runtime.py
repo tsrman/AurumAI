@@ -55,14 +55,12 @@ async def test_list_parses_rfc3339_docker_created_timestamp() -> None:
 @pytest.mark.asyncio
 async def test_get_returns_none_only_for_docker_not_found() -> None:
     docker = RuntimeDocker()
-    docker.containers.get.side_effect = DockerError(status=404, data={"message": "missing"})
+    docker.containers.get.side_effect = DockerError(404, "missing")
     runtime = DockerRunnerRuntime(docker)  # type: ignore[arg-type]
 
     assert await runtime.get("runner-404") is None
 
-    docker.containers.get.side_effect = DockerError(
-        status=500, data={"message": "token=top-secret"}
-    )
+    docker.containers.get.side_effect = DockerError(500, "token=top-secret")
     with pytest.raises(RunnerRuntimeError) as exc_info:
         await runtime.get("runner-500")
 
@@ -85,9 +83,7 @@ async def test_list_translates_transport_error_without_leaking_details() -> None
 @pytest.mark.asyncio
 async def test_create_bound_translates_docker_create_error_without_leaking_details() -> None:
     docker = RuntimeDocker()
-    docker.containers.create.side_effect = DockerError(
-        status=500, data={"message": "token=top-secret"}
-    )
+    docker.containers.create.side_effect = DockerError(500, "token=top-secret")
 
     with pytest.raises(RunnerRuntimeError) as exc_info:
         await DockerRunnerRuntime(docker).create_bound("runner-conv-1", {}, binding())  # type: ignore[arg-type]
