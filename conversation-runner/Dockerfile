@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Builder stage ----------
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Apply base-image security patches: python:3.12-slim is rebuilt
 # less often than Debian publishes fixes; scans found high-severity
@@ -28,7 +28,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 # ---------- Runtime stage ----------
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 COPY LICENSE /app/LICENSE
 
 ARG AURUMAI_SOURCE_URL=""
