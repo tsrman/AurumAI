@@ -1,0 +1,412 @@
+{
+  "errors": {
+    "network": "Network error",
+    "forbidden": "Access denied",
+    "notFound": "Not found",
+    "conflictDependents": "Delete the related data first",
+    "httpStatus": "HTTP {status}",
+    "unknown": "Unknown error",
+    "questionClosed": "This question no longer accepts answers",
+    "knowledgeBaseNameRequired": "A knowledge base name is required",
+    "noActiveConversation": "No active conversation",
+    "answerUnavailable": "Answering is unavailable"
+  },
+  "common": {
+    "loading": "Loading...",
+    "theme": {
+      "enableLight": "Switch to light theme",
+      "enableDark": "Switch to dark theme",
+      "light": "Light theme",
+      "dark": "Dark theme"
+    },
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "language": "Language"
+  },
+  "login": {
+    "subtitle": "Sign in to continue",
+    "signingIn": "Signing in…",
+    "signIn": "Sign in with Keycloak"
+  },
+  "history": {
+    "page": {
+      "title": "History",
+      "subtitle": "Your recent conversations"
+    },
+    "buckets": {
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "last7": "Last 7 days",
+      "last30": "Last 30 days",
+      "earlier": "Earlier"
+    },
+    "newConversation": "New conversation",
+    "item": {
+      "messageCount": "{count, plural, one {# message} other {# messages}}",
+      "open": "Open conversation {title}",
+      "titleLabel": "Conversation title"
+    },
+    "list": {
+      "loading": "Loading history...",
+      "loadFailed": "Could not load history.",
+      "retry": "Retry",
+      "empty": "Conversation history is empty."
+    },
+    "actions": {
+      "trigger": "Actions",
+      "menu": "Conversation actions",
+      "rename": "Rename",
+      "delete": "Delete",
+      "deleteTitle": "Delete the conversation?",
+      "deleteDescription": "“{title}” will be deleted permanently.",
+      "cancel": "Cancel"
+    }
+  },
+  "knowledge": {
+    "page": {
+      "title": "Knowledge bases",
+      "subtitle": "Manage regulations, process charts and documentation",
+      "create": "Create knowledge base"
+    },
+    "card": {
+      "docCount": "{count} docs"
+    },
+    "search": {
+      "fallbackTitle": "Document",
+      "title": "Search the knowledge base",
+      "searching": "Searching…",
+      "submit": "Search",
+      "empty": "Nothing found",
+      "results": "Search results",
+      "relevance": "Relevance: {score}"
+    },
+    "status": {
+      "indexed": "Indexed",
+      "processing": "Indexing…",
+      "failed": "Error"
+    },
+    "upload": {
+      "unsupported": "Not supported: {files}",
+      "tooLarge": "Larger than 25 MB: {files}",
+      "zone": "Document upload area",
+      "uploading": "Uploading…",
+      "prompt": "Drag files here or click to choose",
+      "formats": "PDF, DOCX, PPTX, HTML, MD, TXT — up to 25 MB",
+      "choose": "Choose files"
+    },
+    "table": {
+      "name": "Name",
+      "type": "Type",
+      "size": "Size",
+      "chunks": "Chunks",
+      "status": "Status",
+      "actions": "Actions",
+      "empty": "This knowledge base has no documents yet"
+    },
+    "create": {
+      "title": "Create knowledge base",
+      "nameRequired": "A knowledge base name is required",
+      "name": "Knowledge base name",
+      "description": "Knowledge base description",
+      "cancel": "Cancel",
+      "creating": "Creating…",
+      "create": "Create"
+    },
+    "detail": {
+      "uploadFailed": "Could not upload {file}: {reason}",
+      "unknownError": "unknown error",
+      "loading": "Loading…",
+      "notFound": "Knowledge base not found",
+      "backArrow": "← Back to knowledge bases",
+      "back": "Back to knowledge bases",
+      "deleteDocumentsFirst": "Delete the documents first",
+      "docCount": "{count} docs",
+      "updated": "Updated: {date}",
+      "uploadHeading": "Upload documents",
+      "documents": "Documents"
+    },
+    "delete": {
+      "button": "Delete knowledge base",
+      "title": "Delete the knowledge base “{name}”?",
+      "description": "Delete all documents first. A deleted knowledge base cannot be restored.",
+      "deleting": "Deleting…",
+      "confirm": "Delete"
+    },
+    "document": {
+      "processingFailed": "The document could not be processed",
+      "deleteAria": "Delete document {name}",
+      "deleteTitle": "Delete the document?",
+      "deleteDescription": "The document “{name}” will be removed from storage and search.",
+      "confirm": "Delete"
+    }
+  },
+  "chat": {
+    "selectModel": "Select an available model to send a message.",
+    "pending": "Request sent to the model…",
+    "queryResult": "Query result",
+    "pickers": {
+      "model": {
+        "choose": "Choose model",
+        "fallback": "Model"
+      },
+      "agent": {
+        "choose": "Choose agent",
+        "fallback": "Agent"
+      },
+      "workflow": {
+        "choose": "Choose workflow",
+        "plainChat": "Plain chat",
+        "plainChatDescription": "A single assistant answers"
+      },
+      "modelSettings": {
+        "title": "Model settings",
+        "temperature": "Temperature",
+        "hint": "Applies only to this conversation. By default the agent or organization value is used.",
+        "cancel": "Cancel",
+        "saving": "Saving...",
+        "save": "Save"
+      }
+    },
+    "assistant": {
+      "verified": "Verified",
+      "mayBeInaccurate": "May be inaccurate",
+      "fallbackName": "Assistant",
+      "copy": "Copy answer",
+      "regenerate": "Regenerate"
+    },
+    "sources": {
+      "label": "Sources:",
+      "item": "Source {index}: {title}",
+      "unverified": "Source {index}: unverified"
+    },
+    "tool": {
+      "wait": "Queued",
+      "run": "Running",
+      "done": "Done"
+    },
+    "thinking": {
+      "title": "Reasoning",
+      "seconds": "{seconds} s",
+      "inProgress": "Thinking..."
+    },
+    "mermaid": {
+      "renderError": "Diagram rendering error",
+      "failed": "Could not render the diagram: {error}",
+      "rendering": "Rendering diagram…"
+    },
+    "header": {
+      "fallbackTitle": "Chat",
+      "newChat": "New chat"
+    },
+    "sql": {
+      "label": "SQL query",
+      "copy": "Copy SQL"
+    },
+    "question": {
+      "noAnswer": "No answer given",
+      "sendFailed": "Could not send the answer",
+      "answered": "Answered",
+      "answeredAt": "Answered {date}",
+      "expired": "The answer deadline has passed",
+      "cancelled": "Question cancelled",
+      "from": "Question from {agent}",
+      "serverTime": "The deadline is enforced by the server",
+      "until": "until {date}",
+      "options": "Answer options",
+      "answer": "Answer",
+      "sending": "Sending…",
+      "submit": "Answer",
+      "retry": "Retry"
+    },
+    "sourceDrawer": {
+      "unverifiedTitle": "Unverified source",
+      "webSource": "Web source",
+      "close": "Close",
+      "unverifiedNotice": "The model’s link is not confirmed by platform data and cannot be opened.",
+      "published": "Published: {date}",
+      "retrieved": "Retrieved: {date}",
+      "truncated": "Source truncated",
+      "fragment": "Excerpt",
+      "open": "Open source",
+      "knowledgeBase": "Knowledge base",
+      "relevance": "Relevance"
+    },
+    "composer": {
+      "unsupported": "Not supported: {file}",
+      "tooLarge": "Larger than 25 MB: {file}",
+      "noConversation": "No active conversation for the attachment",
+      "attachFailedFor": "{file}: {reason}",
+      "attachFailedReason": "could not attach",
+      "attachFailed": "Could not attach the file",
+      "answerQuestionFirst": "Answer the question above to continue",
+      "placeholderAgent": "Message for “{agent}” · type “/” for commands",
+      "placeholder": "Message · type “/” for commands",
+      "attachmentProcessing": "· processing…",
+      "attachmentError": "· error",
+      "attachmentReady": "· ready",
+      "hide": "Hide",
+      "message": "Message",
+      "chooseFile": "Choose a file to attach",
+      "attach": "Attach file",
+      "modelSettings": "Model settings",
+      "stop": "Stop generating",
+      "send": "Send"
+    },
+    "runtime": {
+      "toolFallback": "Tool",
+      "timedOut": "⏱ the command timed out",
+      "exitCode": "→ exit code {code}",
+      "conversationFallback": "Conversation"
+    }
+  },
+  "settings": {
+    "loading": "Loading settings...",
+    "title": "Settings",
+    "defaultModel": "Default model",
+    "organizationDefault": "Organization default",
+    "unavailableModel": "{model} (unavailable)",
+    "sendOnEnter": "Send messages with Enter",
+    "showTimestamps": "Show message times",
+    "collapseSidebar": "Collapse the sidebar",
+    "saving": "Saving...",
+    "save": "Save",
+    "saved": "Settings saved",
+    "saveFailed": "Could not save settings"
+  },
+  "sidebar": {
+    "links": {
+      "knowledge": "Knowledge bases",
+      "history": "History",
+      "admin": "Administration"
+    },
+    "openConversation": "Open conversation {title}",
+    "conversationTitle": "Conversation title",
+    "panel": "Sidebar",
+    "newChat": "New chat",
+    "navigation": "Main navigation",
+    "agents": "AGENTS",
+    "history": "HISTORY",
+    "studio": "STUDIO",
+    "loading": "Loading...",
+    "loadFailed": "Loading failed",
+    "empty": "No recent conversations.",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "logout": "Sign out",
+    "userFallback": "User"
+  },
+  "workflow": {
+    "run": {
+      "pending": "Waiting to start",
+      "planning": "Planning",
+      "running": "Running workflow",
+      "synthesizing": "Composing the answer",
+      "completed": "Workflow completed",
+      "failed": "Workflow finished with an error",
+      "cancelled": "Workflow cancelled"
+    },
+    "node": {
+      "pending": "Pending",
+      "running": "Running",
+      "waiting_human": "Awaiting confirmation",
+      "completed": "Done",
+      "failed": "Error",
+      "skipped": "Skipped — condition not met",
+      "cancelled": "Cancelled"
+    },
+    "errors": {
+      "access_revoked": "Access to the workflow was revoked",
+      "quota_exhausted": "The usage limit is exhausted",
+      "execution_failed": "The workflow could not be run",
+      "output_limit_exceeded": "The workflow result exceeded the allowed size",
+      "invalid_supervisor_output": "The workflow plan could not be prepared",
+      "invalid_workflow_snapshot": "The workflow changed and is no longer available",
+      "workflow_unavailable": "The workflow is unavailable right now",
+      "runner_unavailable": "The execution environment is unavailable",
+      "human_rejected": "The step was rejected by a user",
+      "confirmation_timeout": "The confirmation timed out"
+    },
+    "decisionSent": "Decision sent",
+    "decisionFailed": "Could not send, please try again",
+    "approveAria": "{node}: approve",
+    "approve": "Approve",
+    "rejectAria": "{node}: reject",
+    "reject": "Reject",
+    "progress": "Workflow progress"
+  },
+  "agents": {
+    "general": {
+      "name": "General assistant",
+      "kindLabel": "General-purpose helper",
+      "description": "General-purpose helper: questions, calculations and handing off to specialized agents.",
+      "capability1": "Answers questions",
+      "capability2": "Calculations",
+      "capability3": "Routing",
+      "suggestion1": "What can the AurumAI platform do?",
+      "suggestion2": "Explain how carbon-in-pulp cyanidation works",
+      "suggestion3": "Help me plan a switch to a new reagent",
+      "suggestion4": "Where should I start analyzing a drop in recovery?"
+    },
+    "analyst": {
+      "name": "Data analyst",
+      "kindLabel": "Analytics · database access",
+      "description": "Analyzes production metrics from databases and dashboards, builds comparisons and conclusions.",
+      "capability1": "Production database access",
+      "capability2": "Metrics and charts",
+      "capability3": "Comparison with plan",
+      "suggestion1": "Gold recovery for the shift versus plan",
+      "suggestion2": "Cyanide consumption trend for the week",
+      "suggestion3": "Compare output of the two lines",
+      "suggestion4": "Show the processing plant KPIs"
+    },
+    "rag": {
+      "name": "Procedures assistant",
+      "kindLabel": "RAG · knowledge bases",
+      "description": "Answers from procedures, process charts and instructions with source citations.",
+      "capability1": "Knowledge bases",
+      "capability2": "Source citations",
+      "capability3": "Reranking",
+      "suggestion1": "Pulp pH requirements during cyanidation",
+      "suggestion2": "Procedure when a mill stops",
+      "suggestion3": "Lime consumption norms for alkalization",
+      "suggestion4": "Occupational safety rules for handling cyanide"
+    },
+    "sql": {
+      "name": "SQL agent",
+      "kindLabel": "Text-to-SQL · production database",
+      "description": "Turns a natural-language question into SQL and returns tables from the database.",
+      "capability1": "SQL generation",
+      "capability2": "Query execution",
+      "capability3": "Tables and exports",
+      "suggestion1": "Top 5 shifts by downtime this month",
+      "suggestion2": "Average reagent consumption per shift",
+      "suggestion3": "Samples marked “reject” this week",
+      "suggestion4": "Hourly output for today"
+    },
+    "swarm": {
+      "name": "Agent Swarm",
+      "kindLabel": "Multi-agent orchestrator",
+      "description": "Orchestrator: splits a task between agents and assembles a combined result.",
+      "capability1": "Task decomposition",
+      "capability2": "Multiple agents",
+      "capability3": "Combined report",
+      "suggestion1": "Prepare a combined report for the last shift",
+      "suggestion2": "Check the shift against procedures",
+      "suggestion3": "Find the cause of the recovery drop and check it against the documents",
+      "suggestion4": "Combine downtime data with the norms"
+    }
+  },
+  "about": {
+    "description": "A self-hosted platform for AI conversations, tools, knowledge and durable multi-agent workflows.",
+    "copyright": "Copyright © 2026 AurumAI contributors. Original authors retain their contribution copyrights.",
+    "license": "AurumAI is free software licensed under AGPL-3.0-only and is provided without warranty.",
+    "licenseLink": "AGPL-3.0-only license",
+    "sourceCode": "Source code",
+    "sourceIncluded": "Source code is included in the AurumAI source distribution. Configure RUNTIME_SOURCE_CODE_URL to link the source of this deployment.",
+    "thirdParty": "Third-party dependencies retain their upstream licenses; see THIRD_PARTY_NOTICES.md in the source distribution.",
+    "returnToSignIn": "Return to sign in",
+    "linkShort": "License and source",
+    "linkAria": "About AurumAI",
+    "linkFull": "About AurumAI · License and source"
+  }
+}

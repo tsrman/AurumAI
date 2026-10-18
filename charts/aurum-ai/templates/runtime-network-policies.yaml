@@ -1,0 +1,182 @@
+{{- include "aurum-ai.validateRuntimeNamespaces" . -}}
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-skill-executor-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: skill-executor
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: tool-worker
+      ports:
+        - protocol: TCP
+          port: 8090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-runners-default-deny-ingress
+  namespace: {{ include "aurum-ai.runnerNamespace" . }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-runner-ingress
+  namespace: {{ include "aurum-ai.runnerNamespace" . }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aurum-ai.component: conversation-runner
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: backend
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicies.runner.runnerPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-runner-egress
+  namespace: {{ include "aurum-ai.runnerNamespace" . }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aurum-ai.component: conversation-runner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: backend
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicies.runner.backendPort }}
+    # Runner Pods always require DNS: APP_RUNNER_BACKEND_URL is a
+    # cross-namespace Service FQDN and external runtime hosts may be named.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "aurum-ai.dnsNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.dnsPodLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- range .Values.networkPolicies.runner.destinations }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr }}
+      {{- with .ports }}
+      ports:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-sandboxes-default-deny-ingress
+  namespace: {{ include "aurum-ai.sandboxNamespace" . }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-sandbox-none-egress
+  namespace: {{ include "aurum-ai.sandboxNamespace" . }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aurum-ai.component: skill-sandbox
+      aurum-ai.network-policy: none
+  policyTypes:
+    - Egress
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-sandbox-public-egress
+  namespace: {{ include "aurum-ai.sandboxNamespace" . }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aurum-ai.component: skill-sandbox
+      aurum-ai.network-policy: egress
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.networkPolicies.dns.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "aurum-ai.dnsNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.dnsPodLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.networkPolicies.sandbox.publicIpv4Cidr }}
+            except:
+              {{- range .Values.networkPolicies.sandbox.excludedCidrs }}
+              - {{ . }}
+              {{- end }}
+{{- end }}

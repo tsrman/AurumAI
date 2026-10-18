@@ -1,0 +1,16 @@
+/node_modules
+/.next
+/out
+.env
+.env.local
+*.log
+.vercel
+
+# Design-sync generated artifacts
+.ds-entry.ts
+.ds-compiled.css
+
+# Playwright e2e artifacts
+/playwright-report
+/test-results
+/blob-report

@@ -1,0 +1,89 @@
+{{- include "aurum-ai.validateRuntimeNamespaces" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-skill-executor
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "skill-executor" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.skillExecutor.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "skill-executor" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "skill-executor" "root" $) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "aurum-ai.skillExecutorServiceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: skill-executor
+          image: {{ include "aurum-ai.image" (dict "service" .Values.skillExecutor "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.skillExecutor "root" $) }}
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: SKILL_EXECUTOR_RUNTIME
+              value: {{ .Values.sandboxRuntime.type | quote }}
+            - name: SKILL_EXECUTOR_SANDBOX_IMAGE
+              value: {{ include "aurum-ai.image" (dict "service" .Values.skillSandbox "root" $) | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_RELEASE_NAME
+              value: {{ .Release.Name | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_RELEASE_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_NAMESPACE
+              value: {{ include "aurum-ai.sandboxNamespace" . | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_READY_TIMEOUT_SECONDS
+              value: {{ .Values.sandboxRuntime.readyTimeoutSeconds | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_API_RETRY_ATTEMPTS
+              value: {{ .Values.sandboxRuntime.apiRetryAttempts | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_IMAGE_PULL_POLICY
+              value: {{ .Values.skillSandbox.imagePullPolicy | default .Values.image.pullPolicy | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_IMAGE_PULL_SECRETS
+              value: {{ .Values.skillSandbox.imagePullSecrets | toJson | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_CPU_REQUEST
+              value: {{ .Values.skillSandbox.resources.requests.cpu | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_CPU_LIMIT
+              value: {{ .Values.skillSandbox.resources.limits.cpu | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_MEMORY_REQUEST
+              value: {{ .Values.skillSandbox.resources.requests.memory | quote }}
+            - name: SKILL_EXECUTOR_KUBERNETES_MEMORY_LIMIT
+              value: {{ .Values.skillSandbox.resources.limits.memory | quote }}
+            - name: SKILL_EXECUTOR_SESSION_TTL_SECONDS
+              value: {{ .Values.sandboxRuntime.sessionTtlSeconds | quote }}
+            - name: SKILL_EXECUTOR_SESSION_IDLE_TTL_SECONDS
+              value: {{ .Values.sandboxRuntime.sessionIdleTtlSeconds | quote }}
+            - name: SKILL_EXECUTOR_REAP_INTERVAL_SECONDS
+              value: {{ .Values.sandboxRuntime.reapIntervalSeconds | quote }}
+            - name: SKILL_EXECUTOR_S3_ENDPOINT
+              value: {{ .Values.external.minio.endpoint | quote }}
+            - name: SKILL_EXECUTOR_S3_ACCESS_KEY
+              value: {{ .Values.external.minio.accessKey | quote }}
+            - name: SKILL_EXECUTOR_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_S3_SECRET_KEY
+            - name: SKILL_EXECUTOR_S3_BUCKET
+              value: {{ .Values.external.minio.bucket | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.skillExecutor.resources | nindent 12 }}

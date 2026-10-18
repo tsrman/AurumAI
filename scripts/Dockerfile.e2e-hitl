@@ -1,0 +1,3 @@
+# Derived local test image only. Never retag or change the ordinary runner.
+FROM business-runner:latest
+ENV WORKFLOW_CONFIRMATION_TIMEOUT_SECONDS=65

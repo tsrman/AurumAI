@@ -1,0 +1,51 @@
+# Deterministic overlay for local MCP/code-skill acceptance. It keeps the
+# normal zero-config Compose mock unchanged while giving tool-calling smokes a
+# stateless OpenAI-compatible gateway with reproducible responses.
+services:
+  test-gateway:
+    build:
+      context: ./business-backend
+      dockerfile: Dockerfile
+    entrypoint: ["/app/.venv/bin/python", "/test-gateway.py"]
+    volumes:
+      - ./scripts/k8s-test-gateway.py:/test-gateway.py:ro
+    environment:
+      TEST_GATEWAY_FETCH_TITLE: "${MCP_FETCH_EXPECTED_TITLE:-AurumAI Backend}"
+      TEST_GATEWAY_MODEL_ID: "${TEST_GATEWAY_MODEL_ID:-gpt-4o-mini}"
+      TEST_GATEWAY_BARRIER_SECONDS: "${TEST_GATEWAY_BARRIER_SECONDS:-3}"
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:8080/health', timeout=2)
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: unless-stopped
+
+  backend:
+    environment:
+      APP_LLM_GATEWAY_URL: "http://test-gateway:8080"
+      APP_GATEWAY_API_KEY: "deterministic-e2e-no-auth"
+      # Sequential smoke scenarios reuse one user within a minute, and the
+      # per-user counter is shared with /stream; wrappers may still override.
+      APP_RATE_LIMIT_PER_MINUTE: "${APP_RATE_LIMIT_PER_MINUTE:-3000}"
+      APP_RATE_LIMIT_PER_MINUTE_STREAM: "${APP_RATE_LIMIT_PER_MINUTE_STREAM:-500}"
+    depends_on:
+      test-gateway:
+        condition: service_healthy
+
+  backend-admin:
+    environment:
+      APP_LLM_GATEWAY_URL: "http://test-gateway:8080"
+      APP_GATEWAY_API_KEY: "deterministic-e2e-no-auth"
+      # Sequential smoke scenarios reuse one user within a minute, and the
+      # per-user counter is shared with /stream; wrappers may still override.
+      APP_RATE_LIMIT_PER_MINUTE: "${APP_RATE_LIMIT_PER_MINUTE:-3000}"
+      APP_RATE_LIMIT_PER_MINUTE_STREAM: "${APP_RATE_LIMIT_PER_MINUTE_STREAM:-500}"
+    depends_on:
+      test-gateway:
+        condition: service_healthy

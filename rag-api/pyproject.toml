@@ -1,0 +1,64 @@
+[project]
+license = "AGPL-3.0-only"
+name = "rag-api"
+version = "0.1.0"
+description = ""
+requires-python = ">=3.12,<4.0.0"
+dependencies = [
+    "fastapi>=0.141.0,<0.142.0",
+    "uvicorn>=0.30.0,<0.31.0",
+    "gunicorn>=23.0.0,<24.0.0",
+    "pydantic-settings>=2.0.0,<3.0.0",
+    "httpx>=0.27.0,<0.29.0",
+    "sqlalchemy[asyncio]>=2.0.0,<3.0.0",
+    "asyncpg>=0.29.0,<0.30.0",
+    "alembic>=1.13.0,<2.0.0",
+    "temporalio>=1.6.0,<2.0.0",
+    "pymilvus==2.6.17",
+    "opentelemetry-api>=1.29.0,<2.0.0",
+    "opentelemetry-sdk>=1.29.0,<2.0.0",
+    "opentelemetry-exporter-otlp>=1.29.0,<2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.50b0",
+    "opentelemetry-instrumentation-httpx>=0.50b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.50b0",
+    "prometheus-client>=0.21.0,<0.27.0",
+    "boto3>=1.40,<2",
+    "pyarrow>=23.0.1,<24",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13.0,<2.0.0",
+    "ruff>=0.8.0,<0.9.0",
+    "pytest>=9.0.3,<10.0.0",
+    "pytest-asyncio>=1.4.0,<2.0.0",
+]
+
+# Services are not installed as libraries: Docker copies their source,
+# while uv creates the environment from the frozen lockfile.
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+# pymilvus ships no inline types or stubs we can install (temporalio does,
+# per business-backend's pyproject.toml — no override needed for it there).
+
+[[tool.mypy.overrides]]
+module = ["pymilvus.*", "pyarrow.*", "boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# With tool.uv package=false, put the project root on sys.path explicitly;
+# the previous package installation used to provide this import path
+# implicitly.
+pythonpath = ["."]
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]

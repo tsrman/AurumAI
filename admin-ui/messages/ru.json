@@ -1,0 +1,399 @@
+{
+  "metadata": {
+    "title": "Администрирование AurumAI",
+    "description": "Администрирование AurumAI: навыки, доступ, агенты и сценарии"
+  },
+  "errors": {
+    "network": "Ошибка сети",
+    "forbidden": "Доступ запрещён",
+    "notFound": "Не найдено",
+    "httpStatus": "HTTP {status}",
+    "unknown": "Неизвестная ошибка",
+    "workflowGraph": {
+      "empty_graph": "Добавьте хотя бы один узел.",
+      "self_edge": "У узла не может быть связи самого с собой без признака цикла.",
+      "cycle": "Граф содержит цикл. Обычные связи не могут возвращаться назад — для этого используйте связь-цикл.",
+      "dangling_edge": "Связь ссылается на несуществующий узел.",
+      "duplicate_node_key": "Ключи узлов должны быть уникальны.",
+      "duplicate_edge": "Между этими двумя узлами уже есть связь.",
+      "too_many_nodes": "Слишком много узлов (максимум 20).",
+      "reserved_node_key": "Ключ узла зарезервирован для служебной фазы supervisor.",
+      "invalid_loop_edge": "Связь-цикл должна вести к предшествующему узлу графа или на себя.",
+      "overlapping_loop_bodies": "Тела циклов не должны пересекаться или иметь общие узлы.",
+      "loop_body_requires_confirmation": "Узел с «Требует подтверждения» не может находиться внутри цикла.",
+      "loop_body_fan_out": "Только последний узел цикла (откуда исходит связь-цикл) может вести наружу.",
+      "unknown": "Ошибка проверки графа: {code}"
+    },
+    "invalidJsonObject": "Невалидный JSON объекта",
+    "invalidJsonList": "Невалидный JSON списка"
+  },
+  "common": {
+    "loading": "Загрузка...",
+    "theme": {
+      "enableLight": "Включить светлую тему",
+      "enableDark": "Включить тёмную тему",
+      "light": "Светлая тема",
+      "dark": "Тёмная тема"
+    },
+    "confirm": "Подтвердить",
+    "cancel": "Отмена",
+    "language": "Язык",
+    "logout": "Выйти"
+  },
+  "login": {
+    "subtitle": "Войдите, чтобы продолжить работу",
+    "signingIn": "Вход…",
+    "signIn": "Войти через Keycloak"
+  },
+  "constructor": {
+    "defaultPrompt": "Ты — специализированный ассистент золотодобывающей компании. Отвечай точно, по делу, со ссылками на источники.",
+    "saveFailed": "Не удалось сохранить агента",
+    "title": "Конструктор агента",
+    "chooseModel": "Выбрать модель",
+    "form": {
+      "name": "Название агента",
+      "namePlaceholder": "Например, Аналитик цианирования",
+      "description": "Краткое описание",
+      "descriptionPlaceholder": "Что делает агент и для каких задач",
+      "model": "Модель",
+      "systemPrompt": "Системный промпт",
+      "tools": "Инструменты",
+      "knowledgeBases": "Базы знаний",
+      "temperature": "Температура",
+      "inherit": "Наследовать из организации",
+      "saving": "Сохранение…",
+      "create": "Создать агента"
+    },
+    "preview": {
+      "newAgent": "Новый агент",
+      "noDescription": "Описание отсутствует",
+      "tools": "Инструменты",
+      "knowledgeBases": "Базы знаний",
+      "noneSelected": "Не выбраны"
+    }
+  },
+  "access": {
+    "adminRequired": "Доступ запрещён. Требуется роль администратора организации.",
+    "checking": "Проверка доступа...",
+    "orgReadable": "Доступна организации",
+    "orgClosed": "Закрыта для организации",
+    "page": {
+      "resourceTypes": {
+        "model": "Модель",
+        "skill": "Навык",
+        "knowledge_base": "База знаний",
+        "agent_definition": "Агент",
+        "workflow": "Workflow"
+      },
+      "title": "Доступ к ресурсам",
+      "subtitle": "Управляйте grants организации, групп и пользователей для одного ресурса за раз.",
+      "resourceType": "Тип ресурса",
+      "search": "Поиск ресурса",
+      "loading": "Загрузка ресурсов...",
+      "empty": "Ресурсы этого типа не найдены.",
+      "resource": "Ресурс",
+      "chooseResource": "Выберите ресурс",
+      "adminWriteRequired": "Доступ запрещён. Требуется разрешение admin:write."
+    }
+  },
+  "workflows": {
+    "page": {
+      "title": "Workflow",
+      "subtitle": "Детерминированные графы агентов",
+      "loading": "Загрузка workflow..."
+    },
+    "diagnostics": {
+      "label": "Диагностика workflow",
+      "status": "Статус: {status}",
+      "error": "Ошибка: {code}",
+      "attempts": "Попыток: {count}",
+      "purged": "Удалено по политике хранения",
+      "run": "Запуск {id}"
+    },
+    "table": {
+      "name": "Название",
+      "version": "Версия",
+      "status": "Статус",
+      "actions": "Действия",
+      "edit": "Изменить",
+      "access": "Доступ",
+      "saveTemplate": "Сохранить как шаблон",
+      "archive": "Архивировать"
+    },
+    "form": {
+      "validateFailed": "Ошибка проверки workflow",
+      "saveFailed": "Ошибка сохранения workflow",
+      "editTitle": "Редактировать workflow",
+      "newTitle": "Новый workflow",
+      "name": "Название",
+      "nameAria": "Название workflow",
+      "description": "Описание",
+      "descriptionAria": "Описание workflow",
+      "chooseAgent": "Выберите агента",
+      "parallelism": "Параллелизм",
+      "autoRouting": "Автомаршрутизация",
+      "autoRoutingHint": "Автомаршрутизация — запускать этот workflow без явного выбора в чате, когда сообщение пользователя ему явно соответствует",
+      "duplicateKeys": "Ключи узлов должны быть уникальны.",
+      "validate": "Проверить",
+      "save": "Сохранить"
+    },
+    "templates": {
+      "errors": {
+        "fallback": "Не удалось выполнить операцию с шаблоном.",
+        "conflict": "Данные изменились. Обновите их и подтвердите новую попытку.",
+        "network": "Сеть недоступна. Операция могла уже выполниться. Проверьте соединение; перед новой попыткой обновите и проверьте список шаблонов и workflow.",
+        "session": "Сессия недействительна. Войдите в систему заново и обновите данные перед новой попыткой.",
+        "template_not_found": "Шаблон не найден или недоступен.",
+        "source_not_found": "Исходный workflow не найден или недоступен.",
+        "dependency_unavailable": "Одна из зависимостей workflow недоступна.",
+        "catalog_unavailable": "Каталог моделей временно недоступен.",
+        "snapshot_invalid": "Конфигурация workflow не подходит для шаблона."
+      },
+      "refreshFailed": "Не удалось обновить данные. Проверьте соединение.",
+      "title": "Шаблоны workflow",
+      "subtitle": "Каталог сохраняет только серверную версию workflow.",
+      "showArchived": "Показывать архивные",
+      "source": "Исходный workflow",
+      "chooseInTable": "Выберите действие в таблице workflow",
+      "templateName": "Имя шаблона",
+      "saveAsTemplate": "Сохранить как шаблон",
+      "template": "Шаблон workflow",
+      "chooseTemplate": "Выберите шаблон",
+      "archivedSuffix": " · архив",
+      "copyName": "Имя копии workflow",
+      "updateFromWorkflow": "Обновить из workflow",
+      "createFromTemplate": "Создать workflow из шаблона",
+      "archiveTemplate": "Архивировать шаблон",
+      "refresh": "Обновить данные",
+      "copyNotice": "В копии созданы независимые агенты; права доступа не скопированы; автомаршрутизация выключена. Выдайте доступ отдельно перед запуском."
+    },
+    "canvas": {
+      "node": "Узел {name}",
+      "inputHandle": "Входящий разъём — узел {name}",
+      "requiresConfirmation": "Требует подтверждения",
+      "outputHandle": "Исходящий разъём — узел {name}",
+      "edgeCondition": "Условие связи {source} → {target}",
+      "onSuccess": "После успеха",
+      "onFailure": "После ошибки",
+      "removeEdge": "Удалить связь {source} → {target}",
+      "loopParamsFor": "Параметры цикла {source} → {target}",
+      "loopParams": "Параметры цикла",
+      "addNode": "Добавить узел",
+      "graph": "Граф workflow",
+      "inspector": "Инспектор узла {index}",
+      "nodeLegend": "Узел {index}",
+      "nodeKey": "Ключ узла {index}",
+      "reservedKey": "Ключ узла зарезервирован для фазы supervisor.",
+      "nodeName": "Название узла {index}",
+      "namePlaceholder": "Название",
+      "nodeAgent": "Агент узла {index}",
+      "chooseAgent": "Выберите агента",
+      "nodeInstruction": "Инструкция узла {index}",
+      "requiresConfirmationFor": "Требует подтверждения — узел {index}",
+      "addLoopFor": "Добавить цикл на этот узел {index}",
+      "addLoop": "Добавить цикл на этот узел",
+      "removeNode": "Удалить узел {index}",
+      "emptyInspector": "Добавьте узел, чтобы задать его параметры.",
+      "loopTitle": "Цикл {source} → {target}",
+      "iterations": "Итерации",
+      "loopIterations": "Итерации цикла {source} → {target}",
+      "iterationsHint": "От 2 до 20 итераций.",
+      "close": "Закрыть"
+    }
+  },
+  "authorization": {
+    "preview": {
+      "source": {
+        "grant": "Назначено grant'ом",
+        "admin_bypass": "Доступ администратора организации",
+        "none": "Нет подходящего grant"
+      },
+      "title": "Эффективный доступ",
+      "chooseSubject": "Выберите пользователя или группу.",
+      "organizationDirect": "Организационный grant применяется ко всем участникам напрямую.",
+      "checking": "Проверка…",
+      "check": "Проверить эффективный доступ",
+      "noAccess": "нет доступа"
+    },
+    "capabilities": {
+      "loading": "Загрузка capabilities…",
+      "saved": "Capabilities сохранены.",
+      "saving": "Сохранение…",
+      "organizationTitle": "Capabilities организации",
+      "organizationSave": "Сохранить capabilities организации",
+      "groupTitle": "Capabilities группы {group}",
+      "groupSave": "Сохранить capabilities группы {group}"
+    },
+    "grants": {
+      "principal": {
+        "organization": "Организация",
+        "group": "Группа",
+        "user": "Пользователь"
+      },
+      "loading": "Загрузка grants...",
+      "recipient": "Получатель",
+      "recipientAria": "Получатель нового grant",
+      "access": "Доступ",
+      "accessAria": "Уровень доступа нового grant",
+      "add": "Добавить grant",
+      "removeAria": "Удалить grant {subject}",
+      "remove": "Удалить",
+      "saving": "Сохранение…",
+      "save": "Сохранить grants",
+      "applyTitle": "Применить resource grants?",
+      "applyDescription": "Будет заменён полный набор grants для «{resource}». Изменение применяется сразу.",
+      "apply": "Применить"
+    }
+  },
+  "groups": {
+    "title": "Группы и доступ",
+    "create": "Создать группу",
+    "name": "Название",
+    "creating": "Создание...",
+    "loading": "Загрузка групп...",
+    "actions": "Действия",
+    "syncedFromKeycloak": "Синхронизировано из Keycloak: {date}",
+    "configureCapabilities": "Настроить capabilities {group}",
+    "delete": "Удалить",
+    "empty": "Групп пока нет",
+    "deleteTitle": "Удалить группу?",
+    "deleteDescription": "«{group}» будет удалена, доступ участников изменится немедленно."
+  },
+  "agents": {
+    "page": {
+      "title": "Агенты / Навыки",
+      "subtitle": "Инструменты и MCP-серверы, доступные LLM в чате",
+      "addSkill": "Добавить навык",
+      "loading": "Загрузка навыков...",
+      "deleteTitle": "Удалить навык?",
+      "deleteDescription": "«{skill}» больше не будет доступен LLM в чате.",
+      "delete": "Удалить"
+    }
+  },
+  "models": {
+    "gateway": {
+      "available": "Шлюз доступен",
+      "mock": "Тестовый каталог",
+      "unavailable": "Каталог шлюза недоступен"
+    },
+    "loading": "Загрузка моделей...",
+    "loadFailed": "Не удалось загрузить модели",
+    "title": "Модели организации",
+    "subtitle": "Выберите модель, которая будет предложена пользователям без личной настройки.",
+    "gatewayUnavailableHint": "Каталог шлюза недоступен. Можно очистить сохранённую настройку, но нельзя выбрать новую модель.",
+    "defaultModel": "Модель по умолчанию",
+    "noDefault": "Без модели по умолчанию",
+    "unavailable": "{model} — недоступна",
+    "grantsHint": "Доступность моделей задаётся resource grants. Эта настройка не изменяет права пользователей.",
+    "staleDefault": "Сохранённая модель больше недоступна организации.",
+    "defaultTemperature": "Температура по умолчанию",
+    "temperatureUnset": "Не задана — используется системное значение по умолчанию (0.7).",
+    "saving": "Сохранение...",
+    "save": "Сохранить",
+    "configureAccess": "Настроить доступ к моделям"
+  },
+  "nav": {
+    "backToChat": "← В чат",
+    "groups": "Группы",
+    "models": "Модели",
+    "access": "Доступ",
+    "workflows": "Workflow",
+    "analytics": "Аналитика",
+    "agents": "Агенты / Навыки",
+    "constructor": "Конструктор",
+    "about": "Лицензия и исходный код"
+  },
+  "skills": {
+    "table": {
+      "name": "Название",
+      "type": "Тип",
+      "actions": "Действия",
+      "edit": "Изменить",
+      "delete": "Удалить",
+      "empty": "Навыков пока нет"
+    },
+    "form": {
+      "sseRequired": "Выберите SSE и укажите адрес внешнего MCP-сервера перед сохранением.",
+      "bundleRequired": "Выберите .zip файл бандла",
+      "formError": "Ошибка формы",
+      "editTitle": "Редактировать навык",
+      "createTitle": "Создать навык",
+      "name": "Название",
+      "type": "Тип",
+      "description": "Описание",
+      "descriptionPlaceholder": "Что делает этот инструмент — покажется LLM в списке доступных tools",
+      "transport": "Транспорт",
+      "transportHint": "Навыки организации используют SSE. Локальный код запускайте как code skill в sandbox.",
+      "token": "Токен авторизации (Authorization: Bearer …)",
+      "tokenEndpointChanged": "Адрес изменён — введите новый токен или сохраните без него",
+      "tokenSaved": "Токен уже сохранён — оставьте пустым, чтобы не менять",
+      "tokenOptional": "Необязательно — если сервер требует авторизацию",
+      "needsNewCredential": "Для обнаружения на новом адресе введите новый токен или сначала сохраните навык без токена.",
+      "discover": "Обнаружить инструменты",
+      "stdioRetired": "Этот stdio-навык больше не исполняется. Для миграции выберите SSE и замените команду адресом внешнего MCP-сервера.",
+      "discovered": "Найдено инструментов: {count} — выберите, чтобы заполнить форму",
+      "bundle": "Бандл навыка (.zip с SKILL.md)",
+      "bundleHint": "Формат Anthropic Agent Skills: архив с файлом SKILL.md (YAML frontmatter name/description + инструкции) в корне и опциональными scripts/ и другими файлами. Название и описание можно оставить пустыми — тогда возьмутся из frontmatter SKILL.md.",
+      "bundleFallbackName": "бандл",
+      "replaceBundle": "Заменить бандл",
+      "bundleReplaced": "Бандл обновлён.",
+      "toolName": "Имя инструмента (activity_name)",
+      "cancel": "Отмена",
+      "saving": "Сохранение...",
+      "update": "Обновить навык",
+      "allowedChildSkills": "Allowed Child Skills (JSON-список)"
+    }
+  },
+  "analytics": {
+    "chart": {
+      "requestsTitle": "Количество запросов по дням",
+      "tokensTitle": "Использование токенов по дням",
+      "tableLabel": "Данные графика использования",
+      "dateUtc": "Дата UTC",
+      "requests": "Запросы",
+      "tokens": "Токены"
+    },
+    "checkFilters": "Проверьте период и фильтры аналитики.",
+    "title": "Аналитика использования",
+    "utcNote": "Все даты и дневные интервалы рассчитываются в UTC.",
+    "filters": "Фильтры аналитики",
+    "from": "С даты",
+    "to": "По дату",
+    "user": "Пользователь",
+    "allUsers": "Все пользователи",
+    "loadingUsers": "Загрузка пользователей...",
+    "previousPage": "Предыдущая страница",
+    "back": "Назад",
+    "nextPage": "Следующая страница",
+    "forward": "Вперёд",
+    "model": "Модель",
+    "apply": "Применить",
+    "loading": "Загрузка аналитики...",
+    "totals": "Итоги",
+    "requests": "Запросы",
+    "tokens": "Токены",
+    "requestLimit": "Месячный лимит запросов",
+    "tokenLimit": "Месячный лимит токенов",
+    "unlimited": "Без лимита",
+    "usedIn": "Израсходовано за {month}: {value}",
+    "requestsRemaining": "Осталось запросов: {value}",
+    "tokensRemaining": "Осталось токенов: {value}",
+    "unaccounted": "{count, plural, one {{value} запрос без данных о токенах} few {{value} запроса без данных о токенах} many {{value} запросов без данных о токенах} other {{value} запроса без данных о токенах}}",
+    "noData": "За выбранный период данных нет.",
+    "dynamics": "Динамика",
+    "chartMetric": "Метрика графика",
+    "byModel": "По моделям",
+    "byUser": "По пользователям",
+    "byUserTruncated": "Показаны {shown} из {total} пользователей с расходом — по убыванию токенов. Сузьте период или отфильтруйте по пользователю."
+  },
+  "about": {
+    "description": "Самостоятельно размещаемая платформа для диалогов с ИИ, инструментов, знаний и надёжных мультиагентных сценариев.",
+    "copyright": "© 2026 участники проекта AurumAI. Авторы сохраняют авторские права на свой вклад.",
+    "license": "AurumAI — свободное программное обеспечение под лицензией AGPL-3.0-only, предоставляется без каких-либо гарантий.",
+    "licenseLink": "Лицензия AGPL-3.0-only",
+    "sourceCode": "Исходный код",
+    "sourceIncluded": "Исходный код входит в дистрибутив исходного кода AurumAI. Укажите RUNTIME_SOURCE_CODE_URL, чтобы дать ссылку на исходный код этой установки.",
+    "thirdParty": "Сторонние зависимости распространяются под своими лицензиями; см. THIRD_PARTY_NOTICES.md в дистрибутиве исходного кода.",
+    "returnToSignIn": "Вернуться ко входу"
+  }
+}

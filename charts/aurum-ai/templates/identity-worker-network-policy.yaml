@@ -1,0 +1,35 @@
+{{- if and .Values.identitySync.enabled .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-identity-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "identity-worker" "root" $) | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "aurum-ai.dnsNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.dnsPodLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- range .Values.identitySync.destinations }}
+    {{- if not .ports }}
+    {{- fail "identitySync.destinations require explicit ports" }}
+    {{- end }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr | quote }}
+      ports:
+        {{- toYaml .ports | nindent 8 }}
+    {{- end }}
+{{- end }}

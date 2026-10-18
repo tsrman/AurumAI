@@ -1,0 +1,114 @@
+{{- if .Values.web.enabled }}
+{{- $image := .Values.web.searxng.image -}}
+{{- $tag := $image.tag | default .Values.image.tag | default .Chart.AppVersion -}}
+{{- $secretName := .Values.web.existingSecret | default (printf "%s-web-secrets" .Release.Name | trunc 63 | trimSuffix "-") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-searxng
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "searxng" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.searxng.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "searxng" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "searxng" "root" $) | nindent 8 }}
+      annotations:
+        aurum-ai.io/required-pids-limit: {{ .Values.web.pidLimit | quote }}
+        checksum/web-config: {{ include "aurum-ai.webConfigChecksum" . }}
+        checksum/web-secret: {{ include "aurum-ai.webSecretChecksum" . }}
+    spec:
+      runtimeClassName: {{ .Values.web.runtimeClassName }}
+      automountServiceAccountToken: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 977
+        runAsGroup: 977
+        fsGroup: 977
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: searxng
+          {{- if $image.digest }}
+          image: {{ printf "%s@%s" $image.repository $image.digest | quote }}
+          {{- else }}
+          image: {{ printf "%s:%s" $image.repository $tag | quote }}
+          {{- end }}
+          imagePullPolicy: {{ $image.pullPolicy | default .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: SEARXNG_SECRET
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.web.searxng.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/searxng/settings.yml
+              subPath: settings.yml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/searxng
+            - name: logs
+              mountPath: /var/log/searxng
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-web-config
+            items:
+              - key: settings.yml
+                path: settings.yml
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi
+        - name: logs
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
+{{- end }}

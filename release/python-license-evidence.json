@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "packages": [
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "source_url": "https://pypi.org/pypi/colorama/0.4.6/json",
+      "license": "",
+      "license_expression": null,
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 2.7",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Programming Language :: Python :: Implementation :: PyPy",
+        "Topic :: Terminals"
+      ]
+    },
+    {
+      "name": "docling",
+      "version": "2.137.0",
+      "source_url": "https://pypi.org/pypi/docling/2.137.0/json",
+      "license": null,
+      "license_expression": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "Operating System :: MacOS :: MacOS X",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence"
+      ]
+    },
+    {
+      "name": "docling-slim",
+      "version": "2.137.0",
+      "source_url": "https://pypi.org/pypi/docling-slim/2.137.0/json",
+      "license": null,
+      "license_expression": "MIT",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "Operating System :: MacOS :: MacOS X",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence"
+      ]
+    },
+    {
+      "name": "httpx2-jsfetch",
+      "version": "1.0",
+      "source_url": "https://pypi.org/pypi/httpx2-jsfetch/1.0/json",
+      "license": null,
+      "license_expression": "BSD-3-Clause",
+      "classifiers": [
+        "Development Status :: 4 - Beta",
+        "Environment :: Web Environment",
+        "Framework :: AsyncIO",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Internet :: WWW/HTTP"
+      ]
+    },
+    {
+      "name": "pywin32",
+      "version": "312",
+      "source_url": "https://pypi.org/pypi/pywin32/312/json",
+      "license": "PSF",
+      "license_expression": null,
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Win32 (MS Windows)",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: Python Software Foundation License",
+        "Operating System :: Microsoft :: Windows",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: Implementation :: CPython"
+      ]
+    },
+    {
+      "name": "tokenizers",
+      "version": "0.22.2",
+      "source_url": "https://pypi.org/pypi/tokenizers/0.22.2/json",
+      "license": null,
+      "license_expression": null,
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.9",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence"
+      ]
+    },
+    {
+      "name": "torch",
+      "version": "2.7.1",
+      "source_url": "https://pypi.org/pypi/torch/2.7.1/json",
+      "license": "BSD-3-Clause",
+      "license_expression": null,
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: BSD License",
+        "Programming Language :: C++",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.9",
+        "Topic :: Scientific/Engineering",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Scientific/Engineering :: Mathematics",
+        "Topic :: Software Development",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development :: Libraries :: Python Modules"
+      ]
+    },
+    {
+      "name": "torchvision",
+      "version": "0.22.1",
+      "source_url": "https://pypi.org/pypi/torchvision/0.22.1/json",
+      "license": "BSD",
+      "license_expression": null,
+      "classifiers": []
+    },
+    {
+      "name": "transformers",
+      "version": "5.8.1",
+      "source_url": "https://pypi.org/pypi/transformers/5.8.1/json",
+      "license": "Apache 2.0 License",
+      "license_expression": null,
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Science/Research",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence"
+      ]
+    },
+    {
+      "name": "tzdata",
+      "version": "2026.3",
+      "source_url": "https://pypi.org/pypi/tzdata/2026.3/json",
+      "license": "Apache-2.0",
+      "license_expression": null,
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 3"
+      ]
+    }
+  ]
+}

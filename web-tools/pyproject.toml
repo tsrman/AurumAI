@@ -1,0 +1,40 @@
+[project]
+license = "AGPL-3.0-only"
+name = "web-tools"
+version = "0.1.0"
+description = "Isolated bounded web search and reader adapter"
+requires-python = ">=3.12,<4.0.0"
+dependencies = [
+    "aiohttp==3.14.3",
+    "fastapi>=0.141.0,<0.142.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-settings>=2.7.0,<3.0.0",
+    "pypdf==6.20.0",
+    "uvicorn[standard]>=0.32.0,<0.33.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.0,<0.29.0",
+    "mypy>=1.13.0,<2.0.0",
+    "pytest>=9.0.3,<10.0.0",
+    "pytest-asyncio>=1.4.0,<2.0.0",
+    "ruff>=0.8.0,<0.9.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"

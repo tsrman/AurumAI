@@ -1,0 +1,160 @@
+import { Button } from "@/components/primitives/Button";
+import { Field } from "@/components/primitives/Field";
+import { Slider } from "@/components/primitives/Slider";
+import { Textarea } from "@/components/primitives/Textarea";
+import { BaseToggle } from "./BaseToggle";
+import { ModelPickerField } from "./ModelPickerField";
+import { ToolToggle } from "./ToolToggle";
+import type { Skill } from "@/lib/api";
+import type { ConstructorState, KnowledgeBase, Model } from "@/types/aurum";
+import { useTranslations } from "next-intl";
+
+export interface ConstructorFormProps {
+  state: ConstructorState;
+  setField: (name: keyof ConstructorState, value: ConstructorState[keyof ConstructorState]) => void;
+  toggleTool: (toolName: string) => void;
+  toggleBase: (baseName: string) => void;
+  models: Model[];
+  skills: Skill[];
+  knowledgeBases: KnowledgeBase[];
+  isValid: boolean;
+  save: () => Promise<boolean>;
+  isSaving: boolean;
+  saveError: string | null;
+}
+
+export function ConstructorForm({
+  state,
+  setField,
+  toggleTool,
+  toggleBase,
+  models,
+  skills,
+  knowledgeBases,
+  isValid,
+  save,
+  isSaving,
+  saveError,
+}: ConstructorFormProps) {
+  const t = useTranslations("constructor.form");
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void save();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+        <Field
+          label={t("name")}
+          placeholder={t("namePlaceholder")}
+          value={state.name}
+          onChange={(e) => setField("name", e.target.value)}
+          required
+        />
+      </section>
+
+      <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+        <Field
+          label={t("description")}
+          placeholder={t("descriptionPlaceholder")}
+          value={state.description}
+          onChange={(e) => setField("description", e.target.value)}
+        />
+      </section>
+
+      <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+        <p className="mb-3 text-sm font-medium text-aurum-text-2">{t("model")}</p>
+        <ModelPickerField
+          value={state.model}
+          options={models}
+          onChange={(modelId) => setField("model", modelId)}
+        />
+      </section>
+
+      <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+        <Textarea
+          label={t("systemPrompt")}
+          rows={5}
+          value={state.prompt}
+          onChange={(e) => setField("prompt", e.target.value)}
+        />
+      </section>
+
+      <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+        <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{t("tools")}</h3>
+        <div className="space-y-4">
+          {skills.map((skill) => (
+            <ToolToggle
+              key={skill.id}
+              name={skill.name}
+              description={skill.description ?? ""}
+              checked={state.tools[skill.id] ?? false}
+              onChange={() => toggleTool(skill.id)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+        <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{t("knowledgeBases")}</h3>
+        <div className="space-y-4">
+          {knowledgeBases.map((kb) => (
+            <BaseToggle
+              key={kb.id}
+              name={kb.name}
+              description={kb.description}
+              checked={state.bases[kb.id] ?? false}
+              onChange={() => toggleBase(kb.id)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+        <div className="mb-3 flex items-center justify-between">
+          <label htmlFor="temperature" className="text-sm font-medium text-aurum-text-2">
+            {t("temperature")}
+          </label>
+          {state.temperature !== null ? (
+            <span className="text-sm tabular-nums text-aurum-text">
+              {state.temperature.toFixed(1)}
+            </span>
+          ) : null}
+        </div>
+        <label className="mb-3 flex items-center gap-2 text-sm text-aurum-text-2">
+          <input
+            type="checkbox"
+            checked={state.temperature === null}
+            onChange={(event) =>
+              setField("temperature", event.target.checked ? null : 0.3)
+            }
+          />
+          {t("inherit")}
+        </label>
+        {state.temperature !== null ? (
+          <Slider
+            id="temperature"
+            min={0}
+            max={2}
+            step={0.1}
+            value={state.temperature}
+            onChange={(value) => setField("temperature", value)}
+          />
+        ) : null}
+      </section>
+
+      {saveError ? (
+        <div className="rounded-card border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+          {saveError}
+        </div>
+      ) : null}
+
+      <div className="flex items-center justify-end gap-3 pt-2">
+        <Button type="submit" disabled={!isValid || isSaving}>
+          {isSaving ? t("saving") : t("create")}
+        </Button>
+      </div>
+    </form>
+  );
+}

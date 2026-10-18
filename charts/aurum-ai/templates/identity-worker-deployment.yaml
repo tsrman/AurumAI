@@ -1,0 +1,78 @@
+{{- if .Values.identitySync.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-identity-worker
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.identitySync.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "identity-worker" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "identity-worker" "root" $) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: identity-worker
+          image: {{ include "aurum-ai.image" (dict "service" .Values.backend "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.backend "root" $) }}
+          command: ["python", "-m", "src.maintenance_worker", "identity"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: APP_DEBUG
+              value: {{ .Values.backend.debug | quote }}
+            - name: APP_IDENTITY_SYNC_ENABLED
+              value: "true"
+            - name: APP_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_SECRET_KEY
+            - name: APP_DATABASE_ROLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_DATABASE_ROLE_PASSWORD
+            - name: APP_DATABASE_URL
+              value: "postgresql+asyncpg://aurum_ai_app:$(APP_DATABASE_ROLE_PASSWORD)@{{ .Values.external.postgres.host }}:{{ .Values.external.postgres.port }}/{{ .Values.external.postgres.database }}"
+            - name: APP_TEMPORAL_HOST
+              value: {{ .Values.external.temporal.host | quote }}
+            - name: APP_TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporal.namespace | quote }}
+            - name: APP_LLM_GATEWAY_URL
+              value: {{ .Values.external.llmGateway.url | quote }}
+            - name: APP_GATEWAY_VERIFY_SSL
+              value: {{ .Values.external.llmGateway.verifySsl | quote }}
+            - name: APP_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_GATEWAY_API_KEY
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "src.maintenance_worker", "identity-health"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "src.maintenance_worker", "identity-health"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.identitySync.resources | nindent 12 }}
+{{- end }}

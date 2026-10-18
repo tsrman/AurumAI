@@ -1,0 +1,20 @@
+{
+  "name": "aurum-ai-scripts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Repo-level maintenance checks (not part of any service build)",
+  "type": "module",
+  "scripts": {
+    "check:mermaid": "node check-mermaid.mjs"
+  },
+  "dependencies": {
+    "jsdom": "^26.1.0",
+    "mermaid": "^11.17.2",
+    "typescript": "5.9.3"
+  },
+  "license": "AGPL-3.0-only",
+  "overrides": {
+    "dompurify": "^3.4.16",
+    "katex": "^0.19.0"
+  }
+}

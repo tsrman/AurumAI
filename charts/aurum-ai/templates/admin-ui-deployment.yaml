@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-admin-ui
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "admin-ui" "root" $) | nindent 4 }}
+spec:
+  {{- if not .Values.adminUi.autoscaling.enabled }}
+  replicas: {{ .Values.adminUi.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "admin-ui" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "admin-ui" "root" $) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: admin-ui
+          image: {{ include "aurum-ai.image" (dict "service" .Values.adminUi "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.adminUi "root" $) }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: RUNTIME_SOURCE_CODE_URL
+              value: {{ .Values.adminUi.runtimeConfig.sourceCodeUrl | quote }}
+            # Same derive-from-Ingress rule as frontend-deployment.yaml — an
+            # empty string would silently become the localhost default.
+            - name: RUNTIME_API_URL
+              value: {{ .Values.adminUi.runtimeConfig.apiUrl | default (printf "%s/v1" (include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.backendAdmin "root" $))) | quote }}
+            - name: RUNTIME_KEYCLOAK_URL
+              value: {{ .Values.adminUi.runtimeConfig.keycloakUrl | quote }}
+            - name: RUNTIME_KEYCLOAK_REALM
+              value: {{ .Values.adminUi.runtimeConfig.keycloakRealm | quote }}
+            - name: RUNTIME_KEYCLOAK_CLIENT_ID
+              value: {{ .Values.adminUi.runtimeConfig.keycloakClientId | quote }}
+            - name: RUNTIME_APP_URL
+              value: {{ .Values.adminUi.runtimeConfig.appUrl | default (include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.frontend "root" $)) | quote }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.adminUi.resources | nindent 12 }}

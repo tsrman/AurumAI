@@ -1,0 +1,302 @@
+# Standalone, disposable acceptance project. Never merge this with main Compose.
+# Use --env-file /dev/null and an explicit -p phaseb-lifecycle-test.
+x-backend-env: &backend-env
+  APP_DEBUG: "false"
+  APP_SECRET_KEY: lifecycle-acceptance-only-signing-key
+  APP_DATABASE_URL: postgresql+asyncpg://aurum_ai_app:lifecycle-app-password@postgres:5432/aurum_ai
+  APP_REDIS_URL: redis://redis:6379/0
+  APP_KEYCLOAK_URL: http://keycloak:8080
+  APP_KEYCLOAK_ISSUER: http://127.0.0.1:18080/realms/aurum-ai
+  APP_KEYCLOAK_REALM: aurum-ai
+  APP_KEYCLOAK_CLIENT_ID: business-ui
+  APP_FRONTEND_URL: http://127.0.0.1:13000
+  APP_TEMPORAL_HOST: temporal:7233
+  APP_TEMPORAL_NAMESPACE: default
+  APP_INIT_DB_ON_STARTUP: "false"
+  APP_RUNNER_POOL_SIZE: "0"
+  APP_LLM_GATEWAY_URL: http://gateway:8000
+  APP_GATEWAY_API_KEY: lifecycle-fixture-key
+  APP_IDENTITY_SYNC_ENABLED: "true"
+  APP_IDENTITY_SYNC_WAIT_SECONDS: "10"
+  APP_S3_ENDPOINT: http://minio:9000
+  APP_S3_ACCESS_KEY: lifecycle-business
+  APP_S3_SECRET_KEY: lifecycle-business-password
+  APP_S3_BUCKET: lifecycle-business
+  APP_RAG_API_URL: http://rag-api:8110
+  APP_ARCHIVE_ENABLED: "false"
+  APP_ARCHIVE_RETENTION_DAYS: "180"
+
+services:
+  postgres:
+    image: aurum-ai-postgres:phaseb
+    environment:
+      POSTGRES_DB: aurum_ai
+      POSTGRES_PASSWORD: postgres
+    tmpfs: [/var/lib/postgresql/data]
+    volumes:
+      - ./data-lifecycle-init.sql:/docker-entrypoint-initdb.d/04-lifecycle.sql:ro
+    ports: ["127.0.0.1:55434:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+  temporal:
+    image: temporalio/admin-tools:1.32.0
+    entrypoint: ["temporal", "server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/tmp/lifecycle-temporal.db"]
+    ports: ["127.0.0.1:57233:7233"]
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.2
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/aurum_ai
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+    ports: ["127.0.0.1:18080:8080"]
+    volumes:
+      - ${LIFECYCLE_REALM_FILE:?prepare owned test realm}:/opt/keycloak/data/import/realm.json:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: lifecycle-minio
+      MINIO_ROOT_PASSWORD: lifecycle-minio-password
+    tmpfs: [/data]
+    ports: ["127.0.0.1:59000:9000"]
+  minio-init:
+    # Server image includes the matching mc RELEASE.2025-08-13T08-35-41Z.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    entrypoint: ["/bin/sh", "/fixture/data-lifecycle-minio-init.sh"]
+    volumes:
+      - ./data-lifecycle-minio-init.sh:/fixture/data-lifecycle-minio-init.sh:ro
+      - ./data-lifecycle-business-policy.json:/fixture/data-lifecycle-business-policy.json:ro
+      - ./data-lifecycle-archives-policy.json:/fixture/data-lifecycle-archives-policy.json:ro
+    depends_on: [minio]
+  gateway:
+    image: aurum-ai-test-gateway:latest
+    entrypoint: ["python", "-m", "uvicorn", "test-gateway:app", "--app-dir", "/", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ../k8s-test-gateway.py:/test-gateway.py:ro
+    environment:
+      TEST_GATEWAY_MODEL_ID: lifecycle-test
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    profiles: ["rag-stage", "archive-stage"]
+    command: ["etcd", "-advertise-client-urls=http://etcd:2379", "-listen-client-urls", "http://0.0.0.0:2379", "--data-dir", "/etcd"]
+    tmpfs: [/etcd]
+  milvus:
+    image: milvusdb/milvus:v2.5.27
+    profiles: ["rag-stage", "archive-stage"]
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: lifecycle-minio
+      MINIO_SECRET_ACCESS_KEY: lifecycle-minio-password
+    tmpfs: [/var/lib/milvus]
+    ports: ["127.0.0.1:59530:19530"]
+    depends_on: [etcd, minio]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  embeddings:
+    image: aurum-ai-backend:lifecycle-test
+    profiles: ["rag-stage"]
+    entrypoint: ["python", "/fixture/embeddings.py"]
+    volumes:
+      - ./data-lifecycle-embeddings.py:/fixture/embeddings.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7997/health', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+  rag-worker:
+    build: ../../rag-worker
+    image: aurum-ai-rag-worker:lifecycle-test
+    profiles: ["rag-stage"]
+    environment:
+      RAG_WORKER_DATABASE_URL: postgresql+asyncpg://rag_app:lifecycle-rag-password@postgres:5432/rag_platform
+      RAG_WORKER_TEMPORAL_HOST: temporal:7233
+      RAG_WORKER_MILVUS_URI: http://milvus:19530
+      RAG_WORKER_RERANKER_URL: http://embeddings:7997
+      RAG_WORKER_CONTEXTUAL_RETRIEVAL_ENABLED: "false"
+      RAG_WORKER_S3_ENDPOINT: http://minio:9000
+      RAG_WORKER_S3_ACCESS_KEY: lifecycle-business
+      RAG_WORKER_S3_SECRET_KEY: lifecycle-business-password
+      RAG_WORKER_S3_BUCKET: lifecycle-business
+    depends_on:
+      rag-api: {condition: service_healthy}
+      embeddings: {condition: service_healthy}
+  rag-migrate:
+    image: aurum-ai-rag-api:lifecycle-test
+    profiles: ["rag-stage", "archive-stage"]
+    entrypoint: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      RAG_API_DATABASE_URL: postgresql+asyncpg://rag_app:lifecycle-rag-password@postgres:5432/rag_platform
+      RAG_API_MIGRATION_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/rag_platform
+    depends_on:
+      postgres: {condition: service_healthy}
+  lifecycle-roles:
+    image: aurum-ai-postgres:phaseb
+    profiles: ["archive-stage"]
+    entrypoint: ["psql", "-h", "postgres", "-U", "postgres", "-d", "aurum_ai", "-f", "/fixture/roles.sql"]
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./data-lifecycle-operator-roles.sql:/fixture/roles.sql:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      rag-migrate: {condition: service_completed_successfully}
+  rag-archive:
+    image: aurum-ai-rag-api:lifecycle-test
+    profiles: ["archive-stage"]
+    entrypoint: ["python", "-m", "uvicorn", "src.main_archive:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8111"]
+    environment:
+      RAG_API_ARCHIVE_DATABASE_URL: postgresql+asyncpg://lifecycle_rag_operator:lifecycle-rag-operator-password@postgres:5432/rag_platform
+      RAG_API_ARCHIVE_SERVICE_SECRET: lifecycle-private-rag-archive-secret
+      RAG_API_ARCHIVE_S3_ENDPOINT: http://minio:9000
+      RAG_API_ARCHIVE_S3_ACCESS_KEY: lifecycle-archives
+      RAG_API_ARCHIVE_S3_SECRET_KEY: lifecycle-archives-password
+      RAG_API_ARCHIVE_S3_BUCKET: lifecycle-archives
+      RAG_API_S3_ENDPOINT: http://minio:9000
+      RAG_API_S3_ACCESS_KEY: lifecycle-business
+      RAG_API_S3_SECRET_KEY: lifecycle-business-password
+      RAG_API_S3_BUCKET: lifecycle-business
+      RAG_API_TEMPORAL_HOST: temporal:7233
+      RAG_API_MILVUS_URI: http://milvus:19530
+    ports: ["127.0.0.1:18111:8111"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8111/health', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      lifecycle-roles: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+      milvus: {condition: service_healthy}
+      temporal: {condition: service_healthy}
+  data-worker:
+    image: aurum-ai-backend:lifecycle-test
+    profiles: ["archive-stage"]
+    entrypoint: ["python", "-m", "src.maintenance_worker", "data"]
+    environment:
+      APP_DEBUG: "false"
+      APP_SECRET_KEY: lifecycle-data-process-only-secret
+      APP_DATABASE_URL: postgresql+asyncpg://lifecycle_data_operator:lifecycle-data-operator-password@postgres:5432/aurum_ai
+      APP_TEMPORAL_HOST: temporal:7233
+      APP_TEMPORAL_NAMESPACE: default
+      APP_ARCHIVE_ENABLED: "false"
+      APP_ARCHIVE_RETENTION_DAYS: "180"
+      APP_ARCHIVE_S3_ENDPOINT: http://minio:9000
+      APP_ARCHIVE_S3_ACCESS_KEY: lifecycle-archives
+      APP_ARCHIVE_S3_SECRET_KEY: lifecycle-archives-password
+      APP_ARCHIVE_S3_BUCKET: lifecycle-archives
+      APP_ARCHIVE_RAG_URL: http://rag-archive:8111
+      APP_ARCHIVE_RAG_SERVICE_SECRET: lifecycle-private-rag-archive-secret
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.maintenance_worker", "data-health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      lifecycle-roles: {condition: service_completed_successfully}
+      rag-archive: {condition: service_healthy}
+  rag-api:
+    build: ../../rag-api
+    image: aurum-ai-rag-api:lifecycle-test
+    profiles: ["rag-stage"]
+    environment:
+      RAG_API_DATABASE_URL: postgresql+asyncpg://rag_app:lifecycle-rag-password@postgres:5432/rag_platform
+      RAG_API_TEMPORAL_HOST: temporal:7233
+      RAG_API_MILVUS_URI: http://milvus:19530
+      RAG_API_RERANKER_URL: http://embeddings:7997
+    ports: ["127.0.0.1:18110:8110"]
+    depends_on:
+      rag-migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      temporal: {condition: service_healthy}
+      milvus: {condition: service_healthy}
+  migrate:
+    build: ../../business-backend
+    image: aurum-ai-backend:lifecycle-test
+    entrypoint: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      <<: *backend-env
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/aurum_ai
+      APP_DATABASE_ROLE_PASSWORD: lifecycle-app-password
+    depends_on:
+      postgres: {condition: service_healthy}
+  backend:
+    image: aurum-ai-backend:lifecycle-test
+    entrypoint: ["python", "-m", "uvicorn", "src.main_business:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *backend-env
+    ports: ["127.0.0.1:18000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+      temporal: {condition: service_healthy}
+      keycloak: {condition: service_started}
+    restart: on-failure:10
+  backend-admin:
+    image: aurum-ai-backend:lifecycle-test
+    entrypoint: ["python", "-m", "uvicorn", "src.main_admin:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      <<: *backend-env
+      APP_KEYCLOAK_CLIENT_ID: admin-ui
+      APP_FRONTEND_URL: http://127.0.0.1:13100
+    ports: ["127.0.0.1:18001:8001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+      keycloak: {condition: service_started}
+    restart: on-failure:10
+  identity-worker:
+    image: aurum-ai-backend:lifecycle-test
+    entrypoint: ["python", "-m", "src.maintenance_worker", "identity"]
+    environment: *backend-env
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      temporal: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.maintenance_worker", "identity-health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  frontend:
+    image: aurum-ai-frontend:latest
+    environment:
+      RUNTIME_API_URL: http://127.0.0.1:18000/v1
+      RUNTIME_KEYCLOAK_URL: http://127.0.0.1:18080
+      RUNTIME_KEYCLOAK_REALM: aurum-ai
+      RUNTIME_KEYCLOAK_CLIENT_ID: business-ui
+      RUNTIME_ADMIN_URL: http://127.0.0.1:13100
+    ports: ["127.0.0.1:13000:3000"]
+  admin-ui:
+    image: aurum-ai-admin-ui:latest
+    environment:
+      RUNTIME_API_URL: http://127.0.0.1:18001/v1
+      RUNTIME_KEYCLOAK_URL: http://127.0.0.1:18080
+      RUNTIME_KEYCLOAK_REALM: aurum-ai
+      RUNTIME_KEYCLOAK_CLIENT_ID: admin-ui
+      RUNTIME_APP_URL: http://127.0.0.1:13000
+    ports: ["127.0.0.1:13100:3000"]

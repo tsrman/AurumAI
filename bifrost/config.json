@@ -1,0 +1,16 @@
+{
+  "providers": {
+    "openrouter": {
+      "keys": [
+        {
+          "name": "openrouter-key-1",
+          "value": "env.OPENROUTER_API_KEY",
+          "weight": 1,
+          "models": [
+            "*"
+          ]
+        }
+      ]
+    }
+  }
+}

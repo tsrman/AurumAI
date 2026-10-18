@@ -1,0 +1,15 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Exact public fixtures and non-credential code phrases; no directory exclusions."
+regexTarget = "match"
+regexes = [
+  '''^STORAGE_KEY, "conversation-1"$''',
+  '''^langfuseSecretKey: "sk-lf-550e8400-e29b-41d4-a716-446655440001"$''',
+  '''^langfuse_key="sk-lf-550e8400-e29b-41d4-a716-446655440001"$''',
+  '''^keys, unique/idempotency $''',
+  '''^access_revoked", non_retryable=True(?:\\n)?$'''
+]

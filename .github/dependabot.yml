@@ -1,0 +1,114 @@
+version: 2
+
+updates:
+  # Python services — seven uv projects (pyproject.toml + uv.lock).
+  - package-ecosystem: "uv"
+    directory: "/business-backend"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/conversation-runner"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/tool-worker"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/skill-executor"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/rag-api"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/rag-worker"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "/web-tools"
+    schedule:
+      interval: "weekly"
+
+  # Frontends and the scripts/ harness (each has its own package.json).
+  - package-ecosystem: "npm"
+    directory: "/business-ui"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/admin-ui"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/scripts"
+    schedule:
+      interval: "weekly"
+
+  # Application, infrastructure and reference-server Dockerfile directories.
+  - package-ecosystem: "docker"
+    directory: "/business-backend"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/conversation-runner"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/tool-worker"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/skill-executor"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/skill-sandbox"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/rag-api"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/rag-worker"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/web-tools"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/business-ui"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/admin-ui"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/mcp/everything"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/mcp/fetch"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/infra/postgres"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/infra/web-egress"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/infra/maintenance-egress"
+    schedule:
+      interval: "weekly"
+
+  # CI workflow actions.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

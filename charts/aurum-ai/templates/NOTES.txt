@@ -1,0 +1,19 @@
+aurum-ai deployed as {{ .Release.Name }}.
+
+  Frontend:      {{ include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.frontend "root" $) }}
+  Admin UI:      {{ include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.adminUi "root" $) }}
+  Backend:       {{ include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.backend "root" $) }}
+  Backend admin: {{ include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.backendAdmin "root" $) }}
+
+Check rollout status:
+  kubectl rollout status deployment/{{ .Release.Name }}-backend
+  kubectl rollout status deployment/{{ .Release.Name }}-backend-admin
+  kubectl rollout status deployment/{{ .Release.Name }}-frontend
+  kubectl rollout status deployment/{{ .Release.Name }}-admin-ui
+  kubectl rollout status deployment/{{ .Release.Name }}-tool-worker
+  kubectl rollout status deployment/{{ .Release.Name }}-skill-executor
+
+Check permanent and dynamic Pods:
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl get pods -n {{ include "aurum-ai.runnerNamespace" . }}
+  kubectl get pods -n {{ include "aurum-ai.sandboxNamespace" . }}

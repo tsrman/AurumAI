@@ -1,0 +1,42 @@
+# Fixed, curated library set for code skill sandboxes. Pinned deliberately —
+# the only way to add a library is a commit here + image rebuild/redeploy,
+# never something an uploaded bundle or the LLM can control at runtime.
+#
+# Sourced by scanning every skill in github.com/anthropics/skills (the
+# reference Agent Skills catalog) and github.com/openai/skills (Codex's skill
+# catalog) for third-party imports and requirements.txt files, so the base
+# image can run the pdf/docx/pptx/xlsx/slack-gif-creator/security-ownership-map
+# skills out of the box. Deliberately excluded: playwright/node (webapp-testing,
+# web-artifacts-builder, playwright — browser/JS tooling, out of scope for this
+# Python sandbox), anthropic/mcp/openai SDKs (mcp-builder, speech, transcribe,
+# imagegen — dev-time/API meta-skills needing outbound network access, which
+# sandboxes don't have by default), and the openai/skills deploy/SaaS-CLI
+# skills (cloudflare-deploy, vercel-deploy, figma-*, notion-*, linear, sentry,
+# gh-*, etc. — orchestrate external platforms over the network, not a library gap).
+pypdf==5.1.0
+reportlab==4.2.5
+pillow==12.3.0
+pandas==2.2.3
+requests==2.32.3
+
+# pdf skill: OCR + rasterization (needs system tesseract-ocr/poppler-utils)
+pdf2image==1.17.0
+pdfplumber==0.11.4
+pytesseract==0.3.13
+
+# docx/pptx/xlsx skills: OOXML manipulation (needs system libreoffice for
+# soffice-based rendering/recalculation)
+openpyxl==3.1.5
+defusedxml==0.7.1
+lxml==5.3.0
+
+# skill-creator skill: SKILL.md frontmatter parsing
+PyYAML==6.0.2
+
+# slack-gif-creator skill: GIF/video frame assembly (needs system ffmpeg)
+numpy==2.1.3
+imageio==2.36.1
+imageio-ffmpeg==0.5.1
+
+# security-ownership-map skill (openai/skills): repo ownership graph analysis
+networkx==3.4.2

@@ -1,0 +1,77 @@
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrations
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: migrations
+  annotations:
+    # A Helm hook, deliberately NOT an init container on the backend
+    # Deployment: an init container runs once per replica, so on a 3-replica
+    # Deployment `alembic upgrade head` would fire three times concurrently.
+    # pre-install,pre-upgrade guarantees this finishes (and the schema is
+    # settled) before any backend/backend-admin pod using the new image
+    # starts rolling out.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "migrations" "root" $) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrations
+          image: {{ include "aurum-ai.image" (dict "service" .Values.backend "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.backend "root" $) }}
+          # Overrides business-backend/entrypoint.sh entirely — that script
+          # always execs gunicorn at the end, so a Job needs to skip it and
+          # run the migration step on its own.
+          command: ["python", "-m", "alembic", "upgrade", "head"]
+          env:
+            # Same flag as the backend Deployment: DEBUG=true relaxes the
+            # "must not be the placeholder password/secret" fail-fast checks
+            # in config.py and this migration (see 2026_06_21_app_role_force_rls.py)
+            # — needed against a Postgres a debug-mode compose stack already
+            # created with its own default passwords.
+            - name: APP_DEBUG
+              value: {{ .Values.backend.debug | quote }}
+            # $(...) below only expands against env vars defined earlier in
+            # this same list — this one has to come first.
+            - name: APP_MIGRATION_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.migrationSecretName" . }}
+                  key: APP_MIGRATION_DATABASE_PASSWORD
+            # The postgres role, not aurum_ai_app — RLS-bypassing DDL
+            # access, used only for this one command, never by a running
+            # backend/backend-admin pod.
+            - name: APP_DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.external.postgres.migrationUser }}:$(APP_MIGRATION_DATABASE_PASSWORD)@{{ .Values.external.postgres.host }}:{{ .Values.external.postgres.port }}/{{ .Values.external.postgres.database }}"
+            - name: APP_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.migrationSecretName" . }}
+                  key: APP_SECRET_KEY
+            # Read directly (os.environ, not Settings) by the
+            # 2026_06_21_app_role_force_rls migration, which creates the
+            # aurum_ai_app role with this exact password — must match
+            # what backend/backend-admin's own APP_DATABASE_ROLE_PASSWORD
+            # is, or those pods authenticate against Postgres with the
+            # wrong password after this migration runs.
+            - name: APP_DATABASE_ROLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.migrationSecretName" . }}
+                  key: APP_DATABASE_ROLE_PASSWORD
+{{- end }}

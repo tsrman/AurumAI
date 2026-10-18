@@ -1,0 +1,11 @@
+# Vendored from temporalio/samples-server (compose/dynamicconfig/development-sql.yaml).
+# Mounted into temporalio/server's config dir (docker-compose.yml's temporal
+# service) — replaces the base config that temporalio/auto-setup used to bake
+# in and render via `dockerize`; temporalio/server has no such template, so
+# this file (plus DB_*/POSTGRES_*/BIND_ON_IP env vars) is the whole config.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true # Dev setup only. Please don't turn this on in production.
+    constraints: {}

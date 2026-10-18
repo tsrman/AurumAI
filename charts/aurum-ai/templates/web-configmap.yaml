@@ -1,0 +1,141 @@
+{{- if .Values.web.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-web-config
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+data:
+  settings.yml: |
+    use_default_settings:
+      engines:
+        keep_only:
+          - brave
+          - duckduckgo
+          - startpage
+          - wikipedia
+    general:
+      debug: false
+      instance_name: AurumAI Search
+      enable_metrics: false
+    search:
+      safe_search: 1
+      autocomplete: ""
+      default_lang: all
+      formats:
+        - json
+    server:
+      secret_key: ultrasecretkey
+      bind_address: "0.0.0.0"
+      port: 8080
+      limiter: false
+      public_instance: false
+      image_proxy: false
+      method: POST
+    preferences:
+      lock:
+        - categories
+        - language
+        - safesearch
+    engines:
+      - name: brave
+        disabled: false
+      - name: duckduckgo
+        disabled: false
+      - name: startpage
+        disabled: false
+      - name: wikipedia
+        disabled: false
+  operational-gates.yaml: |
+    cniNetworkPolicyEnforcementRequired: true
+    fqdnAllowlistClaimed: false
+    pidLimit:
+      runtimeClassRequired: {{ .Values.web.runtimeClassName | quote }}
+      kubeletPodPidsLimitMaximum: {{ .Values.web.pidLimit }}
+    rollout:
+      - migrations
+      - backend-gate-off
+      - web-workloads-and-policy-enforcement
+      - runner-and-ui
+      - operator-enable
+    rollback:
+      gateOffBlocksNewCalls: true
+      existingTurnSettlementPreserved: true
+      sourceReadsPreserved: true
+    metrics:
+      allowedLabels:
+        - tool
+        - status
+      forbiddenLabels:
+        - org
+        - query
+        - url
+        - content
+      alertStatuses:
+        - web_timeout
+        - web_unavailable
+        - web_url_blocked
+        - web_too_large
+        - unsupported_document
+      # Queue saturation and an upstream 429 deliberately collapse to the
+      # public web_unavailable status. This preserves bounded cardinality;
+      # alerts identify the operator action class, not a tenant or URL.
+      alertConditions:
+        boundedQueue:
+          - web_unavailable
+        timeout:
+          - web_timeout
+        upstream429:
+          - web_unavailable
+        policyDeny:
+          - web_url_blocked
+        parserFailure:
+          - web_unavailable
+          - web_timeout
+          - web_too_large
+          - unsupported_document
+  # Prometheus rule file for the backend's existing low-cardinality counters.
+  # The chart has no monitoring-stack dependency; operators load this file
+  # into their existing Prometheus rule mechanism during the enforcement gate.
+  prometheus-alerts.yml: |
+    groups:
+      - name: aurum-ai-web-tools
+        rules:
+          - alert: WebToolsTimeouts
+            expr: >-
+              sum by (tool, status) (increase(web_tool_network_attempts_total{status="web_timeout"}[5m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Web tool requests are timing out
+              description: Bounded web tool requests exceeded their end-to-end deadline.
+          - alert: WebToolsUnavailable
+            expr: >-
+              sum by (tool, status) (increase(web_tool_network_attempts_total{status="web_unavailable"}[5m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Web tool boundary is unavailable
+              description: The bounded queue, upstream 429, network boundary, or generic parser path reported unavailable.
+          - alert: WebToolsPolicyDenials
+            expr: >-
+              sum by (tool, status) (increase(web_tool_network_attempts_total{status="web_url_blocked"}[5m])) > 10
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Web target policy denials increased
+              description: Public-target validation or network policy denied a bounded web request.
+          - alert: WebToolsParserFailures
+            expr: >-
+              sum by (tool, status) (increase(web_tool_network_attempts_total{tool="web_read",status=~"web_unavailable|web_timeout|web_too_large|unsupported_document"}[5m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Web read failures compatible with parser pressure increased
+              description: These web_read statuses may include parser timeout, size, or unsupported-document rejection; web_timeout and web_unavailable can also have non-parser causes.
+{{- end }}

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "search": {
+    "query": "release notes",
+    "language": "en",
+    "time_range": "week"
+  },
+  "read": {
+    "url": "https://example.org/report.pdf"
+  },
+  "search_response": {
+    "results": [
+      {
+        "title": "Release",
+        "url": "https://example.org/release",
+        "snippet": "Release notes",
+        "published_at": "2026-09-01T12:30:00Z"
+      }
+    ]
+  },
+  "read_response": {
+    "requested_url": "https://example.org/report.pdf",
+    "final_url": "https://cdn.example.org/report.pdf",
+    "content_type": "application/pdf",
+    "text": "[Page 1] Report",
+    "title": "Report",
+    "truncated": false,
+    "page_count": 1
+  }
+}

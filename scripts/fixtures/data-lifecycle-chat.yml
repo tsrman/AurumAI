@@ -1,0 +1,20 @@
+# Optional overlay after scripts/check-data-lifecycle-runtime.py passes.
+# Exclusive: do not run another Docker conversation stack during acceptance.
+# Combine only with data-lifecycle-compose.yml, never with main Compose.
+services:
+  backend:
+    environment:
+      APP_DOCKER_NETWORK: phaseb-lifecycle-test_runner
+      APP_RUNNER_IMAGE: business-runner:lifecycle-test
+      EVALUATOR_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add: ["${LIFECYCLE_DOCKER_GID:?set test Docker socket group}"]
+    networks: [default, runner]
+  redis:
+    networks: [default, runner]
+  temporal:
+    networks: [default, runner]
+networks:
+  runner:
+    internal: true

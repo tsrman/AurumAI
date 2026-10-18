@@ -1,0 +1,3 @@
+{{- if and .Values.identitySync.admissionEnabled (not .Values.identitySync.enabled) -}}
+{{- fail "identitySync.admissionEnabled requires identitySync.enabled: start the worker before enabling admission" -}}
+{{- end -}}

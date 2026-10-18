@@ -1,0 +1,10 @@
+apiVersion: v2
+name: aurum-ai
+description: >-
+  AurumAI — application and conversation runtime deployment (backend,
+  backend-admin, frontend, admin-ui). Postgres/Redis/Keycloak/Temporal/MinIO
+  stay in docker-compose.yml for now; see docs/ARCHITECTURE.md
+  and ROADMAP.md §A.7.
+type: application
+version: 0.2.0
+appVersion: "0.1.0"

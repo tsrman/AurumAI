@@ -1,0 +1,11 @@
+# Only the exclusive HITL wrapper loads this overlay. Production stays at 1800s.
+services:
+  hitl-runner:
+    profiles: [build]
+    image: business-runner-hitl-e2e:latest
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.e2e-hitl
+  backend:
+    environment:
+      APP_RUNNER_IMAGE: business-runner-hitl-e2e:latest

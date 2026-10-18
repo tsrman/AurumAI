@@ -1,0 +1,56 @@
+[project]
+license = "AGPL-3.0-only"
+name = "skill-executor"
+version = "0.1.0"
+description = "Ephemeral sandbox container executor for code skills"
+requires-python = ">=3.12,<4.0.0"
+dependencies = [
+    "fastapi>=0.141.0,<0.142.0",
+    "uvicorn>=0.34.0,<0.35.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-settings>=2.7.0,<3.0.0",
+    "aiodocker>=0.23.0,<0.24.0",
+    "aioboto3>=13.4.0,<14.0.0",
+    "python-frontmatter>=1.1.0,<2.0.0",
+    "kubernetes-asyncio>=36.1.0,<37.0.0",
+    "opentelemetry-api>=1.29.0,<2.0.0",
+    "opentelemetry-sdk>=1.29.0,<2.0.0",
+    "opentelemetry-exporter-otlp>=1.29.0,<2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.50b0",
+    "opentelemetry-instrumentation-httpx>=0.50b0",
+    "prometheus-client>=0.21.0,<0.27.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3,<10.0.0",
+    "pytest-asyncio>=1.4.0,<2.0.0",
+    "httpx>=0.28.0,<0.29.0",
+    "mypy>=1.13.0,<2.0.0",
+    "ruff>=0.8.0,<0.9.0",
+]
+
+# Services are not installed as libraries: Docker copies their source,
+# while uv creates the environment from the frozen lockfile.
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+# No upstream stubs/py.typed markers exist for these.
+
+[[tool.mypy.overrides]]
+module = ["aiodocker.*", "aioboto3.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# With tool.uv package=false, put the project root on sys.path explicitly;
+# the previous package installation used to provide this import path
+# implicitly.
+pythonpath = ["."]

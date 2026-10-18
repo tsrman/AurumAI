@@ -1,0 +1,52 @@
+[project]
+license = "AGPL-3.0-only"
+name = "conversation-runner"
+version = "0.1.0"
+description = "Per-conversation Temporal worker + LLM runner"
+requires-python = ">=3.12,<4.0.0"
+dependencies = [
+    "temporalio>=1.8.0,<2.0.0",
+    "redis>=5.2.0,<6.0.0",
+    "httpx>=0.28.0,<0.29.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-settings>=2.7.0,<3.0.0",
+    "fastapi>=0.141.0,<0.142.0",
+    "uvicorn>=0.34.0,<0.35.0",
+    "opentelemetry-api>=1.29.0,<2.0.0",
+    "opentelemetry-sdk>=1.29.0,<2.0.0",
+    "opentelemetry-exporter-otlp>=1.29.0,<2.0.0",
+    "langfuse>=2.57.0,<3.0.0",
+    "jsonschema>=4.23.0,<5.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3,<10.0.0",
+    "pytest-asyncio>=1.4.0,<2.0.0",
+    "pytest-timeout>=2.4,<3.0.0",
+    "mypy>=1.13.0,<2.0.0",
+    "ruff>=0.8.0,<0.9.0",
+    "types-jsonschema>=4.23.0,<5.0.0",
+]
+
+# Services are not installed as libraries: Docker copies their source,
+# while uv creates the environment from the frozen lockfile.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+timeout = 60
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["langfuse.*"]
+ignore_missing_imports = true

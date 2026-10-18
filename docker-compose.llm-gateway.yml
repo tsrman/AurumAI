@@ -1,0 +1,77 @@
+### Optional overlay for real LLM calls through local Bifrost
+### (https://github.com/maximhq/bifrost), instead of the development mock
+### or a direct external gateway.
+###
+### Use with the base Compose file. The OpenRouter provider key is
+### operator-supplied and referenced from the environment.
+###   export OPENROUTER_API_KEY=sk-or-v1-...
+###   ./scripts/bootstrap-dev-env.sh  # preserve the existing stack secrets
+###   docker compose -f docker-compose.yml -f docker-compose.llm-gateway.yml up -d
+###
+### The public base config (bifrost/config.json) has OpenRouter only;
+### credentials remain environment references.
+### Bifrost model catalog entries already contain provider prefixes,
+### such as openrouter/....
+### Use the exact accessible model ID returned by the gateway.
+### Do not substitute a personal default model in shipped examples.
+### Backend and UI forward the configured model identifier unchanged.
+### No extra provider-specific model mapping is needed.
+
+services:
+  bifrost:
+    image: maximhq/bifrost:v2.1.1
+    container_name: aurum-ai-bifrost
+    ports:
+      # Bind loopback only: Bifrost holds provider credentials in memory
+      # and its local HTTP API does not require authentication.
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - ./bifrost/config.json:/app/data/config.json:ro
+      - bifrost_data:/app/data
+    environment:
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      APP_PORT: "8080"
+      APP_HOST: "0.0.0.0"
+
+  backend:
+    environment:
+      # Use local Bifrost instead of direct gateway/development mock.
+      # Bifrost does not authenticate this incoming Authorization header:
+      # it uses separately configured provider keys. The API treats DEBUG=true
+      # with an empty gateway key as unconfigured/mock mode, so this local
+      # overlay uses an explicit nonempty marker to select gateway proxying.
+      # This marker is not a provider credential.
+      # Provider credentials remain in the gateway environment.
+      APP_LLM_GATEWAY_URL: "http://bifrost:8080"
+      APP_GATEWAY_API_KEY: "bifrost-local-no-auth-required"
+    depends_on:
+      bifrost:
+        condition: service_started
+
+  backend-admin:
+    environment:
+      # Same switch as backend above. Without this, backend-admin keeps its
+      # base-compose default (APP_LLM_GATEWAY_URL defaulting to backend:8000,
+      # APP_GATEWAY_API_KEY empty) — and APP_DEBUG=true plus an empty
+      # GATEWAY_API_KEY makes it treat the gateway as "not configured" and
+      # fall back to its built-in 3-model mock catalog, so admin-plane model
+      # resolution (agent/workflow-node validation against real model ids)
+      # silently never reaches Bifrost even though chat itself does.
+      APP_LLM_GATEWAY_URL: "http://bifrost:8080"
+      APP_GATEWAY_API_KEY: "bifrost-local-no-auth-required"
+    depends_on:
+      bifrost:
+        condition: service_started
+
+  rag-worker:
+    environment:
+      # Same switch as backend above, for contextual retrieval's LLM calls
+      # (indexing/contextual.py) — Bifrost needs no Authorization header at
+      # all, so RAG_WORKER_OPENAI_API_KEY is left unset.
+      RAG_WORKER_LLM_GATEWAY_URL: "http://bifrost:8080/v1/chat/completions"
+    depends_on:
+      bifrost:
+        condition: service_started
+
+volumes:
+  bifrost_data:

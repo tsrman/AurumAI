@@ -1,0 +1,115 @@
+# Public HTTPS publication through Traefik. Usage:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d --build
+#
+# Requires PUBLIC_DOMAIN, ACME_EMAIL and TEMPORAL_UI_BASIC_AUTH_PASSWORD in
+# .env (scripts/bootstrap-dev-env.sh generates the password). DNS records for
+# chat, admin, api, admin-api, auth, temporal and langfuse under PUBLIC_DOMAIN
+# must point at this host, and ports 80/443 must be reachable for the
+# Let's Encrypt HTTP-01 challenge. Traefik is the only service published on
+# all interfaces; keep PUBLIC_BIND_ADDRESS at its loopback default.
+# Routes live in infra/traefik/dynamic/aurumai.yml.
+
+services:
+  traefik-auth:
+    # Writes the Temporal UI basic-auth file. The password is read from stdin,
+    # so it never appears in a process argument list.
+    image: httpd:2.4.69-alpine
+    environment:
+      TEMPORAL_UI_BASIC_AUTH_USER: "${TEMPORAL_UI_BASIC_AUTH_USER:-operator}"
+      TEMPORAL_UI_BASIC_AUTH_PASSWORD: "${TEMPORAL_UI_BASIC_AUTH_PASSWORD:?Run ./scripts/bootstrap-dev-env.sh to generate TEMPORAL_UI_BASIC_AUTH_PASSWORD}"
+    command:
+      - sh
+      - -ec
+      - |
+        umask 077
+        printf '%s\n' "$$TEMPORAL_UI_BASIC_AUTH_PASSWORD" \
+          | htpasswd -niB "$$TEMPORAL_UI_BASIC_AUTH_USER" > /auth/temporal.htpasswd.tmp
+        mv /auth/temporal.htpasswd.tmp /auth/temporal.htpasswd
+    volumes:
+      - traefik-auth:/auth
+    network_mode: none
+
+  traefik:
+    image: traefik:v3.7.14
+    container_name: aurum-ai-traefik
+    restart: unless-stopped
+    command:
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      # Document uploads can take longer than Traefik's 60s default to send.
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=600s
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?Set ACME_EMAIL for Let's Encrypt registration}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      # Point at the Let's Encrypt staging directory while testing DNS setup.
+      - --certificatesresolvers.letsencrypt.acme.caserver=${ACME_CA_SERVER:-https://acme-v02.api.letsencrypt.org/directory}
+    environment:
+      PUBLIC_DOMAIN: "${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN to the base domain whose subdomains point at this host}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/traefik/dynamic:/etc/traefik/dynamic:ro
+      - traefik-auth:/etc/traefik/auth:ro
+      - traefik-acme:/letsencrypt
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      traefik-auth:
+        condition: service_completed_successfully
+
+  keycloak:
+    environment:
+      # Fixed public issuer; backend containers keep using http://keycloak:8080
+      # for discovery/JWKS through the dynamic backchannel.
+      KC_HOSTNAME: "https://auth.${PUBLIC_DOMAIN}"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      # Substituted into keycloak/realm-export.json on the first realm import.
+      AURUMAI_CHAT_ORIGIN: "https://chat.${PUBLIC_DOMAIN}"
+      AURUMAI_ADMIN_ORIGIN: "https://admin.${PUBLIC_DOMAIN}"
+
+  backend:
+    environment:
+      APP_KEYCLOAK_ISSUER: "https://auth.${PUBLIC_DOMAIN}/realms/aurum-ai"
+      APP_FRONTEND_URL: "https://chat.${PUBLIC_DOMAIN}"
+
+  backend-admin:
+    environment:
+      APP_KEYCLOAK_ISSUER: "https://auth.${PUBLIC_DOMAIN}/realms/aurum-ai"
+      APP_FRONTEND_URL: "https://admin.${PUBLIC_DOMAIN}"
+
+  frontend:
+    environment:
+      RUNTIME_API_URL: "https://api.${PUBLIC_DOMAIN}/v1"
+      RUNTIME_KEYCLOAK_URL: "https://auth.${PUBLIC_DOMAIN}"
+      RUNTIME_ADMIN_URL: "https://admin.${PUBLIC_DOMAIN}"
+
+  admin-ui:
+    environment:
+      RUNTIME_API_URL: "https://admin-api.${PUBLIC_DOMAIN}/v1"
+      RUNTIME_KEYCLOAK_URL: "https://auth.${PUBLIC_DOMAIN}"
+      RUNTIME_APP_URL: "https://chat.${PUBLIC_DOMAIN}"
+
+  langfuse-server:
+    environment:
+      NEXTAUTH_URL: "https://langfuse.${PUBLIC_DOMAIN}"
+
+  langfuse-worker:
+    environment:
+      NEXTAUTH_URL: "https://langfuse.${PUBLIC_DOMAIN}"
+
+volumes:
+  traefik-auth:
+  traefik-acme:

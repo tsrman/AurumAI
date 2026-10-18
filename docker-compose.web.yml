@@ -1,0 +1,158 @@
+services:
+  backend:
+    networks:
+      web-tools-ingress:
+        aliases: ["web-tools-backend"]
+
+  web-tools-egress:
+    build:
+      context: ./infra/web-egress
+    image: aurum-ai-web-egress:latest
+    profiles: ["web"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_ADMIN"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /run:rw,noexec,nosuid,size=1m
+    environment:
+      WEB_EGRESS_MODE: web-tools
+      WEB_EGRESS_LOCAL_PORT: "8120"
+      WEB_EGRESS_READY_PORT: "8190"
+      WEB_EGRESS_INGRESS_HOST: web-tools-backend
+      WEB_EGRESS_INGRESS_PORT: "8120"
+      WEB_EGRESS_INTERNAL_HOST: searxng
+      WEB_EGRESS_INTERNAL_PORT: "8080"
+      WEB_EGRESS_FORBIDDEN_CIDRS: "${WEB_EGRESS_FORBIDDEN_CIDRS:-}"
+    networks:
+      web-tools-ingress:
+        aliases: ["web-tools"]
+      web-search:
+        aliases: ["web-tools"]
+      web-public:
+        gw_priority: 1
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/bin/web-egress-readiness", "--check", "--port", "8190"]
+      interval: 2s
+      timeout: 2s
+      start_period: 1s
+      retries: 5
+    restart: unless-stopped
+
+  web-tools:
+    build:
+      context: ./web-tools
+      dockerfile: Dockerfile
+    image: aurum-ai-web-tools:latest
+    profiles: ["web"]
+    network_mode: service:web-tools-egress
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    environment:
+      WEB_TOOLS_SERVICE_SECRET: "${WEB_TOOLS_SERVICE_SECRET:?WEB_TOOLS_SERVICE_SECRET must be set}"
+      WEB_TOOLS_SEARXNG_URL: http://searxng:8080
+      # One operator variable drives both enforcement layers: the nftables
+      # guard above and the application's own pre-connect address check.
+      WEB_TOOLS_FORBIDDEN_CIDRS: "${WEB_EGRESS_FORBIDDEN_CIDRS:-}"
+    entrypoint:
+      - python3
+      - /usr/local/bin/web-egress-readiness
+      - --wait
+      - --port
+      - "8190"
+      - --
+      - python
+      - -m
+      - src.main
+    volumes:
+      - ./infra/web-egress/readiness.py:/usr/local/bin/web-egress-readiness:ro
+    depends_on:
+      web-tools-egress:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+
+  searxng-egress:
+    build:
+      context: ./infra/web-egress
+    image: aurum-ai-web-egress:latest
+    profiles: ["web"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_ADMIN"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /run:rw,noexec,nosuid,size=1m
+    environment:
+      WEB_EGRESS_MODE: searxng
+      WEB_EGRESS_LOCAL_PORT: "8080"
+      WEB_EGRESS_READY_PORT: "8191"
+      WEB_EGRESS_INGRESS_HOST: web-tools
+      WEB_EGRESS_INGRESS_PORT: "8080"
+      WEB_EGRESS_FORBIDDEN_CIDRS: "${WEB_EGRESS_FORBIDDEN_CIDRS:-}"
+    networks:
+      web-search:
+        aliases: ["searxng"]
+      web-public:
+        gw_priority: 1
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/bin/web-egress-readiness", "--check", "--port", "8191"]
+      interval: 2s
+      timeout: 2s
+      start_period: 1s
+      retries: 5
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng@sha256:55e1fa15a63ff04e79e213e6aa2837549877b0c6d60757cdb633ae9111cb5fea
+    profiles: ["web"]
+    network_mode: service:searxng-egress
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+      - /var/cache/searxng:rw,noexec,nosuid,size=32m
+      - /var/log/searxng:rw,noexec,nosuid,size=8m
+      # The entrypoint's own `update-ca-certificates` was silently failing
+      # ("Read-only file system") against the read-only root, leaving the
+      # container on whatever minimal CA bundle got baked into the image
+      # layer instead of the full trust store — writable here lets it
+      # actually populate (verified: 170 certs added vs. 0 before).
+      - /etc/ssl/certs:rw,noexec,nosuid,size=16m
+    environment:
+      SEARXNG_SECRET: "${SEARXNG_SECRET:?SEARXNG_SECRET must be set}"
+    entrypoint:
+      - python3
+      - /usr/local/bin/web-egress-readiness
+      - --wait
+      - --port
+      - "8191"
+      - --
+      - /usr/local/searxng/entrypoint.sh
+    volumes:
+      - ./infra/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./infra/web-egress/readiness.py:/usr/local/bin/web-egress-readiness:ro
+    depends_on:
+      searxng-egress:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+
+networks:
+  web-tools-ingress:
+    internal: true
+    enable_ipv6: true
+  web-search:
+    internal: true
+    enable_ipv6: true
+  web-public:
+    driver: bridge
+    enable_ipv6: true

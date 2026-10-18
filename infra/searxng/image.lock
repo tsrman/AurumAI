@@ -1,0 +1,7 @@
+# Inspected 2026-09-07 with:
+# docker buildx imagetools inspect docker.io/searxng/searxng:latest
+IMAGE=docker.io/searxng/searxng@sha256:55e1fa15a63ff04e79e213e6aa2837549877b0c6d60757cdb633ae9111cb5fea
+VERSION=2026.9.5-c7f3080aa
+REVISION=c7f3080aac5de13b619c4a5ab36590a2c5165e1c
+LICENSE=AGPL-3.0-or-later
+ENGINES=brave,duckduckgo,startpage,mojeek,yahoo,qwant,wikipedia

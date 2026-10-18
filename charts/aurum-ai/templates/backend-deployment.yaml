@@ -1,0 +1,221 @@
+{{- if and .Values.backend.webEnabled (not .Values.web.enabled) -}}
+{{- fail "backend.webEnabled=true requires web.enabled=true" -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "backend" "root" $) | nindent 4 }}
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "backend" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "backend" "root" $) | nindent 8 }}
+      {{- if .Values.web.enabled }}
+      annotations:
+        checksum/web-config: {{ include "aurum-ai.webConfigChecksum" . }}
+        checksum/web-secret: {{ include "aurum-ai.webSecretChecksum" . }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "aurum-ai.backendServiceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: {{ include "aurum-ai.image" (dict "service" .Values.backend "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.backend "root" $) }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: APP_MODULE
+              value: "src.main_business:app"
+            # Migrations run once as a Helm hook Job (migration-job.yaml),
+            # never here — an init container/entrypoint migration on a
+            # 3-replica Deployment would run `alembic upgrade head` three
+            # times concurrently.
+            - name: RUN_MIGRATIONS
+              value: "false"
+            - name: APP_IDENTITY_SYNC_ENABLED
+              value: {{ .Values.identitySync.admissionEnabled | quote }}
+            - name: APP_IDENTITY_SYNC_WAIT_SECONDS
+              value: {{ .Values.identitySync.waitSeconds | quote }}
+            - name: APP_DEBUG
+              value: {{ .Values.backend.debug | quote }}
+            - name: APP_BIND
+              value: "0.0.0.0:8000"
+            - name: APP_WORKERS
+              value: "2"
+            - name: APP_DATABASE_ROLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_DATABASE_ROLE_PASSWORD
+            - name: APP_DATABASE_URL
+              value: "postgresql+asyncpg://aurum_ai_app:$(APP_DATABASE_ROLE_PASSWORD)@{{ .Values.external.postgres.host }}:{{ .Values.external.postgres.port }}/{{ .Values.external.postgres.database }}"
+            - name: APP_RAG_API_URL
+              value: {{ .Values.external.ragApi.url | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: REDIS_PASSWORD
+            - name: APP_REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@{{ .Values.external.redis.host }}:{{ .Values.external.redis.port }}/0"
+            - name: APP_KEYCLOAK_URL
+              value: {{ .Values.external.keycloak.url | quote }}
+            - name: APP_KEYCLOAK_ISSUER
+              value: {{ .Values.external.keycloak.issuer | quote }}
+            - name: APP_KEYCLOAK_REALM
+              value: {{ .Values.external.keycloak.realm | quote }}
+            - name: APP_KEYCLOAK_CLIENT_ID
+              value: "business-ui"
+            - name: APP_LLM_GATEWAY_URL
+              value: {{ .Values.external.llmGateway.url | quote }}
+            - name: APP_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_GATEWAY_API_KEY
+            - name: APP_GATEWAY_VERIFY_SSL
+              value: {{ .Values.external.llmGateway.verifySsl | quote }}
+            # app_factory.py makes this the single exact CORS allow_origins
+            # entry, so it must carry the port the browser actually connects
+            # to (ingress.externalPort) — see the helper.
+            - name: APP_FRONTEND_URL
+              value: {{ include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.frontend "root" $) | quote }}
+            - name: APP_RATE_LIMIT_PER_MINUTE
+              value: {{ .Values.backend.rateLimitPerMinute | quote }}
+            - name: APP_RATE_LIMIT_PER_MINUTE_STREAM
+              value: {{ .Values.backend.rateLimitPerMinuteStream | quote }}
+            - name: APP_WORKFLOW_MAX_NODES
+              value: {{ .Values.workflow.maxNodes | quote }}
+            - name: APP_WORKFLOW_MAX_PARALLELISM
+              value: {{ .Values.workflow.maxParallelism | quote }}
+            - name: APP_WORKFLOW_DIAGNOSTIC_RETENTION_DAYS
+              value: {{ .Values.workflow.diagnosticRetentionDays | quote }}
+            - name: APP_WORKFLOW_RETENTION_SWEEP_INTERVAL_SECONDS
+              value: {{ .Values.workflow.retentionSweepIntervalSeconds | quote }}
+            - name: APP_TEMPORAL_HOST
+              value: {{ .Values.external.temporal.host | quote }}
+            - name: APP_TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporal.namespace | quote }}
+            - name: APP_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_SECRET_KEY
+            - name: APP_RUNNER_RUNTIME
+              value: {{ .Values.runnerRuntime.type | quote }}
+            - name: APP_KUBERNETES_RELEASE_NAME
+              value: {{ .Release.Name | quote }}
+            - name: APP_KUBERNETES_RELEASE_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: APP_KUBERNETES_RUNNER_NAMESPACE
+              value: {{ include "aurum-ai.runnerNamespace" . | quote }}
+            - name: APP_KUBERNETES_RUNNER_SECRET_NAME
+              value: {{ include "aurum-ai.runnerSecretName" . | quote }}
+            - name: APP_RUNNER_IMAGE
+              value: {{ include "aurum-ai.image" (dict "service" .Values.runner "root" $) | quote }}
+            - name: APP_KUBERNETES_RUNNER_IMAGE_PULL_POLICY
+              value: {{ .Values.runner.imagePullPolicy | default .Values.image.pullPolicy | quote }}
+            - name: APP_KUBERNETES_RUNNER_IMAGE_PULL_SECRETS
+              value: {{ .Values.runner.imagePullSecrets | toJson | quote }}
+            - name: APP_KUBERNETES_RUNNER_READY_TIMEOUT_SECONDS
+              value: {{ .Values.runnerRuntime.readyTimeoutSeconds | quote }}
+            - name: APP_KUBERNETES_API_RETRY_ATTEMPTS
+              value: {{ .Values.runnerRuntime.apiRetryAttempts | quote }}
+            - name: APP_KUBERNETES_RUNNER_CPU_REQUEST
+              value: {{ .Values.runner.resources.requests.cpu | quote }}
+            - name: APP_KUBERNETES_RUNNER_CPU_LIMIT
+              value: {{ .Values.runner.resources.limits.cpu | quote }}
+            - name: APP_KUBERNETES_RUNNER_MEMORY_REQUEST
+              value: {{ .Values.runner.resources.requests.memory | quote }}
+            - name: APP_KUBERNETES_RUNNER_MEMORY_LIMIT
+              value: {{ .Values.runner.resources.limits.memory | quote }}
+            - name: APP_RUNNER_BACKEND_URL
+              value: {{ printf "http://%s-backend.%s.svc:8000" .Release.Name .Release.Namespace | quote }}
+            - name: APP_RUNNER_IDLE_REAP_SECONDS
+              value: {{ .Values.runnerRuntime.idleReapSeconds | quote }}
+            - name: APP_RUNNER_REAP_INTERVAL_SECONDS
+              value: {{ .Values.runnerRuntime.reapIntervalSeconds | quote }}
+            - name: APP_RUNNER_ORPHAN_GRACE_SECONDS
+              value: {{ .Values.runnerRuntime.orphanGraceSeconds | quote }}
+            - name: APP_RUNNER_TOKEN_REFRESH_AFTER_SECONDS
+              value: {{ .Values.runnerRuntime.tokenRefreshAfterSeconds | quote }}
+            - name: APP_INTERACTION_MAINTENANCE_INTERVAL_SECONDS
+              value: {{ .Values.runnerRuntime.interactionMaintenanceIntervalSeconds | quote }}
+            - name: APP_INTERACTION_SETTLEMENT_GRACE_SECONDS
+              value: {{ .Values.runnerRuntime.interactionSettlementGraceSeconds | quote }}
+            - name: APP_USER_QUESTIONS_ENABLED
+              value: {{ .Values.backend.userQuestionsEnabled | quote }}
+            - name: APP_WEB_ENABLED
+              value: {{ .Values.backend.webEnabled | quote }}
+            {{- if .Values.web.enabled }}
+            - name: APP_WEB_TOOLS_URL
+              value: {{ printf "http://%s-web-tools.%s.svc:8120" .Release.Name .Values.web.namespace | quote }}
+            - name: APP_WEB_TOOLS_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.web.existingSecret | default (printf "%s-web-secrets" .Release.Name | trunc 63 | trimSuffix "-") }}
+                  key: WEB_TOOLS_SERVICE_SECRET
+            {{- else }}
+            - name: APP_WEB_TOOLS_URL
+              value: "http://web-tools:8120"
+            - name: APP_WEB_TOOLS_SERVICE_SECRET
+              value: ""
+            {{- end }}
+            - name: APP_RUNNER_POOL_SIZE
+              value: "0"
+            - name: APP_S3_ENDPOINT
+              value: {{ .Values.external.minio.endpoint | quote }}
+            - name: APP_S3_ACCESS_KEY
+              value: {{ .Values.external.minio.accessKey | quote }}
+            - name: APP_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_S3_SECRET_KEY
+            - name: APP_S3_BUCKET
+              value: {{ .Values.external.minio.bucket | quote }}
+            {{- if .Values.external.langfuse.enabled }}
+            - name: LANGFUSE_ENABLED
+              value: "true"
+            - name: LANGFUSE_PUBLIC_KEY
+              value: {{ .Values.external.langfuse.publicKey | quote }}
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: LANGFUSE_SECRET_KEY
+            - name: LANGFUSE_HOST
+              value: {{ .Values.external.langfuse.host | quote }}
+            {{- else }}
+            - name: LANGFUSE_ENABLED
+              value: "false"
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}

@@ -1,0 +1,348 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+# A second push to the same branch makes the first run's result irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # What this PR actually touched. Every service here is an independent
+  # codebase (no shared package), so a change in one cannot break another's
+  # tests. Select affected jobs on pull requests to keep feedback focused.
+  # On master, and whenever this workflow itself changes, everything runs.
+  changes:
+    name: pick jobs
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.pick.outputs.python }}
+      node: ${{ steps.pick.outputs.node }}
+      images: ${{ steps.pick.outputs.images }}
+      harness: ${{ steps.pick.outputs.harness }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python_services='business-backend conversation-runner tool-worker skill-executor rag-api rag-worker web-tools'
+          node_apps='business-ui admin-ui'
+          images="$python_services $node_apps skill-sandbox mcp/fetch infra/web-egress infra/postgres infra/maintenance-egress"
+          # The E2E/smoke harness under scripts/ has no uv project of its own,
+          # so it cannot join the python matrix; it gets its own job below.
+          # business-backend is listed too because two of its tests import that
+          # service's app and migrations.
+          harness='scripts business-backend'
+
+          if [ "$EVENT" = "pull_request" ]; then
+            changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          else
+            changed=""
+          fi
+
+          # Not a PR (push to master) → run everything. A change to this
+          # workflow → also everything: the steps themselves changed, so every
+          # job has to prove it still passes with them.
+          everything=false
+          if [ "$EVENT" != "pull_request" ] || grep -qx '.github/workflows/ci.yml' <<<"$changed"; then
+            everything=true
+          fi
+          # This fixture is the intentionally shared wire contract between two
+          # independently packaged services. A version change must exercise
+          # both copies (and their images), never only whichever side changed.
+          if grep -qx 'contracts/web-tools-v1.json' <<<"$changed"; then
+            everything=true
+          fi
+          # Search config, the kernel egress image and Helm's isolated web
+          # resources are one deployment boundary. Exercise the Python service
+          # plus the rendered deployment harness when any part changes.
+          if grep -qE '^infra/(searxng|web-egress)/|^charts/aurum-ai/(values\.yaml|templates/(web-|searxng-))' <<<"$changed"; then
+            changed="$changed"$'\nweb-tools/.web-infra-trigger'$'\nscripts/.web-infra-trigger'
+          fi
+          if grep -qE '^infra/(postgres|maintenance-egress)/|^charts/aurum-ai/templates/(identity-|data-worker-)|^keycloak/realm-export\.json$' <<<"$changed"; then
+            changed="$changed"$'\nbusiness-backend/.partition-infra-trigger'$'\nscripts/.partition-infra-trigger'
+          fi
+
+          pick() {
+            local picked=""
+            for dir in $1; do
+              if [ "$everything" = true ] || grep -qE "^$dir/" <<<"$changed"; then
+                picked="$picked $dir"
+              fi
+            done
+            # select(length > 0) so "nothing to run" is [] and not [""], which
+            # would start one job with an empty directory name.
+            printf '%s\n' $picked | jq -R 'select(length > 0)' | jq -sc .
+          }
+
+          {
+            echo "python=$(pick "$python_services")"
+            echo "node=$(pick "$node_apps")"
+            echo "images=$(pick "$images")"
+            echo "harness=$(pick "$harness")"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  python:
+    name: python (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.python) }}
+
+    services:
+      # Compose's base image; the shared installer below adds the same pinned
+      # pg_partman package before backend migrations.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          # Must stay "aurum_ai": the RLS migration hardcodes
+          # `GRANT CONNECT ON DATABASE aurum_ai`.
+          POSTGRES_DB: aurum_ai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Placeholder secret: config.py refuses the built-in default outside DEBUG.
+      APP_SECRET_KEY: ci-secret-not-a-real-key
+      # 127.0.0.1 rather than localhost on purpose: config.py fails fast when
+      # APP_DATABASE_URL is character-for-character its insecure default
+      # (postgresql+asyncpg://postgres:postgres@localhost:5432/aurum_ai),
+      # and CI should satisfy that guard rather than switch it off with DEBUG.
+      # Compose sidesteps the same string by using the "postgres" hostname.
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/aurum_ai
+      # tests/test_dependencies.py builds its own engine straight from the
+      # environment instead of going through Settings.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/aurum_ai
+      # rag-api owns its document schema and Alembic chain independently from
+      # business-backend. Matrix jobs are isolated, so the same disposable CI
+      # database can be used without creating a fake cross-service FK.
+      RAG_API_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/aurum_ai
+      RAG_API_MIGRATION_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/aurum_ai
+      # The migration that creates the RLS role aurum_ai_app refuses its
+      # built-in default password outside DEBUG, deliberately. Local runs pick
+      # APP_DEBUG=true out of business-backend/.env and never hit either guard;
+      # CI has no .env, so both have to be satisfied for real.
+      APP_DATABASE_ROLE_PASSWORD: ci-role-password-not-a-real-secret
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Use uv rather than Poetry for frozen service environments.
+      # Warm dependency caches reduce setup time.
+      # Pin the same version as the service Dockerfiles.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.12.7'
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.service }}/uv.lock
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: uv sync --frozen
+        working-directory: ${{ matrix.service }}
+
+      - name: Install partition extension
+        if: matrix.service == 'business-backend'
+        env:
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          docker exec -i -u root "$POSTGRES_SERVICE_ID" sh < infra/postgres/install-partman.sh
+          docker exec -i "$POSTGRES_SERVICE_ID" psql -v ON_ERROR_STOP=1 -U postgres -d aurum_ai < infra/postgres/partman.sql
+
+      # The schema the DB-backed tests insert into. postgres-init-scripts/ only
+      # runs inside compose, so migrations are the only thing creating it here —
+      # as the superuser, exactly like APP_MIGRATION_DATABASE_URL in compose.
+      - name: Run migrations
+        if: matrix.service == 'business-backend' || matrix.service == 'rag-api'
+        run: uv run alembic upgrade head
+        working-directory: ${{ matrix.service }}
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+        working-directory: ${{ matrix.service }}
+
+      - name: Type-check (mypy --strict)
+        run: uv run mypy src
+        working-directory: ${{ matrix.service }}
+
+      # business-backend's testcontainers suites (event bus, rate limit) start
+      # their own Redis against the runner's Docker daemon; its integration
+      # tests need the whole stack and are the one thing CI skips.
+      - name: Tests
+        run: |
+          if [ "${{ matrix.service }}" = business-backend ]; then
+            uv run pytest tests -m 'not integration' -q
+          else
+            uv run pytest tests -q
+          fi
+        working-directory: ${{ matrix.service }}
+
+  frontend:
+    name: node (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.node != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.changes.outputs.node) }}
+
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # node 22 to match both UI Dockerfiles (node:22-alpine) — CI should build
+      # the bundle on the same major that ships it. Node 20 went end-of-life on
+      # 2026-04-30 and no longer gets security patches, hence 22 (LTS until
+      # 2027-04-30) rather than staying put.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ matrix.app }}
+
+      # --max-warnings=0: both apps are warning-clean today, so a new warning is
+      # a regression rather than noise to scroll past.
+      - name: Lint (eslint)
+        run: npm run lint -- --max-warnings=0
+        working-directory: ${{ matrix.app }}
+
+      - name: Type-check (tsc)
+        run: npm run typecheck
+        working-directory: ${{ matrix.app }}
+
+      # `npm run test` is `vitest run` — one shot, not the watch mode that would
+      # hang a runner forever. Playwright e2e needs a live stack and is not here.
+      - name: Tests (vitest)
+        run: npm run test
+        working-directory: ${{ matrix.app }}
+
+      - name: Build
+        run: npm run build
+        working-directory: ${{ matrix.app }}
+
+  # scripts/tests pins the contracts of the smoke/E2E harness — the quota and
+  # Authorization v2 runners, the k8s gateway stub, the legacy-removal
+  # assertions. It has no pyproject of its own, and its two app-level tests
+  # import business-backend, so it runs inside that service's uv environment
+  # instead of a matrix entry. No database: verified that all of it passes
+  # with APP_DATABASE_URL pointing nowhere.
+  harness:
+    name: harness (scripts/tests)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.harness != '[]'
+
+    env:
+      APP_SECRET_KEY: ci-secret-not-a-real-key
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/aurum_ai
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.12.7'
+          enable-cache: true
+          cache-dependency-glob: business-backend/uv.lock
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install maintenance dependencies
+        run: npm ci --ignore-scripts
+        working-directory: scripts
+
+      - name: Install dependencies
+        run: uv sync --frozen
+        working-directory: business-backend
+
+      - name: Tests
+        run: uv run pytest ../scripts/tests -q
+        working-directory: business-backend
+
+  images:
+    name: image (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.images != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.changes.outputs.images) }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # rag-worker's image is ~20 GB (docling drags in CUDA-flavoured torch)
+      # and filled the runner's disk on the first run — "No space left on
+      # device", not a Dockerfile error. Dropping the preinstalled toolchains
+      # buys back the ~25 GB it needs.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Check pinned SearXNG controls
+        if: matrix.image == 'web-tools'
+        run: sh infra/searxng/check-query-controls.sh
+
+      # Build only — nothing is pushed anywhere. The point is that a broken
+      # Dockerfile or an unresolvable pin fails the PR instead of `up --build`.
+      # rag-worker gets no cache export: its layers are far past the 10 GB
+      # repo cache limit, so writing them would evict every other image's.
+      - name: Build image
+        if: matrix.image != 'mcp/fetch'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ matrix.image }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: ${{ matrix.image == 'rag-worker' && '' || format('type=gha,mode=max,scope={0}', matrix.image) }}
+
+      # A plain Docker build did not catch mcp-server-fetch starting against
+      # an incompatible, newly resolved mcp 2.x. This probe deliberately does
+      # a fresh build, starts the real entrypoint, and requires HTTP 200 on SSE.
+      - name: Build and check mcp-fetch readiness
+        if: matrix.image == 'mcp/fetch'
+        run: sh mcp/fetch/test-image.sh

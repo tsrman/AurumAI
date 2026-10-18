@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-tool-worker
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "tool-worker" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.toolWorker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "tool-worker" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "tool-worker" "root" $) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: tool-worker
+          image: {{ include "aurum-ai.image" (dict "service" .Values.toolWorker "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.toolWorker "root" $) }}
+          ports:
+            - name: health
+              containerPort: 8080
+          env:
+            - name: TOOL_WORKER_TEMPORAL_HOST
+              value: {{ .Values.external.temporal.host | quote }}
+            - name: TOOL_WORKER_TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporal.namespace | quote }}
+            - name: TOOL_WORKER_TASK_QUEUE
+              value: "tools"
+            - name: TOOL_WORKER_BACKEND_API_URL
+              value: {{ printf "http://%s-backend:8000" .Release.Name | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: REDIS_PASSWORD
+            - name: TOOL_WORKER_REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@{{ .Values.external.redis.host }}:{{ .Values.external.redis.port }}/0"
+            - name: TOOL_WORKER_SKILL_EXECUTOR_URL
+              value: {{ printf "http://%s-skill-executor:8090" .Release.Name | quote }}
+            - name: TOOL_WORKER_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "console"
+            {{- if .Values.external.langfuse.enabled }}
+            - name: LANGFUSE_ENABLED
+              value: "true"
+            - name: LANGFUSE_PUBLIC_KEY
+              value: {{ .Values.external.langfuse.publicKey | quote }}
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: LANGFUSE_SECRET_KEY
+            - name: LANGFUSE_HOST
+              value: {{ .Values.external.langfuse.host | quote }}
+            - name: LANGFUSE_CAPTURE_FULL_CONTENT
+              value: "true"
+            - name: LANGFUSE_FLUSH_INTERVAL
+              value: "5"
+            {{- else }}
+            - name: LANGFUSE_ENABLED
+              value: "false"
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.toolWorker.resources | nindent 12 }}

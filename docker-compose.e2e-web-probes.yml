@@ -1,0 +1,58 @@
+# Both acceptance modes only; no production policy exceptions or external ports.
+services:
+  backend:
+    networks:
+      web-private-probes: {}
+  web-tools-egress:
+    networks:
+      web-private-probes: {}
+      web-ipv6-control: {}
+  searxng-egress:
+    networks:
+      web-private-probes: {}
+      web-ipv6-control: {}
+  web-private-fixture:
+    build:
+      context: ./infra/web-egress
+    image: aurum-ai-web-egress:latest
+    profiles: [web]
+    entrypoint: [python3, /fixture.py, private-listener]
+    volumes:
+      - ./scripts/web_tools_e2e.py:/fixture.py:ro
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    pids_limit: 64
+    healthcheck:
+      test: [CMD, python3, -c, "import socket; [socket.create_connection((h,p),timeout=1).close() for h in ('127.0.0.1','::1') for p in (80,443)]"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    networks:
+      web-private-probes:
+        ipv4_address: 10.254.216.2
+        ipv6_address: fd93:184:216::2
+      web-ipv6-control:
+        ipv6_address: 2606:4700:ffff:216::2
+networks:
+  # Globally-routable-looking only inside this isolated internal bridge. No
+  # private exception is added to the production guard, and nothing is routed
+  # to the real owner of this address range.
+  web-ipv6-control:
+    internal: true
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 10.254.217.0/29
+        - subnet: 2606:4700:ffff:216::/64
+          ip_range: 2606:4700:ffff:216:1::/80
+  web-private-probes:
+    internal: true
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 10.254.216.0/28
+          ip_range: 10.254.216.8/29
+        - subnet: fd93:184:216::/64
+          ip_range: fd93:184:216:0:1::/80

@@ -1,0 +1,44 @@
+# Controlled only. Fixed globally-routable-looking addresses are confined to an
+# internal Docker bridge: never route this subnet on a host or production net.
+# Public mode MUST NOT include this overlay. Production forbidden CIDRs unchanged.
+services:
+  web-tools-egress:
+    dns: ["93.184.216.2"]
+    environment:
+      WEB_EGRESS_INTERNAL_HOST: web-fixture
+    networks:
+      web-fixture-public: {}
+    depends_on:
+      web-fixture:
+        condition: service_started
+  web-tools:
+    environment:
+      WEB_TOOLS_SEARXNG_URL: http://93.184.216.2:8080
+    volumes:
+      - ./scripts/fixtures/web-tools-e2e-resolv.conf:/etc/resolv.conf:ro
+  web-fixture:
+    build:
+      context: ./infra/web-egress
+    image: aurum-ai-web-egress:latest
+    profiles: ["web"]
+    entrypoint: ["python3", "/fixture.py", "fixture"]
+    volumes:
+      - ./scripts/web_tools_e2e.py:/fixture.py:ro
+      - ./scripts/web_tools_fault_fixture.py:/web_tools_fault_fixture.py:ro
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    healthcheck:
+      disable: true
+    networks:
+      web-search: {}
+      web-fixture-public:
+        ipv4_address: 93.184.216.2
+networks:
+  web-fixture-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 93.184.216.0/29
+          ip_range: 93.184.216.4/30

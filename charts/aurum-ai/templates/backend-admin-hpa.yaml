@@ -1,0 +1,23 @@
+{{- if .Values.backendAdmin.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-backend-admin
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "backend-admin" "root" $) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-backend-admin
+  minReplicas: {{ .Values.backendAdmin.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.backendAdmin.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.backendAdmin.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

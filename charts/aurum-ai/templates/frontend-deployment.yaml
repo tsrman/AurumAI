@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "frontend" "root" $) | nindent 4 }}
+spec:
+  {{- if not .Values.frontend.autoscaling.enabled }}
+  replicas: {{ .Values.frontend.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "frontend" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "frontend" "root" $) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: {{ include "aurum-ai.image" (dict "service" .Values.frontend "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.frontend "root" $) }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: RUNTIME_SOURCE_CODE_URL
+              value: {{ .Values.frontend.runtimeConfig.sourceCodeUrl | quote }}
+            # Read server-side per request (src/lib/runtime-config.server.ts)
+            # and handed to the browser via window.__RUNTIME_CONFIG__ — the
+            # same image works behind any Ingress host, no rebuild needed.
+            #
+            # Empty values.yaml defaults are derived from the chart's own
+            # Ingress hosts + externalScheme/externalPort here, so they can
+            # never drift from the Ingress. Never render an empty string:
+            # runtime-config.server.ts silently falls back to its localhost
+            # default on "", which is a wrong URL rather than a loud error.
+            - name: RUNTIME_API_URL
+              value: {{ .Values.frontend.runtimeConfig.apiUrl | default (printf "%s/v1" (include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.backend "root" $))) | quote }}
+            - name: RUNTIME_KEYCLOAK_URL
+              value: {{ .Values.frontend.runtimeConfig.keycloakUrl | quote }}
+            - name: RUNTIME_KEYCLOAK_REALM
+              value: {{ .Values.frontend.runtimeConfig.keycloakRealm | quote }}
+            - name: RUNTIME_KEYCLOAK_CLIENT_ID
+              value: {{ .Values.frontend.runtimeConfig.keycloakClientId | quote }}
+            - name: RUNTIME_ADMIN_URL
+              value: {{ .Values.frontend.runtimeConfig.adminUrl | default (include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.adminUi "root" $)) | quote }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}

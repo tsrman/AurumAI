@@ -1,0 +1,207 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+@theme {
+  /* Aurum semantic colors */
+  --color-aurum-bg: var(--bg);
+  --color-aurum-surface: var(--surface);
+  --color-aurum-surface-2: var(--surface-2);
+  --color-aurum-surface-3: var(--surface-3);
+  --color-aurum-border: var(--border);
+  --color-aurum-border-soft: var(--border-soft);
+  --color-aurum-text: var(--text);
+  --color-aurum-text-2: var(--text-2);
+  --color-aurum-text-3: var(--text-3);
+  --color-aurum-muted: var(--muted);
+  --color-aurum-accent: var(--accent);
+  --color-aurum-accent-ink: var(--accent-ink);
+  --color-aurum-accent-soft: var(--accent-soft);
+  --color-aurum-ok-fg: var(--ok-fg);
+  --color-aurum-ok-bg: var(--ok-bg);
+  --color-aurum-err-fg: var(--err-fg);
+  --color-aurum-err-bg: var(--err-bg);
+
+  /* Badge colors */
+  --color-c-amber-bg: var(--c-amber-bg);
+  --color-c-amber-fg: var(--c-amber-fg);
+  --color-c-green-bg: var(--c-green-bg);
+  --color-c-green-fg: var(--c-green-fg);
+  --color-c-blue-bg: var(--c-blue-bg);
+  --color-c-blue-fg: var(--c-blue-fg);
+  --color-c-violet-bg: var(--c-violet-bg);
+  --color-c-violet-fg: var(--c-violet-fg);
+  --color-c-rose-bg: var(--c-rose-bg);
+  --color-c-rose-fg: var(--c-rose-fg);
+
+  /* Primary scale (sky palette) */
+  --color-primary-50: #f0f9ff;
+  --color-primary-100: #e0f2fe;
+  --color-primary-200: #bae6fd;
+  --color-primary-300: #7dd3fc;
+  --color-primary-400: #38bdf8;
+  --color-primary-500: #0ea5e9;
+  --color-primary-600: #0284c7;
+  --color-primary-700: #0369a1;
+  --color-primary-800: #075985;
+  --color-primary-900: #0c4a6e;
+
+  /* Radii */
+  --radius-card: 14px;
+  --radius-composer: 18px;
+  --radius-badge: 12px;
+  --radius-chip: 11px;
+  --radius-btn: 10px;
+  --radius-input: 9px;
+
+  /* Typography */
+  --font-sans: "Segoe UI", "Calibri", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  /* Shadows */
+  --shadow-card: var(--shadow);
+  --shadow-drawer: var(--shadow-lg);
+}
+
+:root {
+  --bg: #f5f6f9;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-3: #eef0f4;
+  --border: #e6e8ef;
+  --border-soft: #f0f1f5;
+  --text: #23262b;
+  --text-2: #5b6478;
+  --text-3: #8a93a6;
+  --muted: #9aa3b2;
+  --accent: #ffb635;
+  --accent-ink: #373936;
+  --accent-soft: #fff3dc;
+  --ok-fg: #00735e;
+  --ok-bg: #e2f1ed;
+  --err-fg: #9c1a3e;
+  --err-bg: #fae3ea;
+  --c-amber-bg: #fff0d2;
+  --c-amber-fg: #9a6300;
+  --c-green-bg: #e2f1ed;
+  --c-green-fg: #00735e;
+  --c-blue-bg: #e7eefc;
+  --c-blue-fg: #2456c9;
+  --c-violet-bg: #efeafc;
+  --c-violet-fg: #6d3ae0;
+  --c-rose-bg: #fae3ea;
+  --c-rose-fg: #b02a4e;
+  --shadow: 0 1px 3px rgba(20, 30, 60, 0.05);
+  --shadow-lg: 0 18px 50px rgba(20, 30, 60, 0.18);
+}
+
+.dark {
+  --bg: #15171a;
+  --surface: #1f2220;
+  --surface-2: #191b19;
+  --surface-3: #2a2d2a;
+  --border: #363a37;
+  --border-soft: #2c302d;
+  --text: #f3f4f2;
+  --text-2: #bcc1bd;
+  --text-3: #8f958f;
+  --muted: #7c827d;
+  --accent: #ffb635;
+  --accent-ink: #373936;
+  --accent-soft: #3a3320;
+  --ok-fg: #3fc9a6;
+  --ok-bg: #15332b;
+  --err-fg: #f07a98;
+  --err-bg: #3a1320;
+  --c-amber-bg: #3a3320;
+  --c-amber-fg: #ffc766;
+  --c-green-bg: #15332b;
+  --c-green-fg: #3fc9a6;
+  --c-blue-bg: #172238;
+  --c-blue-fg: #86a9ee;
+  --c-violet-bg: #231a3a;
+  --c-violet-fg: #b69bf0;
+  --c-rose-bg: #3a1320;
+  --c-rose-fg: #f07a98;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+::selection {
+  background: #ffe4ab;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* KaTeX display formulas can be wider than the chat column — scroll instead
+   of overflowing the page. */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+/* Streaming caret — mirrors the design's .cur */
+.aurum-caret {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: blink 1s step-start infinite;
+}
+
+@keyframes aurum-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* "Request sent" shimmer text — used by PendingPulse while waiting for the
+   first SSE event after a message is sent. */
+.aurum-shimmer-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--text-3) 0%,
+    var(--text) 50%,
+    var(--text-3) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: aurum-shimmer 1.8s ease-in-out infinite;
+}

@@ -1,0 +1,164 @@
+{{- if .Values.web.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-web-default-deny
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-web-tools-ingress
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "web-tools" "root" $) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.selectorLabels" (dict "component" "backend" "root" $) | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8120
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-web-tools-egress
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "web-tools" "root" $) | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "aurum-ai.dnsNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.dnsPodLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "aurum-ai.selectorLabels" (dict "component" "searxng" "root" $) | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.web.networkPolicy.publicIpv4Cidr }}
+            except:
+              {{- toYaml .Values.web.networkPolicy.excludedIpv4Cidrs | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.web.networkPolicy.publicIpv6Cidr | quote }}
+            except:
+              {{- toYaml .Values.web.networkPolicy.excludedIpv6Cidrs | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-searxng-ingress
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "searxng" "root" $) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "aurum-ai.selectorLabels" (dict "component" "web-tools" "root" $) | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-searxng-egress
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "searxng" "root" $) | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "aurum-ai.dnsNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.dnsPodLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.web.networkPolicy.publicIpv4Cidr }}
+            except:
+              {{- toYaml .Values.web.networkPolicy.excludedIpv4Cidrs | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.web.networkPolicy.publicIpv6Cidr | quote }}
+            except:
+              {{- toYaml .Values.web.networkPolicy.excludedIpv6Cidrs | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+{{- end }}

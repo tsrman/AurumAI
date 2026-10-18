@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-backend-admin
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "backend-admin" "root" $) | nindent 4 }}
+spec:
+  {{- if not .Values.backendAdmin.autoscaling.enabled }}
+  replicas: {{ .Values.backendAdmin.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "backend-admin" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "backend-admin" "root" $) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend-admin
+          image: {{ include "aurum-ai.image" (dict "service" .Values.backendAdmin "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.backendAdmin "root" $) }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: APP_MODULE
+              value: "src.main_admin:app"
+            - name: RUN_MIGRATIONS
+              value: "false"
+            - name: APP_IDENTITY_SYNC_ENABLED
+              value: {{ .Values.identitySync.admissionEnabled | quote }}
+            - name: APP_IDENTITY_SYNC_WAIT_SECONDS
+              value: {{ .Values.identitySync.waitSeconds | quote }}
+            - name: APP_DEBUG
+              value: {{ .Values.backendAdmin.debug | quote }}
+            - name: APP_BIND
+              value: "0.0.0.0:8000"
+            - name: APP_WORKERS
+              value: "2"
+            - name: APP_DATABASE_ROLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_DATABASE_ROLE_PASSWORD
+            - name: APP_DATABASE_URL
+              value: "postgresql+asyncpg://aurum_ai_app:$(APP_DATABASE_ROLE_PASSWORD)@{{ .Values.external.postgres.host }}:{{ .Values.external.postgres.port }}/{{ .Values.external.postgres.database }}"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: REDIS_PASSWORD
+            - name: APP_REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@{{ .Values.external.redis.host }}:{{ .Values.external.redis.port }}/0"
+            - name: APP_KEYCLOAK_URL
+              value: {{ .Values.external.keycloak.url | quote }}
+            - name: APP_KEYCLOAK_ISSUER
+              value: {{ .Values.external.keycloak.issuer | quote }}
+            - name: APP_KEYCLOAK_REALM
+              value: {{ .Values.external.keycloak.realm | quote }}
+            - name: APP_KEYCLOAK_CLIENT_ID
+              value: "admin-ui"
+            - name: APP_LLM_GATEWAY_URL
+              value: {{ .Values.external.llmGateway.url | quote }}
+            - name: APP_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_GATEWAY_API_KEY
+            - name: APP_GATEWAY_VERIFY_SSL
+              value: {{ .Values.external.llmGateway.verifySsl | quote }}
+            # Single exact CORS allow_origins entry — admin-ui's own origin,
+            # port included. See backend-deployment.yaml.
+            - name: APP_FRONTEND_URL
+              value: {{ include "aurum-ai.externalUrl" (dict "host" .Values.ingress.hosts.adminUi "root" $) | quote }}
+            - name: APP_RATE_LIMIT_PER_MINUTE
+              value: {{ .Values.backendAdmin.rateLimitPerMinute | quote }}
+            - name: APP_RATE_LIMIT_PER_MINUTE_STREAM
+              value: {{ .Values.backendAdmin.rateLimitPerMinuteStream | quote }}
+            - name: APP_WORKFLOW_MAX_NODES
+              value: {{ .Values.workflow.maxNodes | quote }}
+            - name: APP_WORKFLOW_MAX_PARALLELISM
+              value: {{ .Values.workflow.maxParallelism | quote }}
+            - name: APP_WORKFLOW_DIAGNOSTIC_RETENTION_DAYS
+              value: {{ .Values.workflow.diagnosticRetentionDays | quote }}
+            - name: APP_WORKFLOW_RETENTION_SWEEP_INTERVAL_SECONDS
+              value: {{ .Values.workflow.retentionSweepIntervalSeconds | quote }}
+            - name: APP_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_SECRET_KEY
+            # Write side of code-skill bundle upload (skill_bundles.py) lives
+            # only on this plane.
+            - name: APP_S3_ENDPOINT
+              value: {{ .Values.external.minio.endpoint | quote }}
+            - name: APP_S3_ACCESS_KEY
+              value: {{ .Values.external.minio.accessKey | quote }}
+            - name: APP_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.secretName" . }}
+                  key: APP_S3_SECRET_KEY
+            - name: APP_S3_BUCKET
+              value: {{ .Values.external.minio.bucket | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.backendAdmin.resources | nindent 12 }}

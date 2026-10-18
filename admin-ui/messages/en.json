@@ -1,0 +1,399 @@
+{
+  "metadata": {
+    "title": "AurumAI Administration",
+    "description": "AurumAI administration: skills, access, agents and workflows"
+  },
+  "errors": {
+    "network": "Network error",
+    "forbidden": "Access denied",
+    "notFound": "Not found",
+    "httpStatus": "HTTP {status}",
+    "unknown": "Unknown error",
+    "workflowGraph": {
+      "empty_graph": "Add at least one node.",
+      "self_edge": "A node cannot link to itself unless the link is a loop.",
+      "cycle": "The graph contains a cycle. Ordinary links cannot go backwards — use a loop link for that.",
+      "dangling_edge": "A link refers to a node that does not exist.",
+      "duplicate_node_key": "Node keys must be unique.",
+      "duplicate_edge": "These two nodes are already linked.",
+      "too_many_nodes": "Too many nodes (20 at most).",
+      "reserved_node_key": "This node key is reserved for the supervisor phase.",
+      "invalid_loop_edge": "A loop link must lead to a preceding node or to the node itself.",
+      "overlapping_loop_bodies": "Loop bodies must not overlap or share nodes.",
+      "loop_body_requires_confirmation": "A node marked “Requires confirmation” cannot be inside a loop.",
+      "loop_body_fan_out": "Only the last node of a loop (where the loop link starts) may lead outside it.",
+      "unknown": "Graph validation error: {code}"
+    },
+    "invalidJsonObject": "Invalid JSON object",
+    "invalidJsonList": "Invalid JSON list"
+  },
+  "common": {
+    "loading": "Loading...",
+    "theme": {
+      "enableLight": "Switch to light theme",
+      "enableDark": "Switch to dark theme",
+      "light": "Light theme",
+      "dark": "Dark theme"
+    },
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "language": "Language",
+    "logout": "Sign out"
+  },
+  "login": {
+    "subtitle": "Sign in to continue",
+    "signingIn": "Signing in…",
+    "signIn": "Sign in with Keycloak"
+  },
+  "constructor": {
+    "defaultPrompt": "You are a specialized assistant of a gold mining company. Answer accurately and to the point, with source citations.",
+    "saveFailed": "Could not save the agent",
+    "title": "Agent constructor",
+    "chooseModel": "Choose model",
+    "form": {
+      "name": "Agent name",
+      "namePlaceholder": "For example, Cyanidation analyst",
+      "description": "Short description",
+      "descriptionPlaceholder": "What the agent does and for which tasks",
+      "model": "Model",
+      "systemPrompt": "System prompt",
+      "tools": "Tools",
+      "knowledgeBases": "Knowledge bases",
+      "temperature": "Temperature",
+      "inherit": "Inherit from the organization",
+      "saving": "Saving…",
+      "create": "Create agent"
+    },
+    "preview": {
+      "newAgent": "New agent",
+      "noDescription": "No description",
+      "tools": "Tools",
+      "knowledgeBases": "Knowledge bases",
+      "noneSelected": "None selected"
+    }
+  },
+  "access": {
+    "adminRequired": "Access denied. The organization administrator role is required.",
+    "checking": "Checking access...",
+    "orgReadable": "Available to the organization",
+    "orgClosed": "Closed to the organization",
+    "page": {
+      "resourceTypes": {
+        "model": "Model",
+        "skill": "Skill",
+        "knowledge_base": "Knowledge base",
+        "agent_definition": "Agent",
+        "workflow": "Workflow"
+      },
+      "title": "Resource access",
+      "subtitle": "Manage organization, group and user grants for one resource at a time.",
+      "resourceType": "Resource type",
+      "search": "Search resources",
+      "loading": "Loading resources...",
+      "empty": "No resources of this type were found.",
+      "resource": "Resource",
+      "chooseResource": "Choose a resource",
+      "adminWriteRequired": "Access denied. The admin:write permission is required."
+    }
+  },
+  "workflows": {
+    "page": {
+      "title": "Workflows",
+      "subtitle": "Deterministic agent graphs",
+      "loading": "Loading workflows..."
+    },
+    "diagnostics": {
+      "label": "Workflow diagnostics",
+      "status": "Status: {status}",
+      "error": "Error: {code}",
+      "attempts": "Attempts: {count}",
+      "purged": "Removed by the retention policy",
+      "run": "Run {id}"
+    },
+    "table": {
+      "name": "Name",
+      "version": "Version",
+      "status": "Status",
+      "actions": "Actions",
+      "edit": "Edit",
+      "access": "Access",
+      "saveTemplate": "Save as template",
+      "archive": "Archive"
+    },
+    "form": {
+      "validateFailed": "Workflow validation failed",
+      "saveFailed": "Saving the workflow failed",
+      "editTitle": "Edit workflow",
+      "newTitle": "New workflow",
+      "name": "Name",
+      "nameAria": "Workflow name",
+      "description": "Description",
+      "descriptionAria": "Workflow description",
+      "chooseAgent": "Choose an agent",
+      "parallelism": "Parallelism",
+      "autoRouting": "Auto-routing",
+      "autoRoutingHint": "Auto-routing — run this workflow without an explicit choice in chat when the user message clearly matches it",
+      "duplicateKeys": "Node keys must be unique.",
+      "validate": "Validate",
+      "save": "Save"
+    },
+    "templates": {
+      "errors": {
+        "fallback": "The template operation failed.",
+        "conflict": "The data changed. Refresh it and confirm a new attempt.",
+        "network": "The network is unavailable. The operation may already have completed. Check the connection; before retrying, refresh and check the templates and workflows.",
+        "session": "The session is no longer valid. Sign in again and refresh the data before retrying.",
+        "template_not_found": "The template was not found or is unavailable.",
+        "source_not_found": "The source workflow was not found or is unavailable.",
+        "dependency_unavailable": "One of the workflow dependencies is unavailable.",
+        "catalog_unavailable": "The model catalog is temporarily unavailable.",
+        "snapshot_invalid": "The workflow configuration is not suitable for a template."
+      },
+      "refreshFailed": "Could not refresh the data. Check the connection.",
+      "title": "Workflow templates",
+      "subtitle": "The catalog stores only the server-side version of a workflow.",
+      "showArchived": "Show archived",
+      "source": "Source workflow",
+      "chooseInTable": "Choose an action in the workflow table",
+      "templateName": "Template name",
+      "saveAsTemplate": "Save as template",
+      "template": "Workflow template",
+      "chooseTemplate": "Choose a template",
+      "archivedSuffix": " · archived",
+      "copyName": "Workflow copy name",
+      "updateFromWorkflow": "Update from workflow",
+      "createFromTemplate": "Create workflow from template",
+      "archiveTemplate": "Archive template",
+      "refresh": "Refresh data",
+      "copyNotice": "The copy has independent agents; access rights were not copied; auto-routing is off. Grant access separately before running it."
+    },
+    "canvas": {
+      "node": "Node {name}",
+      "inputHandle": "Input handle — node {name}",
+      "requiresConfirmation": "Requires confirmation",
+      "outputHandle": "Output handle — node {name}",
+      "edgeCondition": "Link condition {source} → {target}",
+      "onSuccess": "On success",
+      "onFailure": "On failure",
+      "removeEdge": "Remove link {source} → {target}",
+      "loopParamsFor": "Loop parameters {source} → {target}",
+      "loopParams": "Loop parameters",
+      "addNode": "Add node",
+      "graph": "Workflow graph",
+      "inspector": "Node {index} inspector",
+      "nodeLegend": "Node {index}",
+      "nodeKey": "Node {index} key",
+      "reservedKey": "This node key is reserved for the supervisor phase.",
+      "nodeName": "Node {index} name",
+      "namePlaceholder": "Name",
+      "nodeAgent": "Node {index} agent",
+      "chooseAgent": "Choose an agent",
+      "nodeInstruction": "Node {index} instruction",
+      "requiresConfirmationFor": "Requires confirmation — node {index}",
+      "addLoopFor": "Add a loop on this node {index}",
+      "addLoop": "Add a loop on this node",
+      "removeNode": "Remove node {index}",
+      "emptyInspector": "Add a node to set its parameters.",
+      "loopTitle": "Loop {source} → {target}",
+      "iterations": "Iterations",
+      "loopIterations": "Loop iterations {source} → {target}",
+      "iterationsHint": "From 2 to 20 iterations.",
+      "close": "Close"
+    }
+  },
+  "authorization": {
+    "preview": {
+      "source": {
+        "grant": "Assigned by a grant",
+        "admin_bypass": "Organization administrator access",
+        "none": "No matching grant"
+      },
+      "title": "Effective access",
+      "chooseSubject": "Choose a user or group.",
+      "organizationDirect": "An organization grant applies directly to every member.",
+      "checking": "Checking…",
+      "check": "Check effective access",
+      "noAccess": "no access"
+    },
+    "capabilities": {
+      "loading": "Loading capabilities…",
+      "saved": "Capabilities saved.",
+      "saving": "Saving…",
+      "organizationTitle": "Organization capabilities",
+      "organizationSave": "Save organization capabilities",
+      "groupTitle": "Capabilities of group {group}",
+      "groupSave": "Save capabilities of group {group}"
+    },
+    "grants": {
+      "principal": {
+        "organization": "Organization",
+        "group": "Group",
+        "user": "User"
+      },
+      "loading": "Loading grants...",
+      "recipient": "Recipient",
+      "recipientAria": "Recipient of the new grant",
+      "access": "Access",
+      "accessAria": "Access level of the new grant",
+      "add": "Add grant",
+      "removeAria": "Remove grant {subject}",
+      "remove": "Remove",
+      "saving": "Saving…",
+      "save": "Save grants",
+      "applyTitle": "Apply resource grants?",
+      "applyDescription": "The complete set of grants for “{resource}” will be replaced. The change applies immediately.",
+      "apply": "Apply"
+    }
+  },
+  "groups": {
+    "title": "Groups and access",
+    "create": "Create group",
+    "name": "Name",
+    "creating": "Creating...",
+    "loading": "Loading groups...",
+    "actions": "Actions",
+    "syncedFromKeycloak": "Synchronized from Keycloak: {date}",
+    "configureCapabilities": "Configure capabilities {group}",
+    "delete": "Delete",
+    "empty": "No groups yet",
+    "deleteTitle": "Delete the group?",
+    "deleteDescription": "“{group}” will be deleted and member access will change immediately."
+  },
+  "agents": {
+    "page": {
+      "title": "Agents / Skills",
+      "subtitle": "Tools and MCP servers available to the LLM in chat",
+      "addSkill": "Add skill",
+      "loading": "Loading skills...",
+      "deleteTitle": "Delete the skill?",
+      "deleteDescription": "“{skill}” will no longer be available to the LLM in chat.",
+      "delete": "Delete"
+    }
+  },
+  "models": {
+    "gateway": {
+      "available": "Gateway available",
+      "mock": "Test catalog",
+      "unavailable": "Gateway catalog unavailable"
+    },
+    "loading": "Loading models...",
+    "loadFailed": "Could not load models",
+    "title": "Organization models",
+    "subtitle": "Choose the model offered to users who have not set a personal default.",
+    "gatewayUnavailableHint": "The gateway catalog is unavailable. You can clear the saved setting but cannot choose a new model.",
+    "defaultModel": "Default model",
+    "noDefault": "No default model",
+    "unavailable": "{model} — unavailable",
+    "grantsHint": "Model availability is controlled by resource grants. This setting does not change user permissions.",
+    "staleDefault": "The saved model is no longer available to the organization.",
+    "defaultTemperature": "Default temperature",
+    "temperatureUnset": "Not set — the system default (0.7) is used.",
+    "saving": "Saving...",
+    "save": "Save",
+    "configureAccess": "Configure model access"
+  },
+  "nav": {
+    "backToChat": "← To chat",
+    "groups": "Groups",
+    "models": "Models",
+    "access": "Access",
+    "workflows": "Workflows",
+    "analytics": "Analytics",
+    "agents": "Agents / Skills",
+    "constructor": "Constructor",
+    "about": "License and source"
+  },
+  "skills": {
+    "table": {
+      "name": "Name",
+      "type": "Type",
+      "actions": "Actions",
+      "edit": "Edit",
+      "delete": "Delete",
+      "empty": "No skills yet"
+    },
+    "form": {
+      "sseRequired": "Choose SSE and enter the external MCP server address before saving.",
+      "bundleRequired": "Choose a .zip bundle file",
+      "formError": "Form error",
+      "editTitle": "Edit skill",
+      "createTitle": "Create skill",
+      "name": "Name",
+      "type": "Type",
+      "description": "Description",
+      "descriptionPlaceholder": "What this tool does — shown to the LLM in the list of available tools",
+      "transport": "Transport",
+      "transportHint": "Organization skills use SSE. Run local code as a code skill in the sandbox.",
+      "token": "Authorization token (Authorization: Bearer …)",
+      "tokenEndpointChanged": "The address changed — enter a new token or save without one",
+      "tokenSaved": "A token is already saved — leave empty to keep it",
+      "tokenOptional": "Optional — if the server requires authorization",
+      "needsNewCredential": "To discover tools at the new address, enter a new token or save the skill without a token first.",
+      "discover": "Discover tools",
+      "stdioRetired": "This stdio skill no longer runs. To migrate, choose SSE and replace the command with an external MCP server address.",
+      "discovered": "Tools found: {count} — choose one to fill in the form",
+      "bundle": "Skill bundle (.zip with SKILL.md)",
+      "bundleHint": "Anthropic Agent Skills format: an archive with SKILL.md (YAML frontmatter name/description + instructions) at the root and optional scripts/ and other files. Leave the name and description empty to take them from the SKILL.md frontmatter.",
+      "bundleFallbackName": "bundle",
+      "replaceBundle": "Replace bundle",
+      "bundleReplaced": "Bundle updated.",
+      "toolName": "Tool name (activity_name)",
+      "cancel": "Cancel",
+      "saving": "Saving...",
+      "update": "Update skill",
+      "allowedChildSkills": "Allowed child skills (JSON list)"
+    }
+  },
+  "analytics": {
+    "chart": {
+      "requestsTitle": "Requests per day",
+      "tokensTitle": "Token usage per day",
+      "tableLabel": "Usage chart data",
+      "dateUtc": "Date (UTC)",
+      "requests": "Requests",
+      "tokens": "Tokens"
+    },
+    "checkFilters": "Check the analytics period and filters.",
+    "title": "Usage analytics",
+    "utcNote": "All dates and daily intervals are calculated in UTC.",
+    "filters": "Analytics filters",
+    "from": "From",
+    "to": "To",
+    "user": "User",
+    "allUsers": "All users",
+    "loadingUsers": "Loading users...",
+    "previousPage": "Previous page",
+    "back": "Back",
+    "nextPage": "Next page",
+    "forward": "Forward",
+    "model": "Model",
+    "apply": "Apply",
+    "loading": "Loading analytics...",
+    "totals": "Totals",
+    "requests": "Requests",
+    "tokens": "Tokens",
+    "requestLimit": "Monthly request limit",
+    "tokenLimit": "Monthly token limit",
+    "unlimited": "Unlimited",
+    "usedIn": "Used in {month}: {value}",
+    "requestsRemaining": "Requests remaining: {value}",
+    "tokensRemaining": "Tokens remaining: {value}",
+    "unaccounted": "{count, plural, one {{value} request without token data} other {{value} requests without token data}}",
+    "noData": "No data for the selected period.",
+    "dynamics": "Trend",
+    "chartMetric": "Chart metric",
+    "byModel": "By model",
+    "byUser": "By user",
+    "byUserTruncated": "Showing {shown} of {total} users with usage, by descending tokens. Narrow the period or filter by user."
+  },
+  "about": {
+    "description": "A self-hosted platform for AI conversations, tools, knowledge and durable multi-agent workflows.",
+    "copyright": "Copyright © 2026 AurumAI contributors. Original authors retain their contribution copyrights.",
+    "license": "AurumAI is free software licensed under AGPL-3.0-only and is provided without warranty.",
+    "licenseLink": "AGPL-3.0-only license",
+    "sourceCode": "Source code",
+    "sourceIncluded": "Source code is included in the AurumAI source distribution. Configure RUNTIME_SOURCE_CODE_URL to link the source of this deployment.",
+    "thirdParty": "Third-party dependencies retain their upstream licenses; see THIRD_PARTY_NOTICES.md in the source distribution.",
+    "returnToSignIn": "Return to sign in"
+  }
+}

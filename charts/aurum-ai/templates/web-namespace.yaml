@@ -1,0 +1,174 @@
+{{- if .Values.web.enabled }}
+{{- $webNamespace := required "web.namespace is required when web.enabled=true" .Values.web.namespace -}}
+{{- $runnerNamespace := include "aurum-ai.runnerNamespace" . -}}
+{{- $sandboxNamespace := include "aurum-ai.sandboxNamespace" . -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $webNamespace) -}}
+{{- fail "web.namespace must be a valid DNS label" -}}
+{{- end -}}
+{{- if gt (len $webNamespace) 63 -}}
+{{- fail "web.namespace must not exceed 63 characters" -}}
+{{- end -}}
+{{- if or (eq $webNamespace .Release.Namespace) (eq $webNamespace $runnerNamespace) (eq $webNamespace $sandboxNamespace) -}}
+{{- fail "web.namespace must differ from the release, runner and sandbox namespaces" -}}
+{{- end -}}
+{{- if not .Values.networkPolicies.enabled -}}
+{{- fail "web.enabled requires networkPolicies.enabled=true and a CNI with verified enforcement" -}}
+{{- end -}}
+{{- if not .Values.networkPolicies.dns.enabled -}}
+{{- fail "web.enabled requires networkPolicies.dns.enabled=true" -}}
+{{- end -}}
+{{- $dnsNamespace := .Values.networkPolicies.dns.namespace | default "" -}}
+{{- if or (not $dnsNamespace) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $dnsNamespace)) (gt (len $dnsNamespace) 63) -}}
+{{- fail "networkPolicies.dns.namespace must be a non-empty valid DNS label" -}}
+{{- end -}}
+{{- $dnsPodLabels := .Values.networkPolicies.dns.podLabels -}}
+{{- if and (kindIs "string" $dnsPodLabels) (ne $dnsPodLabels "kube-dns") -}}
+{{- fail "networkPolicies.dns.podLabels string value must be the kube-dns preset" -}}
+{{- end -}}
+{{- if and (not (kindIs "string" $dnsPodLabels)) (or (not (kindIs "map" $dnsPodLabels)) (eq (len $dnsPodLabels) 0)) -}}
+{{- fail "networkPolicies.dns.podLabels must be a non-empty map" -}}
+{{- end -}}
+{{- if kindIs "map" $dnsPodLabels -}}
+{{- range $key, $value := $dnsPodLabels -}}
+{{- if or (not ($key | default "")) (not ($value | default "")) -}}
+{{- fail "networkPolicies.dns.podLabels keys and values must be non-empty" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $serviceSecret := .Values.web.serviceSecret | default "" -}}
+{{- $existingSecret := .Values.web.existingSecret | default "" -}}
+{{- if and $serviceSecret $existingSecret -}}
+{{- fail "set only one of web.serviceSecret or web.existingSecret" -}}
+{{- end -}}
+{{- if and (not $serviceSecret) (not $existingSecret) -}}
+{{- fail "web.serviceSecret or web.existingSecret is required when web.enabled=true" -}}
+{{- end -}}
+{{- if and $serviceSecret (lt (len $serviceSecret) 16) -}}
+{{- fail "web.serviceSecret must contain at least 16 characters" -}}
+{{- end -}}
+{{- if and $serviceSecret (lt (len (.Values.web.searxngSecret | default "")) 16) -}}
+{{- fail "web.searxngSecret must contain at least 16 characters with a managed serviceSecret" -}}
+{{- end -}}
+{{- if and $existingSecret (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $existingSecret)) -}}
+{{- fail "web.existingSecret must be a valid Kubernetes Secret name" -}}
+{{- end -}}
+{{- if gt (len $existingSecret) 253 -}}
+{{- fail "web.existingSecret must not exceed 253 characters" -}}
+{{- end -}}
+{{- if and $existingSecret (not (.Values.web.secretRotationToken | default "")) -}}
+{{- fail "web.secretRotationToken is required with web.existingSecret" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" (.Values.web.runtimeClassName | default "")) -}}
+{{- fail "web.runtimeClassName is required and must be a valid DNS subdomain" -}}
+{{- end -}}
+{{- if gt (len .Values.web.runtimeClassName) 253 -}}
+{{- fail "web.runtimeClassName must not exceed 253 characters" -}}
+{{- end -}}
+{{- if or (lt (int .Values.web.pidLimit) 2) (gt (int .Values.web.pidLimit) 4096) -}}
+{{- fail "web.pidLimit must be between 2 and 4096" -}}
+{{- end -}}
+{{- if lt (int .Values.web.webTools.replicaCount) 1 -}}
+{{- fail "web.webTools.replicaCount must be at least 1 when web is enabled" -}}
+{{- end -}}
+{{- if lt (int .Values.web.searxng.replicaCount) 1 -}}
+{{- fail "web.searxng.replicaCount must be at least 1 when web is enabled" -}}
+{{- end -}}
+{{- $_ := required "web.webTools.resources.requests.cpu is required" .Values.web.webTools.resources.requests.cpu -}}
+{{- $_ := required "web.webTools.resources.requests.memory is required" .Values.web.webTools.resources.requests.memory -}}
+{{- $_ := required "web.webTools.resources.limits.cpu is required" .Values.web.webTools.resources.limits.cpu -}}
+{{- $_ := required "web.webTools.resources.limits.memory is required" .Values.web.webTools.resources.limits.memory -}}
+{{- $_ := required "web.searxng.resources.requests.cpu is required" .Values.web.searxng.resources.requests.cpu -}}
+{{- $_ := required "web.searxng.resources.requests.memory is required" .Values.web.searxng.resources.requests.memory -}}
+{{- $_ := required "web.searxng.resources.limits.cpu is required" .Values.web.searxng.resources.limits.cpu -}}
+{{- $_ := required "web.searxng.resources.limits.memory is required" .Values.web.searxng.resources.limits.memory -}}
+{{- if ne .Values.web.networkPolicy.publicIpv4Cidr "0.0.0.0/0" -}}
+{{- fail "web.networkPolicy.publicIpv4Cidr must be 0.0.0.0/0; safety comes from required exclusions" -}}
+{{- end -}}
+{{- if ne .Values.web.networkPolicy.publicIpv6Cidr "2000::/3" -}}
+{{- fail "web.networkPolicy.publicIpv6Cidr must be 2000::/3; non-global address classes stay outside the allow block" -}}
+{{- end -}}
+{{- $requiredV4 := list "0.0.0.0/8" "10.0.0.0/8" "100.64.0.0/10" "127.0.0.0/8" "169.254.0.0/16" "172.16.0.0/12" "192.0.0.0/24" "192.0.2.0/24" "192.88.99.0/24" "192.168.0.0/16" "198.18.0.0/15" "198.51.100.0/24" "203.0.113.0/24" "224.0.0.0/4" "240.0.0.0/4" -}}
+{{- range $cidr := $requiredV4 -}}
+{{- if not (has $cidr $.Values.web.networkPolicy.excludedIpv4Cidrs) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv4Cidrs must retain required exclusion %s" $cidr) -}}
+{{- end -}}
+{{- end -}}
+{{- $requiredV6 := list "2001::/23" "2001:db8::/32" "2002::/16" "3fff::/20" -}}
+{{- range $cidr := $requiredV6 -}}
+{{- if not (has $cidr $.Values.web.networkPolicy.excludedIpv6Cidrs) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs must retain required exclusion %s" $cidr) -}}
+{{- end -}}
+{{- end -}}
+{{- range $cidr := .Values.web.networkPolicy.excludedIpv4Cidrs -}}
+{{- if eq $cidr $.Values.web.networkPolicy.publicIpv4Cidr -}}
+{{- fail "web.networkPolicy.excludedIpv4Cidrs must not exclude the entire public IPv4 range" -}}
+{{- end -}}
+{{- if not (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$" $cidr) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv4Cidrs contains invalid IPv4 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- $address := first (splitList "/" $cidr) -}}
+{{- range $octet := splitList "." $address -}}
+{{- if gt (int $octet) 255 -}}
+{{- fail (printf "web.networkPolicy.excludedIpv4Cidrs contains invalid IPv4 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $cidr := .Values.web.networkPolicy.excludedIpv6Cidrs -}}
+{{- if eq $cidr $.Values.web.networkPolicy.publicIpv6Cidr -}}
+{{- fail "web.networkPolicy.excludedIpv6Cidrs must not exclude the entire public IPv6 range" -}}
+{{- end -}}
+{{- if not (regexMatch "^[0-9A-Fa-f:]+/[0-9]{1,3}$" $cidr) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs contains invalid IPv6 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- $parts := splitList "/" $cidr -}}
+{{- $address := first $parts -}}
+{{- $prefix := int (last $parts) -}}
+{{- if gt $prefix 128 -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs contains invalid IPv6 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- if or (contains ":::" $address) (and (hasPrefix ":" $address) (not (hasPrefix "::" $address))) (and (hasSuffix ":" $address) (not (hasSuffix "::" $address))) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs contains invalid IPv6 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- $compressionParts := splitList "::" $address -}}
+{{- if gt (len $compressionParts) 2 -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs contains invalid IPv6 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- $groups := list -}}
+{{- range $group := splitList ":" (replace "::" ":" $address) -}}
+{{- if $group -}}
+{{- if not (regexMatch "^[0-9A-Fa-f]{1,4}$" $group) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs contains invalid IPv6 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- $groups = append $groups $group -}}
+{{- end -}}
+{{- end -}}
+{{- if contains "::" $address -}}
+{{- if gt (len $groups) 7 -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs contains invalid IPv6 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- else if ne (len $groups) 8 -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs contains invalid IPv6 CIDR %q" $cidr) -}}
+{{- end -}}
+{{- end -}}
+{{- range $image := list .Values.web.webTools.image .Values.web.searxng.image -}}
+{{- if not $image.repository -}}
+{{- fail "web workload image.repository must not be empty" -}}
+{{- end -}}
+{{- if and $image.digest (not (regexMatch "^sha256:[a-f0-9]{64}$" $image.digest)) -}}
+{{- fail "web workload image.digest must be an immutable sha256 digest" -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.web.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $webNamespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    aurum-ai.runtime: web
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+{{- end }}
+{{- end }}

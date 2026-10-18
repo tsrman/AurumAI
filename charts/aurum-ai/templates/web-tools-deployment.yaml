@@ -1,0 +1,102 @@
+{{- if .Values.web.enabled }}
+{{- $image := .Values.web.webTools.image -}}
+{{- $tag := $image.tag | default .Values.image.tag | default .Chart.AppVersion -}}
+{{- $secretName := .Values.web.existingSecret | default (printf "%s-web-secrets" .Release.Name | trunc 63 | trimSuffix "-") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-web-tools
+  namespace: {{ .Values.web.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "web-tools" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.webTools.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "web-tools" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "web-tools" "root" $) | nindent 8 }}
+      annotations:
+        aurum-ai.io/required-pids-limit: {{ .Values.web.pidLimit | quote }}
+        checksum/web-config: {{ include "aurum-ai.webConfigChecksum" . }}
+        checksum/web-secret: {{ include "aurum-ai.webSecretChecksum" . }}
+    spec:
+      runtimeClassName: {{ .Values.web.runtimeClassName }}
+      automountServiceAccountToken: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: web-tools
+          {{- if $image.digest }}
+          image: {{ printf "%s@%s" $image.repository $image.digest | quote }}
+          {{- else }}
+          image: {{ printf "%s:%s" $image.repository $tag | quote }}
+          {{- end }}
+          imagePullPolicy: {{ $image.pullPolicy | default .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8120
+              protocol: TCP
+          env:
+            - name: WEB_TOOLS_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: WEB_TOOLS_SERVICE_SECRET
+            - name: WEB_TOOLS_SEARXNG_URL
+              value: {{ printf "http://%s-searxng.%s.svc:8080" .Release.Name .Values.web.namespace | quote }}
+            # Kubernetes has no nftables egress sidecar, so the NetworkPolicy
+            # exclusions are also handed to the application's own pre-connect
+            # address check. Deriving them here keeps the two from drifting.
+            - name: WEB_TOOLS_FORBIDDEN_CIDRS
+              value: {{ concat .Values.web.networkPolicy.excludedIpv4Cidrs .Values.web.networkPolicy.excludedIpv6Cidrs | join "," | quote }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.web.webTools.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+{{- end }}

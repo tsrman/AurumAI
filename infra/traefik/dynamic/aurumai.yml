@@ -1,0 +1,103 @@
+# Traefik file-provider routes for docker-compose.proxy.yml.
+# Traefik renders this file as a Go template; PUBLIC_DOMAIN comes from the
+# container environment. The file provider keeps the Docker socket away from
+# the internet-facing proxy. Every router terminates TLS with Let's Encrypt.
+http:
+  routers:
+    chat:
+      rule: Host(`chat.{{ env "PUBLIC_DOMAIN" }}`)
+      entryPoints: [websecure]
+      service: chat
+      middlewares: [security-headers]
+      tls:
+        certResolver: letsencrypt
+    admin:
+      rule: Host(`admin.{{ env "PUBLIC_DOMAIN" }}`)
+      entryPoints: [websecure]
+      service: admin
+      middlewares: [security-headers]
+      tls:
+        certResolver: letsencrypt
+    api:
+      rule: Host(`api.{{ env "PUBLIC_DOMAIN" }}`)
+      entryPoints: [websecure]
+      service: api
+      middlewares: [security-headers]
+      tls:
+        certResolver: letsencrypt
+    admin-api:
+      rule: Host(`admin-api.{{ env "PUBLIC_DOMAIN" }}`)
+      entryPoints: [websecure]
+      service: admin-api
+      middlewares: [security-headers]
+      tls:
+        certResolver: letsencrypt
+    # Includes the Keycloak admin console; KEYCLOAK_ADMIN_PASSWORD guards it.
+    auth:
+      rule: Host(`auth.{{ env "PUBLIC_DOMAIN" }}`)
+      entryPoints: [websecure]
+      service: auth
+      middlewares: [security-headers]
+      tls:
+        certResolver: letsencrypt
+    # Temporal UI has no authentication of its own and exposes workflow
+    # histories, so the proxy requires basic auth for every request.
+    temporal:
+      rule: Host(`temporal.{{ env "PUBLIC_DOMAIN" }}`)
+      entryPoints: [websecure]
+      service: temporal
+      middlewares: [temporal-auth, security-headers]
+      tls:
+        certResolver: letsencrypt
+    langfuse:
+      rule: Host(`langfuse.{{ env "PUBLIC_DOMAIN" }}`)
+      entryPoints: [websecure]
+      service: langfuse
+      middlewares: [security-headers]
+      tls:
+        certResolver: letsencrypt
+
+  middlewares:
+    temporal-auth:
+      basicAuth:
+        # Written by the traefik-auth one-shot service from
+        # TEMPORAL_UI_BASIC_AUTH_USER/TEMPORAL_UI_BASIC_AUTH_PASSWORD.
+        usersFile: /etc/traefik/auth/temporal.htpasswd
+        removeHeader: true
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        contentTypeNosniff: true
+        referrerPolicy: strict-origin-when-cross-origin
+
+  # Services are addressed over the Compose default network. Responses are
+  # streamed without buffering, which keeps chat SSE delivery incremental.
+  services:
+    chat:
+      loadBalancer:
+        servers:
+          - url: http://frontend:3000
+    admin:
+      loadBalancer:
+        servers:
+          - url: http://admin-ui:3000
+    api:
+      loadBalancer:
+        servers:
+          - url: http://backend:8000
+    admin-api:
+      loadBalancer:
+        servers:
+          - url: http://backend-admin:8000
+    auth:
+      loadBalancer:
+        servers:
+          - url: http://keycloak:8080
+    temporal:
+      loadBalancer:
+        servers:
+          - url: http://temporal-ui:8080
+    langfuse:
+      loadBalancer:
+        servers:
+          - url: http://langfuse-server:3000

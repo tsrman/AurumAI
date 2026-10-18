@@ -1,0 +1,63 @@
+# Private, API-only SearXNG instance. The exact compatible image and allowlist
+# are recorded in image.lock. The container replaces this placeholder from
+# SEARXNG_SECRET; deployment must always provide a real secret.
+# brave/duckduckgo/startpage alone were observed all failing simultaneously
+# from this deployment's egress IP on the same query (2026-09-12): brave
+# "Suspended: too many requests", duckduckgo "CAPTCHA", startpage "HTTP
+# connection error" — a live, non-code issue (these engines actively block
+# datacenter/cloud traffic), not something this platform's code can fix.
+# mojeek/yahoo/qwant added for redundancy — a result only needs one engine
+# in the set to succeed.
+use_default_settings:
+  engines:
+    keep_only:
+      - brave
+      - duckduckgo
+      - startpage
+      - mojeek
+      - yahoo
+      - qwant
+      - wikipedia
+
+general:
+  debug: false
+  instance_name: AurumAI Search
+  enable_metrics: false
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  default_lang: all
+  formats:
+    - json
+
+server:
+  secret_key: ultrasecretkey
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: POST
+
+preferences:
+  lock:
+    - categories
+    - language
+    - safesearch
+
+engines:
+  - name: brave
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: wikipedia
+    disabled: false

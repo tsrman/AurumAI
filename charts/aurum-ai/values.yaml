@@ -1,0 +1,544 @@
+# Default values point at the `container_name:` values docker-compose.yml
+# gives its services (aurum-ai-postgres, aurum-ai-redis, …), NOT their
+# compose service names (postgres, redis, …) — k3d only injects container
+# names into CoreDNS, see the external.* comment below. For local k3d
+# testing, attach the cluster to compose's docker network so pod DNS can
+# resolve them: see charts/aurum-ai/README.md.
+#
+# The defaults here are the *dev* profile: backend.debug/backendAdmin.debug
+# are true and every secret is the same placeholder docker-compose.yml uses,
+# which is what makes `helm install` work out of the box against a compose
+# stack. Flipping debug to false is the single switch that arms every
+# fail-fast guard in business-backend/src/core/config.py and in the
+# 2026_06_21_app_role_force_rls migration — do that, and supply real values
+# for every secrets.* key, for anything that is not a throwaway cluster.
+
+image:
+  pullPolicy: IfNotPresent
+  # Empty registry = image name is used as-is (local images loaded via
+  # `k3d image import`, e.g. `docker compose build` output). Set to
+  # something like ghcr.io/tsrman for a real cluster with a real registry.
+  registry: ""
+  tag: "latest"
+
+# Pull credentials for the permanent workloads in the release namespace.
+# Dynamic runtime Pods use the separate lists under runner/skillSandbox.
+imagePullSecrets: []
+
+# Secret with all sensitive values. When create=true (default, dev-only) the
+# chart makes one from the values below — every value here has the same
+# insecure dev-only default docker-compose.yml uses, so this is only safe
+# for local/throwaway clusters. A real deployment must set secrets.create to
+# false and pre-create a Secret with the same key names out of band (sealed-
+# secrets/external-secrets/whatever the target cluster already uses) —
+# never put real secrets in values.yaml or in this chart's git history.
+secrets:
+  create: true
+  name: aurum-ai-secrets
+  # Deliberately the exact literal core/config.py checks for
+  # (_INSECURE_SECRET_KEY): with debug false this raises at Settings()
+  # construction instead of silently signing runner session tokens
+  # (sub/org_id) with a key published in this repository.
+  appSecretKey: "change-me-in-production"
+  # Must match the password the aurum_ai_app role was actually created
+  # with. Against a shared compose Postgres that is compose's own default:
+  # the migration's CREATE ROLE is a no-op when the role already exists
+  # (EXCEPTION duplicate_object), so a different value here does not rewrite
+  # the role's password — it just makes the pods fail authentication.
+  databaseRolePassword: "aurum_ai_app"
+  migrationDatabasePassword: "postgres"
+  redisPassword: "redis_dev_password"
+  s3SecretKey: "miniosecret"
+  gatewayApiKey: ""
+  langfuseSecretKey: "sk-lf-550e8400-e29b-41d4-a716-446655440001"
+
+# The stateful/data-plane services below stay external to this chart. These
+# values tell the six permanent workloads and dynamic runner Pods where to
+# reach them.
+external:
+  # Hostnames are docker-compose.yml's own `container_name:` values, not its
+  # service names — a k3d cluster created with `--network aurum-ai_default`
+  # (see README.md) gets these injected straight into CoreDNS's NodeHosts,
+  # while the bare service name (`postgres`, `redis`, ...) is NOT: k3d builds
+  # its host-record list from container inspection, which only knows
+  # container names. Verified empirically (2026-08-30): `nslookup
+  # aurum-ai-postgres.` resolves inside a cluster pod, `nslookup postgres`
+  # does not.
+  postgres:
+    host: aurum-ai-postgres
+    port: 5432
+    database: aurum_ai
+    migrationUser: postgres
+  redis:
+    host: aurum-ai-redis
+    port: 6379
+  keycloak:
+    url: "http://aurum-ai-keycloak:8080"
+    issuer: "http://localhost:8080/realms/aurum-ai"
+    realm: aurum-ai
+  temporal:
+    host: "aurum-ai-temporal:7233"
+    namespace: default
+  minio:
+    endpoint: "http://aurum-ai-minio:9000"
+    accessKey: minio
+    bucket: aurum-ai-business
+  ragApi:
+    url: "http://aurum-ai-rag-api:8110"
+  langfuse:
+    enabled: true
+    host: "http://aurum-ai-langfuse-server:3000"
+    publicKey: "pk-lf-dev-public-key"
+  llmGateway:
+    # Real deploys point this at the Bifrost gateway; compose's own default
+    # (backend proxying to itself, i.e. the mock LLM) is kept here so the
+    # chart is usable without a gateway configured, same as compose.
+    url: "http://aurum-ai-backend:8000"
+    verifySsl: true
+
+ingress:
+  enabled: true
+  className: traefik
+  # How the *browser* reaches the Ingress controller. README.md's k3d flow
+  # publishes traefik on 8081 (`-p "8081:80@loadbalancer"`), so every
+  # browser-facing URL the chart renders — frontend/adminUi runtimeConfig and
+  # backend/backend-admin's APP_FRONTEND_URL (the single exact CORS origin) —
+  # has to carry that port. Set to https/443 (or http/80) on a real cluster
+  # and it drops out of the URLs again.
+  externalScheme: http
+  externalPort: 8081
+  # nip.io hostnames so this resolves with zero DNS/hosts-file setup for
+  # local k3d testing (see README.md). Point these at real hostnames for
+  # anything beyond a throwaway local cluster.
+  hosts:
+    backend: backend.127.0.0.1.nip.io
+    backendAdmin: backend-admin.127.0.0.1.nip.io
+    frontend: chat.127.0.0.1.nip.io
+    adminUi: admin.127.0.0.1.nip.io
+  tls: []
+
+migrations:
+  # Runs `alembic upgrade head` as a Helm hook Job (pre-install,pre-upgrade)
+  # against external.postgres using the postgres role — never as an init
+  # container on the backend Deployment, which would run it once per
+  # replica in parallel. See docs/ARCHITECTURE.md.
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+
+backend:
+  image:
+    repository: aurum-ai-backend
+    tag: ""
+    pullPolicy: ""
+  replicaCount: 3
+  # main_business.py selects the Kubernetes runner runtime in this chart and
+  # creates a per-conversation Pod through the CoreV1 API. No Docker socket
+  # is mounted into backend Pods. Keep this at zero: Kubernetes has no warm
+  # runner pool implementation.
+  runnerPoolSize: 0
+  # Dev default, matching docker-compose.yml's own `APP_DEBUG:-true`. It is
+  # what lets the placeholder secrets above work: with debug false, config.py
+  # rejects the appSecretKey/s3SecretKey placeholders at import time (every
+  # gunicorn worker dies) and the 2026_06_21_app_role_force_rls migration
+  # raises on the placeholder databaseRolePassword at *module import*, which
+  # fails the pre-install hook Job and aborts the whole release. Also turns on
+  # /docs + /redoc (app_factory.py) and SQLAlchemy echo (core/database.py).
+  # Set false together with real secrets.* values for a real deployment.
+  debug: true
+  rateLimitPerMinute: 300
+  rateLimitPerMinuteStream: 30
+  # Rollout kill switch. Enable only after compatible migrations, backend,
+  # conversation-runner and business-ui are deployed.
+  userQuestionsEnabled: false
+  # Independent backend kill switch for public-web calls. web.enabled deploys
+  # the isolated boundary; enable this only after those workloads and their
+  # policies have passed operator enforcement checks.
+  webEnabled: false
+  evaluator:
+    enabled: false
+    model: ""
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# Opt-in public web boundary. This stays disabled until the dedicated namespace,
+# namespace-local credentials, enforced NetworkPolicies and PID-bounded nodes are
+# all available. Standard NetworkPolicy objects do not prove that the cluster CNI
+# enforces them; that verification remains an operator rollout gate.
+web:
+  enabled: false
+  # Must differ from the release, runner and sandbox namespaces.
+  namespace: ""
+  # Set false when the operator owns the namespace (including its quotas,
+  # Pod Security labels and external Secret lifecycle).
+  createNamespace: true
+  # Dev-only managed credential. When non-empty the chart creates one Secret in
+  # the release namespace for backend and a separate Secret in the web namespace
+  # for web-tools. Production should clear this and set existingSecret instead.
+  serviceSecret: "change-me-web-service-secret"
+  searxngSecret: "change-me-searxng-secret"
+  # Name of a Secret pre-created independently in BOTH namespaces. The release
+  # copy needs WEB_TOOLS_SERVICE_SECRET; the web copy additionally needs
+  # SEARXNG_SECRET. Kubernetes never resolves a Secret across namespaces.
+  existingSecret: ""
+  # External Secret content is opaque to Helm. Bump this non-secret token on
+  # every external credential rotation to trigger all consuming Deployments.
+  secretRotationToken: ""
+  # Kubernetes has no PodSpec PID limit. This RuntimeClass is a fail-closed
+  # prerequisite and must select nodes whose kubelet PodPidsLimit is at most
+  # pidLimit. A missing RuntimeClass prevents the workloads from starting.
+  runtimeClassName: aurum-ai-web-restricted
+  pidLimit: 64
+  webTools:
+    replicaCount: 2
+    image:
+      repository: aurum-ai-web-tools
+      tag: ""
+      digest: ""
+      pullPolicy: ""
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 384Mi
+  searxng:
+    replicaCount: 1
+    image:
+      repository: docker.io/searxng/searxng
+      tag: ""
+      digest: sha256:55e1fa15a63ff04e79e213e6aa2837549877b0c6d60757cdb633ae9111cb5fea
+      pullPolicy: ""
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 384Mi
+  networkPolicy:
+    publicIpv4Cidr: 0.0.0.0/0
+    # Current globally-routable unicast space. Keeping ULA/link-local/mapped
+    # ranges outside the allow block avoids CNI-specific `except` bypasses.
+    publicIpv6Cidr: "2000::/3"
+    # Required exclusions mirror the application and Compose enforcement.
+    # Operators may append public-addressed internal Pod/Service/host ranges,
+    # but removing a required entry makes Helm fail before rendering workloads.
+    excludedIpv4Cidrs:
+      - 0.0.0.0/8
+      - 10.0.0.0/8
+      - 100.64.0.0/10
+      - 127.0.0.0/8
+      - 169.254.0.0/16
+      - 172.16.0.0/12
+      - 192.0.0.0/24
+      - 192.0.2.0/24
+      - 192.88.99.0/24
+      - 192.168.0.0/16
+      - 198.18.0.0/15
+      - 198.51.100.0/24
+      - 203.0.113.0/24
+      - 224.0.0.0/4
+      - 240.0.0.0/4
+    excludedIpv6Cidrs:
+      # Only reserved ranges inside 2000::/3 belong here. All other IPv6
+      # address classes are outside the allow block and denied by default.
+      - "2001::/23"
+      - "2001:db8::/32"
+      - "2002::/16"
+      - "3fff::/20"
+
+backendAdmin:
+  image:
+    repository: aurum-ai-backend
+    tag: ""
+    pullPolicy: ""
+  replicaCount: 3
+  # Same dev default and the same consequences as backend.debug above.
+  debug: true
+  rateLimitPerMinute: 300
+  rateLimitPerMinuteStream: 30
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# Definition ceilings must stay identical on the business and admin planes:
+# admins validate the graph they write, while chat validates the immutable
+# snapshot it admits. Retention is executed only by the business backend.
+workflow:
+  maxNodes: 20
+  maxParallelism: 4
+  diagnosticRetentionDays: 30
+  retentionSweepIntervalSeconds: 3600
+
+frontend:
+  image:
+    repository: aurum-ai-frontend
+    tag: ""
+    pullPolicy: ""
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 75
+  # See business-ui/src/lib/runtime-config.server.ts — read server-side per
+  # request, not baked into the image, so the same image works behind any
+  # of these hostnames.
+  #
+  # apiUrl/adminUrl default to "" and are then derived from ingress.hosts +
+  # ingress.externalScheme/externalPort by the Deployment template, so the
+  # browser-facing URLs can never drift out of sync with the Ingress. Set
+  # them explicitly only when the browser reaches these services by some
+  # other address than the chart's own Ingress hosts (an external LB, a
+  # different domain, TLS terminated elsewhere).
+  runtimeConfig:
+    sourceCodeUrl: ""
+    apiUrl: ""
+    keycloakUrl: "http://localhost:8080"
+    keycloakRealm: "aurum-ai"
+    keycloakClientId: "business-ui"
+    adminUrl: ""
+
+adminUi:
+  image:
+    repository: aurum-ai-admin-ui
+    tag: ""
+    pullPolicy: ""
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 75
+  # apiUrl/appUrl: same derive-from-ingress rule as frontend.runtimeConfig.
+  runtimeConfig:
+    sourceCodeUrl: ""
+    apiUrl: ""
+    keycloakUrl: "http://localhost:8080"
+    keycloakRealm: "aurum-ai"
+    keycloakClientId: "admin-ui"
+    appUrl: ""
+
+# Dynamic conversation runners and code-skill sandboxes deliberately live in
+# separate namespaces: pods/exec cannot be constrained by Pod labels in RBAC.
+# Production installations should set create=false and provision both
+# namespaces (including quotas, Pod Security labels and pull credentials)
+# outside Helm.
+runtimeNamespaces:
+  create: true
+  # Empty values resolve to <release>-runners and <release>-sandboxes.
+  runner: ""
+  sandbox: ""
+  labels: {}
+
+runnerRuntime:
+  type: kubernetes
+  readyTimeoutSeconds: 60
+  apiRetryAttempts: 3
+  idleReapSeconds: 1800
+  reapIntervalSeconds: 300
+  orphanGraceSeconds: 600
+  tokenRefreshAfterSeconds: 1200
+  interactionMaintenanceIntervalSeconds: 30
+  interactionSettlementGraceSeconds: 300
+
+sandboxRuntime:
+  type: kubernetes
+  readyTimeoutSeconds: 60
+  apiRetryAttempts: 3
+  sessionTtlSeconds: 1800
+  sessionIdleTtlSeconds: 300
+  reapIntervalSeconds: 15
+
+toolWorker:
+  image:
+    repository: aurum-ai-tool-worker
+    tag: ""
+    pullPolicy: ""
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+skillExecutor:
+  image:
+    repository: aurum-ai-skill-executor
+    tag: ""
+    pullPolicy: ""
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+runner:
+  image:
+    repository: aurum-ai-conversation-runner
+    tag: ""
+  imagePullPolicy: ""
+  imagePullSecrets: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+skillSandbox:
+  image:
+    repository: aurum-ai-skill-sandbox
+    tag: ""
+  imagePullPolicy: ""
+  imagePullSecrets: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+runtimeSecrets:
+  # Empty resolves to <release>-runner-secrets. When namespaces are managed
+  # externally, this Secret must also be created externally in runner ns.
+  runnerName: ""
+
+networkPolicies:
+  enabled: true
+  dns:
+    # Controls DNS only for public-egress sandbox Pods. Runner Pods always
+    # receive this least-privilege kube-dns rule because they must resolve
+    # the cross-namespace backend Service and configured external hosts.
+    enabled: true
+    # Selector shared by the unconditional runner rule and, when enabled,
+    # the sandbox public-egress rule.
+    namespace: kube-system
+    # The scalar preset prevents an explicitly supplied empty map from being
+    # silently deep-merged with a safe default by Helm. Operators may replace
+    # it with a non-empty label map for a different cluster DNS implementation.
+    podLabels: kube-dns
+  runner:
+    runnerPort: 8080
+    backendPort: 8000
+    # Standard NetworkPolicy is CIDR-aware, not FQDN-aware. Override these
+    # ranges for production infrastructure. This dev default covers the
+    # Docker private network used by the documented local k3d setup.
+    destinations:
+      - cidr: 172.16.0.0/12
+        ports:
+          - protocol: TCP
+            port: 6379
+          - protocol: TCP
+            port: 7233
+          - protocol: TCP
+            port: 3000
+  sandbox:
+    publicIpv4Cidr: 0.0.0.0/0
+    excludedCidrs:
+      - 10.0.0.0/8
+      - 100.64.0.0/10
+      - 127.0.0.0/8
+      - 169.254.0.0/16
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+
+# Privileged data maintenance is separately provisioned and default-off.
+# Deploy with archiveEnabled=false first: execution receipts and partition
+# maintenance continue even while new destructive archive claims are disabled.
+dataLifecycle:
+  enabled: false
+  archiveEnabled: false
+  retentionDays: 180
+  sweepIntervalSeconds: 86400
+  batchSize: 100
+  replicaCount: 1
+  # Required when enabled. Separate Secret, never the normal application Secret.
+  # Keys: APP_DATABASE_URL, APP_SECRET_KEY (dedicated random value),
+  # APP_ARCHIVE_S3_ACCESS_KEY, APP_ARCHIVE_S3_SECRET_KEY,
+  # APP_ARCHIVE_RAG_SERVICE_SECRET. Database login must have lifecycle membership.
+  existingSecret: ""
+  archiveS3:
+    endpoint: ""
+    bucket: aurum-ai-archives
+    region: us-east-1
+  ragArchiveUrl: http://rag-archive:8111
+  # Explicit operator CIDRs/ports for PostgreSQL, Temporal, archive S3, RAG archive.
+  # No Docker/Redis/LLM access. DNS is allowed separately.
+  destinations: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# Install worker first; enable admission after its readiness succeeds.
+identitySync:
+  enabled: false
+  admissionEnabled: false
+  waitSeconds: 10
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # Dev defaults for k3d external PostgreSQL/Temporal/gateway. Override CIDRs/ports
+  # together with external.* endpoints in production; never unrestricted egress.
+  destinations:
+    - cidr: 172.16.0.0/12
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 7233
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080

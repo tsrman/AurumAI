@@ -1,0 +1,171 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { vi } from "vitest";
+
+import AdminModelsPage from "@/app/admin/models/page";
+import type { AdminModelSettings } from "@/lib/api";
+
+let access = {
+  allowed: true,
+  canWrite: true,
+  error: null as string | null,
+  isLoading: false,
+};
+let query: {
+  data?: { data: AdminModelSettings };
+  isLoading: boolean;
+  error: unknown;
+} = { data: undefined, isLoading: false, error: null };
+const mutate = vi.fn(
+  (
+    _value: { defaultModel: string | null; defaultTemperature: number | null },
+    options?: { onSuccess?: () => void }
+  ) => options?.onSuccess?.()
+);
+
+vi.mock("@/hooks/useAdminAccess", () => ({
+  useAdminAccess: () => access,
+}));
+vi.mock("@/hooks/useAdminModels", () => ({
+  useAdminModels: () => query,
+  useUpdateOrganizationModelSettings: () => ({
+    mutate,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+}));
+
+const available: AdminModelSettings = {
+  gatewayStatus: "available",
+  defaultModel: "provider/readable",
+  defaultTemperature: null,
+  defaultAvailable: true,
+  models: [
+    { id: "provider/readable", organizationReadable: true, isDefault: true },
+    { id: "provider/private", organizationReadable: false, isDefault: false },
+  ],
+};
+
+beforeEach(() => {
+  access = { allowed: true, canWrite: true, error: null, isLoading: false };
+  query = { data: { data: available }, isLoading: false, error: null };
+  mutate.mockClear();
+});
+
+test("shows access loading, denial, and query errors", () => {
+  access = { allowed: false, canWrite: false, error: null, isLoading: true };
+  const { rerender } = render(<AdminModelsPage />);
+  expect(screen.getByText("Checking access...")).toBeInTheDocument();
+
+  access = {
+    allowed: false,
+    canWrite: false,
+    error: "Administrators only",
+    isLoading: false,
+  };
+  rerender(<AdminModelsPage />);
+  expect(screen.getByText("Administrators only")).toBeInTheDocument();
+
+  access = { allowed: true, canWrite: true, error: null, isLoading: false };
+  query = { data: undefined, isLoading: false, error: new Error("gateway broke") };
+  rerender(<AdminModelsPage />);
+  expect(screen.getByText("gateway broke")).toBeInTheDocument();
+});
+
+test("renders catalog, disables ungranted models and saves changed default", () => {
+  render(<AdminModelsPage />);
+
+  expect(screen.getByText("Gateway available")).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "provider/private" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(screen.getByRole("link", { name: /Configure model access/ })).toHaveAttribute(
+    "href",
+    "/admin/access"
+  );
+
+  fireEvent.change(screen.getByLabelText("Default model"), {
+    target: { value: "" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(mutate).toHaveBeenCalledWith(
+    { defaultModel: null, defaultTemperature: null },
+    expect.anything()
+  );
+});
+
+test("shows stale defaults and mock gateway status", () => {
+  query = {
+    data: {
+      data: {
+        gatewayStatus: "mock",
+        defaultModel: "removed/model",
+        defaultTemperature: null,
+        defaultAvailable: false,
+        models: [],
+      },
+    },
+    isLoading: false,
+    error: null,
+  };
+  render(<AdminModelsPage />);
+
+  expect(screen.getByText("Test catalog")).toBeInTheDocument();
+  expect(
+    screen.getByRole("option", { name: "removed/model — unavailable" })
+  ).toBeDisabled();
+  expect(screen.getByLabelText("Default model")).toHaveValue(
+    "removed/model"
+  );
+});
+
+test("during an outage only clearing the saved default remains available", () => {
+  query = {
+    data: {
+      data: {
+        gatewayStatus: "unavailable",
+        defaultModel: "provider/readable",
+        defaultTemperature: null,
+        defaultAvailable: false,
+        models: [],
+      },
+    },
+    isLoading: false,
+    error: null,
+  };
+  render(<AdminModelsPage />);
+
+  expect(screen.getByText("Gateway catalog unavailable")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Default model"), {
+    target: { value: "" },
+  });
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
+test("labels a catalogued default whose organization grant was revoked", () => {
+  query = {
+    data: {
+      data: {
+        gatewayStatus: "available",
+        defaultModel: "provider/private",
+        defaultTemperature: null,
+        defaultAvailable: false,
+        models: [
+          {
+            id: "provider/private",
+            organizationReadable: false,
+            isDefault: true,
+          },
+        ],
+      },
+    },
+    isLoading: false,
+    error: null,
+  };
+
+  render(<AdminModelsPage />);
+
+  expect(
+    screen.getByText("The saved model is no longer available to the organization.")
+  ).toBeInTheDocument();
+});

@@ -1,0 +1,33 @@
+.worktrees
+.env
+.env.local
+.env.*
+!.env.example
+.superpowers
+.oss-release/
+.aurumai-runtime/
+.DS_Store
+*.log
+__pycache__/
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+node_modules
+.next
+.venv
+venv
+business-ui/tsconfig.tsbuildinfo
+admin-ui/tsconfig.tsbuildinfo
+
+# Playwright e2e artifacts — business-ui has its own .gitignore for these,
+# admin-ui has no .gitignore at all, so cover it from the root.
+admin-ui/playwright-report/
+admin-ui/test-results/
+admin-ui/blob-report/
+
+# Local design handoff bundle (HTML/CSS prototypes, not source)
+design/
+
+# Local poetry config (in-project venv preference) — machine-specific
+poetry.toml

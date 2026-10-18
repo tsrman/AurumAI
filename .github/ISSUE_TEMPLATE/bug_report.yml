@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a reproducible problem using sanitized details.
+body:
+  - type: markdown
+    attributes:
+      value: "For vulnerabilities, use SECURITY.md. Never include credentials, tenant data or private recovery journals."
+  - type: input
+    id: revision
+    attributes:
+      label: Source revision
+      description: Commit or release identifier.
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options: [Docker Compose, Kubernetes, Local development]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps using synthetic data, expected behavior and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Relevant error class/status and affected component; no raw environment or HTTP captures.

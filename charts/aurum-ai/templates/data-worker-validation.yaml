@@ -1,0 +1,22 @@
+{{- if and .Values.dataLifecycle.archiveEnabled (not .Values.dataLifecycle.enabled) }}
+{{- fail "dataLifecycle.archiveEnabled requires dataLifecycle.enabled" }}
+{{- end }}
+{{- if .Values.dataLifecycle.enabled }}
+{{- if not .Values.networkPolicies.enabled }}
+{{- fail "dataLifecycle.enabled requires networkPolicies.enabled" }}
+{{- end }}
+{{- if not .Values.dataLifecycle.existingSecret }}
+{{- fail "dataLifecycle.enabled requires a separate dataLifecycle.existingSecret" }}
+{{- end }}
+{{- if not .Values.dataLifecycle.archiveS3.endpoint }}
+{{- fail "dataLifecycle.enabled requires an explicit archiveS3.endpoint" }}
+{{- end }}
+{{- if not .Values.dataLifecycle.destinations }}
+{{- fail "dataLifecycle.enabled requires explicit dataLifecycle.destinations" }}
+{{- end }}
+{{- range $name := list "retentionDays" "sweepIntervalSeconds" "batchSize" "replicaCount" }}
+{{- if not (regexMatch "^[1-9][0-9]*$" (toString (index $.Values.dataLifecycle $name))) }}
+{{- fail (printf "dataLifecycle.%s must be a positive integer" $name) }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,78 @@
+{{- if .Values.dataLifecycle.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-data-worker
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.dataLifecycle.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "data-worker" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "data-worker" "root" $) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: data-worker
+          image: {{ include "aurum-ai.image" (dict "service" .Values.backend "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" .Values.backend "root" $) }}
+          command: ["python", "-m", "src.maintenance_worker", "data"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: APP_DEBUG
+              value: "false"
+            {{- range $key := list "APP_DATABASE_URL" "APP_SECRET_KEY" "APP_ARCHIVE_S3_ACCESS_KEY" "APP_ARCHIVE_S3_SECRET_KEY" "APP_ARCHIVE_RAG_SERVICE_SECRET" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.dataLifecycle.existingSecret }}
+                  key: {{ $key }}
+            {{- end }}
+            - name: APP_ARCHIVE_ENABLED
+              value: {{ .Values.dataLifecycle.archiveEnabled | quote }}
+            - name: APP_ARCHIVE_RETENTION_DAYS
+              value: {{ .Values.dataLifecycle.retentionDays | quote }}
+            - name: APP_ARCHIVE_SWEEP_INTERVAL_SECONDS
+              value: {{ .Values.dataLifecycle.sweepIntervalSeconds | quote }}
+            - name: APP_ARCHIVE_BATCH_SIZE
+              value: {{ .Values.dataLifecycle.batchSize | quote }}
+            - name: APP_ARCHIVE_S3_ENDPOINT
+              value: {{ .Values.dataLifecycle.archiveS3.endpoint | quote }}
+            - name: APP_ARCHIVE_S3_BUCKET
+              value: {{ .Values.dataLifecycle.archiveS3.bucket | quote }}
+            - name: APP_ARCHIVE_S3_REGION
+              value: {{ .Values.dataLifecycle.archiveS3.region | quote }}
+            - name: APP_ARCHIVE_RAG_URL
+              value: {{ .Values.dataLifecycle.ragArchiveUrl | quote }}
+            - name: APP_TEMPORAL_HOST
+              value: {{ .Values.external.temporal.host | quote }}
+            - name: APP_TEMPORAL_NAMESPACE
+              value: {{ .Values.external.temporal.namespace | quote }}
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "src.maintenance_worker", "data-health"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "src.maintenance_worker", "data-health"]
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.dataLifecycle.resources | nindent 12 }}
+{{- end }}

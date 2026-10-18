@@ -1,0 +1,44 @@
+name: docs
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '**/*.md'
+      - 'scripts/check-mermaid.mjs'
+      - 'scripts/package.json'
+      - 'scripts/package-lock.json'
+      - '.github/workflows/docs-mermaid.yml'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'scripts/check-mermaid.mjs'
+      - 'scripts/package.json'
+      - 'scripts/package-lock.json'
+      - '.github/workflows/docs-mermaid.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  mermaid:
+    name: mermaid blocks parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install check deps
+        run: npm ci
+        working-directory: scripts
+
+      # Parses every ```mermaid block in tracked markdown with the same mermaid
+      # version GitHub renders with — catches "Unable to render rich display"
+      # before it reaches the blob page.
+      - name: Validate mermaid diagrams
+        run: node scripts/check-mermaid.mjs
