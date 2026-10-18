@@ -4,7 +4,7 @@
 # internet at runtime (breaks air-gapped deployments — see docs/AIR_GAPPED.md).
 # Note the tool itself fetches arbitrary URLs by design, so inside an
 # air-gapped perimeter it is only useful for internal resources.
-FROM ghcr.io/sparfenyuk/mcp-proxy:v0.12.0
+FROM ghcr.io/sparfenyuk/mcp-proxy:v0.13.0
 
 # mcp-server-fetch 2026.7.10 imports McpError, which was removed/renamed in
 # mcp 2.x. Keep the compatible 1.x API explicit so a fresh build cannot
