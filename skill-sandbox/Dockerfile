@@ -1,7 +1,7 @@
 # Fixed base image for code skill sandbox sessions (see skill-executor/).
 # Deliberately no build tools and no pip in the runtime path an uploaded
 # bundle could reach — only what's baked in here by a real commit+rebuild.
-FROM python:3.12-slim
+FROM python:3.14-slim
 COPY LICENSE /app/LICENSE
 
 ARG AURUMAI_SOURCE_URL=""
