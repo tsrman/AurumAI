@@ -27,7 +27,7 @@ dev = [
     "pytest-asyncio>=1.4.0,<2.0.0",
     "httpx>=0.28.0,<0.29.0",
     "mypy>=1.13.0,<2.0.0",
-    "ruff>=0.8.0,<0.9.0",
+    "ruff>=0.8.0,<0.18.0",
 ]
 
 # Services are not installed as libraries: Docker copies their source,
