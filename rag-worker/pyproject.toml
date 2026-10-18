@@ -13,7 +13,7 @@ dependencies = [
     "pymilvus==2.6.17",
     "docling>=2.132.0,<3.0.0",
     # Read uploaded document source files from MinIO/S3.
-    "aioboto3>=13.4.0,<14.0.0",
+    "aioboto3>=13.4.0,<16.0.0",
     "torch==2.7.1",
     "torchvision==0.22.1",
     "langchain",
