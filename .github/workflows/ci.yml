@@ -223,7 +223,7 @@ jobs:
       # the bundle on the same major that ships it. Node 20 went end-of-life on
       # 2026-04-30 and no longer gets security patches, hence 22 (LTS until
       # 2027-04-30) rather than staying put.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -282,7 +282,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
 
