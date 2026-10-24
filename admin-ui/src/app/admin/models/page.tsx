@@ -10,6 +10,7 @@ import {
 } from "@/hooks/useAdminModels";
 import { useErrorMessage } from "@/lib/errors";
 import { Slider } from "@/components/primitives/Slider";
+import { GrantEditor } from "@/components/authorization/GrantEditor";
 import { useTranslations } from "next-intl";
 
 const DEFAULT_TEMPERATURE_IF_ENABLED = 0.7;
@@ -64,6 +65,8 @@ export default function AdminModelsPage() {
     !settings.models.some((model) => model.id === savedDefault);
   const changed = selected !== (savedDefault ?? "");
   const selectedDefault = selected || null;
+  const selectedModel = settings.models.find((model) => model.id === selectedDefault);
+  const requiresGrant = Boolean(selectedModel && !selectedModel.organizationReadable);
   const temperatureChanged = selectedTemperature !== savedTemperature;
   const unavailableSelection =
     settings.gatewayStatus === "unavailable" && selectedDefault !== null;
@@ -71,6 +74,7 @@ export default function AdminModelsPage() {
     !canWrite ||
     (!changed && !temperatureChanged) ||
     update.isPending ||
+    requiresGrant ||
     unavailableSelection;
 
   return (
@@ -115,9 +119,10 @@ export default function AdminModelsPage() {
             <option
               key={model.id}
               value={model.id}
-              disabled={!model.organizationReadable}
             >
-              {model.id}
+              {model.organizationReadable
+                ? model.id
+                : t("requiresAccess", { model: model.id })}
             </option>
           ))}
         </select>
@@ -130,6 +135,18 @@ export default function AdminModelsPage() {
           </p>
         ) : null}
       </div>
+
+      {requiresGrant && selectedModel ? (
+        <div className="space-y-3">
+          <p role="status" className="text-sm text-yellow-700">{t("grantAccessHint")}</p>
+          <GrantEditor
+            key={selectedModel.id}
+            resourceType="model"
+            resourceId={selectedModel.id}
+            resourceLabel={selectedModel.id}
+          />
+        </div>
+      ) : null}
 
       <div className="rounded-md border p-4">
         <label className="mb-1 flex items-center gap-2 text-sm font-medium">

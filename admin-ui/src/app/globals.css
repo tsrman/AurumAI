@@ -196,3 +196,21 @@ body {
   color: transparent;
   animation: aurum-shimmer 1.8s ease-in-out infinite;
 }
+
+/* Match React Flow controls to the application theme in the workflow editor. */
+.workflow-editor-canvas {
+  --xy-background-color: var(--surface-2);
+  --xy-edge-stroke: var(--text-3);
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-background-color-hover: var(--surface-3);
+  --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--border);
+}
+
+.workflow-workspace :is(input, select, textarea) {
+  background-color: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+  accent-color: var(--accent);
+}

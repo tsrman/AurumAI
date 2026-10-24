@@ -164,6 +164,25 @@ async def test_delete_group_succeeds(admin_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("identity_field", ["last_synced_at", "keycloak_id"])
+async def test_delete_keycloak_managed_group_preserves_its_identity(admin_client, db, identity_field):
+    from src.models.group import Group
+
+    created = await admin_client.post("/v1/admin/groups/", json={"name": "identity-owned"})
+    group_id = created.json()["data"]["id"]
+    group = await db.get(Group, uuid.UUID(group_id))
+    setattr(group, identity_field, datetime.now(timezone.utc) if identity_field == "last_synced_at" else uuid.uuid4())
+    await db.commit()
+
+    response = await admin_client.delete(f"/v1/admin/groups/{group_id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Manage synchronized groups in Keycloak"
+    listing = await admin_client.get("/v1/admin/groups/")
+    assert [g["id"] for g in listing.json()["data"]] == [group_id]
+
+
+@pytest.mark.asyncio
 async def test_group_from_other_org_is_not_visible(admin_client, db):
     other_org = Organization(name="Other Org", slug=f"other-{uuid.uuid4().hex[:8]}")
     db.add(other_org)

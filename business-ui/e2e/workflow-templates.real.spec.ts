@@ -120,6 +120,8 @@ async function noGrants(page: Page, copy: Copy) {
 }
 
 async function copyTemplate(page: Page, templateId: string, suffix: "a" | "b"): Promise<Copy> {
+  await page.getByRole("button", { name: "Saved templates", exact: true }).click();
+  await page.getByLabel("Workflow template", { exact: true }).selectOption(templateId);
   await page.getByLabel("Workflow copy name").fill(`${MARKER}-copy-${suffix}`);
   const created = mutation(page, `${TEMPLATES}/${templateId}/instantiate`);
   await page.getByRole("button", { name: "Create workflow from template" }).click();
@@ -128,7 +130,7 @@ async function copyTemplate(page: Page, templateId: string, suffix: "a" | "b"): 
   const copy = (await response.json()).data as Copy;
   record("workflow", copy.workflow.id);
   for (const id of copy.agentIds) record("agent", id);
-  await expect(page.getByText(/auto-routing is off/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Edit workflow", exact: true })).toBeVisible();
   return copy;
 }
 
@@ -218,14 +220,16 @@ test.describe("Workflow templates: independent copies through real UI", () => {
 
       await admin.goto(`${ADMIN}/admin/workflows`);
       await sourceRow.getByRole("button", { name: "Edit", exact: true }).click();
-      // The create form stays mounted until the requested detail arrives; do not edit it.
+      // Wait for the selected saved definition before changing the editor.
       await expect(admin.getByRole("heading", { name: "Edit workflow", exact: true })).toBeVisible();
       await expect(admin.getByLabel("Workflow name", { exact: true })).toHaveValue(`${MARKER}-source`);
+      await admin.getByRole("button", { name: "2. Agents", exact: true }).click();
       await expect(admin.getByLabel("Supervisor", { exact: true })).toHaveValue(state.source_agent_ids.v1);
       await admin.getByLabel("Supervisor", { exact: true }).selectOption(state.source_agent_ids.v2);
       // Only the selected node's fields appear in the canvas inspector — click
       // each node's card before touching its fields, unlike the old inline
       // fieldset-per-node list where every node's fields were always visible.
+      await admin.getByRole("button", { name: "3. Steps", exact: true }).click();
       const confirmationChecked = [true, false];
       for (const [position, [index, key]] of ([[1, "alpha"], [2, "beta"]] as const).entries()) {
         await admin.getByLabel(`Node ${key}`, { exact: true }).click();
@@ -242,6 +246,7 @@ test.describe("Workflow templates: independent copies through real UI", () => {
       // canvas has no separate "included or not" checkbox the way the old
       // dependency matrix did.
       await expect(admin.getByRole("combobox", { name: "Link condition alpha → beta", exact: true })).toHaveValue("on_success");
+      await admin.getByRole("button", { name: "4. Check", exact: true }).click();
       await admin.getByRole("button", { name: "Validate", exact: true }).click();
       const updated = mutation(admin, `/v1/admin/workflows/${state.source_workflow_id}`, "PUT");
       await admin.getByRole("button", { name: "Save", exact: true }).click();
@@ -252,6 +257,7 @@ test.describe("Workflow templates: independent copies through real UI", () => {
       expect(updatedSource.nodes.map(node => node.agentDefinitionId)).toEqual([
         state.source_agent_ids.v2, state.source_agent_ids.v2,
       ]);
+      await admin.getByRole("button", { name: "Back to workflows", exact: true }).click();
       await sourceRow.getByRole("button", { name: "Save as template" }).click();
       await admin.getByLabel("Workflow template", { exact: true }).selectOption(template.id);
       const replaced = mutation(admin, `${TEMPLATES}/${template.id}`, "PUT");
@@ -266,6 +272,8 @@ test.describe("Workflow templates: independent copies through real UI", () => {
       expect([...Object.values(state.source_agent_ids), ...copyA.agentIds]).not.toContain(copyB.agentIds[0]);
       await assertCopy(admin, copyB, template.id, 2);
       await noGrants(admin, copyB);
+      await admin.getByRole("button", { name: "Saved templates", exact: true }).click();
+      await admin.getByLabel("Workflow template", { exact: true }).selectOption(template.id);
       const archived = mutation(admin, `${TEMPLATES}/${template.id}/archive`);
       await admin.getByRole("button", { name: "Archive template" }).click();
       const archivedResponse = await archived;

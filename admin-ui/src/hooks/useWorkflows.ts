@@ -82,6 +82,7 @@ export function useWorkflowDiagnostic(runId: string | null) {
   return useQuery({
     queryKey: workflowKeys.diagnostic(runId ?? ""),
     queryFn: () => getWorkflowDiagnostic(runId ?? ""),
+    retry: false,
     enabled: runId !== null,
   });
 }

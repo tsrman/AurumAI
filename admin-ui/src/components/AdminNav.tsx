@@ -14,8 +14,8 @@ export function AdminNav() {
   const t = useTranslations("nav");
   const { appUrl: APP_URL } = getServerRuntimeConfig();
   return (
-    <nav className="mb-6 flex items-center justify-between gap-4 border-b pb-4">
-      <div className="flex gap-4">
+    <nav className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b pb-4">
+      <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-3">
         {/* Plain <a>, not <Link>: a different origin entirely, so there is
             no client-side route to prefetch. Without it, an admin who
             opened the admin UI had no way back to the chat other than
@@ -69,7 +69,7 @@ export function AdminNav() {
           {t("constructor")}
         </Link>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <Link href="/about" className="text-sm underline">{t("about")}</Link>
         <ThemeToggle />
         <LanguageSwitcher />

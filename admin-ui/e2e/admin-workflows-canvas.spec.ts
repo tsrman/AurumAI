@@ -56,15 +56,20 @@ test.describe("Admin: visual workflow editor", () => {
       await page.goto("/admin/workflows");
       await expect(page.getByRole("heading", { name: "Workflows", exact: true })).toBeVisible();
 
+      await page.getByRole("button", { name: "Create workflow", exact: true }).click();
       await page.getByLabel("Workflow name").fill(marker);
+      await page.getByRole("button", { name: "2. Agents", exact: true }).click();
       await page.getByLabel("Supervisor").selectOption(agentId);
 
+      await page.getByRole("button", { name: "3. Steps", exact: true }).click();
+      await page.getByText("Advanced step settings", { exact: true }).click();
       await page.getByLabel("Node 1 key").fill("alpha");
       await page.getByLabel("Node 1 name").fill("Alpha");
       await page.getByLabel("Node 1 agent").selectOption(agentId);
       await page.getByLabel("Node 1 instruction").fill("do alpha work");
 
       await page.getByRole("button", { name: "Add node" }).click();
+      await page.getByText("Advanced step settings", { exact: true }).click();
       await page.getByLabel("Node 2 key").fill("beta");
       await page.getByLabel("Node 2 name").fill("Beta");
       await page.getByLabel("Node 2 agent").selectOption(agentId);
@@ -96,6 +101,7 @@ test.describe("Admin: visual workflow editor", () => {
           response.url().endsWith("/v1/admin/workflows") &&
           response.request().method() === "POST"
       );
+      await page.getByRole("button", { name: "4. Check", exact: true }).click();
       await page.getByRole("button", { name: "Validate" }).click();
       await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -128,10 +134,12 @@ test.describe("Admin: visual workflow editor", () => {
       expect(savedAlpha?.positionY).not.toBe(0);
 
       // Reopen for edit and confirm the graph survives a fresh mount.
+      await page.getByRole("button", { name: "Back to workflows", exact: true }).click();
       const row = page.locator("tr", { hasText: marker });
       await expect(row).toBeVisible();
       await row.getByRole("button", { name: "Edit", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Edit workflow" })).toBeVisible();
+      await page.getByRole("button", { name: "3. Steps", exact: true }).click();
       await expect(
         page.getByRole("combobox", { name: "Link condition alpha → beta", exact: true })
       ).toHaveValue("on_failure");
@@ -174,9 +182,13 @@ test.describe("Admin: visual workflow editor", () => {
       await page.goto("/admin/workflows");
       await expect(page.getByRole("heading", { name: "Workflows", exact: true })).toBeVisible();
 
+      await page.getByRole("button", { name: "Create workflow", exact: true }).click();
       await page.getByLabel("Workflow name").fill(marker);
+      await page.getByRole("button", { name: "2. Agents", exact: true }).click();
       await page.getByLabel("Supervisor").selectOption(agentId);
 
+      await page.getByRole("button", { name: "3. Steps", exact: true }).click();
+      await page.getByText("Advanced step settings", { exact: true }).click();
       await page.getByLabel("Node 1 key").fill("loopy");
       await page.getByLabel("Node 1 name").fill("Loopy");
       await page.getByLabel("Node 1 agent").selectOption(agentId);
@@ -195,6 +207,7 @@ test.describe("Admin: visual workflow editor", () => {
           response.url().endsWith("/v1/admin/workflows") &&
           response.request().method() === "POST"
       );
+      await page.getByRole("button", { name: "4. Check", exact: true }).click();
       await page.getByRole("button", { name: "Validate" }).click();
       await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -222,10 +235,12 @@ test.describe("Admin: visual workflow editor", () => {
       ]);
 
       // Reopen for edit and confirm the loop survives a fresh mount.
+      await page.getByRole("button", { name: "Back to workflows", exact: true }).click();
       const row = page.locator("tr", { hasText: marker });
       await expect(row).toBeVisible();
       await row.getByRole("button", { name: "Edit", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Edit workflow" })).toBeVisible();
+      await page.getByRole("button", { name: "3. Steps", exact: true }).click();
       await page.getByLabel("Loop parameters loopy → loopy").click();
       await expect(page.getByLabel("Loop iterations loopy → loopy")).toHaveValue("5");
     } finally {

@@ -11,6 +11,7 @@ let groupsResult: { data?: { data: Group[] }; isLoading: boolean; error: unknown
 };
 const createMutate = vi.fn((_payload: unknown, options?: { onSuccess?: () => void }) => options?.onSuccess?.());
 const removeMutate = vi.fn();
+let removeError: Error | null = null;
 
 vi.mock("@/hooks/useAdminAccess", () => ({ useAdminAccess: () => adminAccess }));
 vi.mock("@/components/authorization/CapabilityEditor", () => ({
@@ -20,7 +21,7 @@ vi.mock("@/components/authorization/CapabilityEditor", () => ({
 vi.mock("@/hooks/useGroups", () => ({
   useGroups: () => groupsResult,
   useCreateGroup: () => ({ mutate: createMutate, isPending: false, isError: false }),
-  useDeleteGroup: () => ({ mutate: removeMutate, isPending: false }),
+  useDeleteGroup: () => ({ mutate: removeMutate, isPending: false, isError: Boolean(removeError), error: removeError }),
 }));
 
 const group: Group = { id: "group-1", name: "support" };
@@ -30,6 +31,7 @@ beforeEach(() => {
   groupsResult = { data: { data: [] }, isLoading: false, error: null };
   createMutate.mockClear();
   removeMutate.mockClear();
+  removeError = null;
 });
 
 test("shows access loading and denial states", () => {
@@ -75,6 +77,25 @@ test("confirms group deletion", () => {
   fireEvent.click(screen.getByRole("button", { name: "Delete" }));
   fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
   expect(removeMutate).toHaveBeenCalledWith("group-1", expect.anything());
+});
+
+test("explains why Keycloak-managed groups cannot be deleted locally", () => {
+  groupsResult = { data: { data: [{ ...group, lastSyncedAt: "2026-10-24T00:00:00Z" }] }, isLoading: false, error: null };
+  render(<AdminGroupsPage />);
+
+  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(screen.getByText("Manage this group in Keycloak. Local deletion would be undone by synchronization."))
+    .toBeVisible();
+});
+
+test("shows a failed deletion inside the confirmation dialog", () => {
+  groupsResult = { data: { data: [group] }, isLoading: false, error: null };
+  const { rerender } = render(<AdminGroupsPage />);
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  removeError = new Error("Deletion failed");
+  // The mutation failed while the confirmation remains open.
+  rerender(<AdminGroupsPage />);
+  expect(within(screen.getByRole("alertdialog")).getByText("Deletion failed")).toBeVisible();
 });
 
 test("shows group query errors", () => {

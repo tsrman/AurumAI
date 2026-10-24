@@ -131,9 +131,13 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
         adminPage.getByRole("heading", { name: "Workflows", exact: true })
       ).toBeVisible();
 
+      await adminPage.getByRole("button", { name: "Create workflow", exact: true }).click();
       await adminPage.getByLabel("Workflow name").fill(originalName);
       await adminPage.getByLabel("Workflow description").fill("Original browser workflow");
+      await adminPage.getByRole("button", { name: "2. Agents", exact: true }).click();
       await adminPage.getByLabel("Supervisor").selectOption(state.agent_ids.supervisor);
+      await adminPage.getByRole("button", { name: "3. Steps", exact: true }).click();
+      await adminPage.getByText("Advanced step settings", { exact: true }).click();
       await adminPage.getByLabel("Node 1 key").fill("alpha");
       await adminPage.getByLabel("Node 1 name").fill("Alpha");
       await adminPage.getByLabel("Node 1 agent").selectOption(state.agent_ids.alpha);
@@ -141,6 +145,7 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
         .getByLabel("Node 1 instruction")
         .fill("MULTI_AGENT_NODE:alpha MULTI_AGENT_BARRIER:workflow-ui");
       await adminPage.getByRole("button", { name: "Add node" }).click();
+      await adminPage.getByText("Advanced step settings", { exact: true }).click();
       await adminPage.getByLabel("Node 2 key").fill("beta");
       await adminPage.getByLabel("Node 2 name").fill("Beta");
       await adminPage.getByLabel("Node 2 agent").selectOption(state.agent_ids.beta);
@@ -151,14 +156,16 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
         .getByRole("combobox", { name: "Link condition alpha → beta", exact: true })
         .selectOption("on_success");
 
+      await adminPage.getByRole("button", { name: "4. Check", exact: true }).click();
       await adminPage.getByRole("button", { name: "Validate" }).click();
       await expect(adminPage.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
       await adminPage.getByRole("button", { name: "Save", exact: true }).click();
 
+      await adminPage.getByRole("button", { name: "Back to workflows", exact: true }).click();
       const originalRow = adminPage.locator("tr", { hasText: originalName });
       await expect(originalRow).toBeVisible();
       await expect(originalRow.locator("td").nth(1)).toHaveText("1");
-      await expect(originalRow.locator("td").nth(2)).toHaveText("active");
+      await expect(originalRow.locator("td").nth(2)).toHaveText("Active");
 
       await originalRow.getByRole("button", { name: "Edit", exact: true }).click();
       await expect(
@@ -166,10 +173,12 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
       ).toBeVisible();
       await adminPage.getByLabel("Workflow name").fill(renamedName);
       await adminPage.getByLabel("Workflow description").fill("Renamed browser workflow");
+      await adminPage.getByRole("button", { name: "4. Check", exact: true }).click();
       await adminPage.getByRole("button", { name: "Validate" }).click();
       await expect(adminPage.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
       await adminPage.getByRole("button", { name: "Save", exact: true }).click();
 
+      await adminPage.getByRole("button", { name: "Back to workflows", exact: true }).click();
       const renamedRow = adminPage.locator("tr", { hasText: renamedName });
       await expect(renamedRow).toBeVisible();
       await expect(renamedRow.locator("td").nth(1)).toHaveText("2");

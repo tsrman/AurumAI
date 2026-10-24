@@ -137,5 +137,10 @@ async def delete_group(
     group = await group_repository.get(session, group_id)
     if group is None or group.org_id != org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    if group.last_synced_at is not None or group.keycloak_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Manage synchronized groups in Keycloak",
+        )
     await session.delete(group)
     await session.commit()
