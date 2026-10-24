@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, GitBranch, Plus } from "lucide-react";
+import { ArrowLeft, BookOpen, Plus } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { GrantEditor } from "@/components/authorization/GrantEditor";
 import { ConfirmDialog } from "@/components/primitives/ConfirmDialog";
@@ -12,7 +12,9 @@ import { WorkflowExamples } from "@/components/workflows/WorkflowExamples";
 import { WorkflowForm } from "@/components/workflows/WorkflowForm";
 import { WorkflowTable } from "@/components/workflows/WorkflowTable";
 import { WorkflowTemplatesPanel } from "@/components/workflows/WorkflowTemplatesPanel";
-import { useAdminAccess } from "@/hooks/useAdminAccess";
+import { AccessDialog } from "@/components/authorization/AccessDialog";
+import { Button } from "@/components/primitives/Button";
+import { AdminGate, ButtonTabs, EmptyState, Notice, PageBody, PageHeader } from "@/components/ui";
 import {
   useArchiveWorkflow,
   useCreateWorkflow,
@@ -60,16 +62,11 @@ const button =
   "rounded-btn border border-aurum-border px-4 py-2 text-sm font-medium hover:bg-aurum-surface-2 disabled:opacity-50";
 
 export default function AdminWorkflowsPage() {
-  const t = useTranslations("access");
-  const access = useAdminAccess();
-  if (access.isLoading) return <div>{t("checking")}</div>;
-  if (!access.allowed)
-    return (
-      <div className="rounded-card border border-aurum-border bg-aurum-err-bg p-6 text-aurum-err-fg">
-        {access.error || t("adminRequired")}
-      </div>
-    );
-  return <AdminWorkflowsContent canWrite={access.canWrite} />;
+  return (
+    <AdminGate>
+      {({ canWrite }) => <AdminWorkflowsContent canWrite={canWrite} />}
+    </AdminGate>
+  );
 }
 
 function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
@@ -209,57 +206,44 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
   );
 
   return (
-    <main className="workflow-workspace min-w-0 space-y-6 text-aurum-text">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">{t("title")}</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-aurum-text-2">
-            {t("subtitle")}
-          </p>
-        </div>
-        {canWrite && view !== "editor" ? (
-          <button
-            type="button"
-            onClick={() => openEditor(null)}
-            className="flex items-center gap-2 rounded-btn bg-aurum-accent px-4 py-2.5 text-sm font-semibold text-aurum-accent-ink"
-          >
-            <Plus size={17} />
-            {w("create")}
-          </button>
-        ) : null}
-      </header>
-      <nav
-        className="flex flex-wrap gap-2 border-b border-aurum-border pb-4"
-        aria-label={t("title")}
-      >
-        {(["overview", "examples", "templates", "diagnostics"] as const)
-          .filter((item) => canWrite || item !== "templates")
-          .map((item) => (
-            <button
-              key={item}
-              type="button"
-              disabled={busy}
-              aria-current={view === item ? "page" : undefined}
-              onClick={() => switchView(item)}
-              className={`${button} ${view === item ? "bg-aurum-surface-3" : "bg-aurum-surface"}`}
-            >
-              {w(item)}
-            </button>
-          ))}
-      </nav>
+    <div className="workflow-workspace flex min-w-0 flex-1 flex-col text-aurum-text">
+      <PageHeader
+        title={t("title")}
+        description={t("subtitle")}
+        actions={
+          canWrite && view !== "editor" ? (
+            <Button onClick={() => openEditor(null)}>
+              <Plus size={17} aria-hidden="true" />
+              {w("create")}
+            </Button>
+          ) : view === "editor" ? (
+            <Button variant="secondary" disabled={busy} onClick={() => switchView("overview")}>
+              <ArrowLeft size={16} aria-hidden="true" />
+              {w("cancel")}
+            </Button>
+          ) : null
+        }
+        tabs={
+          // Stays visible in the editor: leaving through a tab goes through
+          // the same unsaved-changes confirmation as any other navigation.
+          <ButtonTabs<View>
+            label={t("title")}
+            value={view}
+            onChange={(item) => switchView(item)}
+            tabs={(["overview", "examples", "templates", "diagnostics"] as const)
+              .filter((item) => canWrite || item !== "templates")
+              .map((item) => ({ value: item, label: w(item), disabled: busy }))}
+          />
+        }
+      />
+      <PageBody>
       {view === "overview" ? (
         <>
-          <section className="flex gap-4 rounded-card border border-aurum-border bg-aurum-surface p-5">
-            <GitBranch className="mt-1 shrink-0 text-aurum-text-3" size={23} />
-            <div>
-              <h2 className="font-semibold">{w("howTitle")}</h2>
-              <p className="mt-2 text-sm leading-6 text-aurum-text-2">
-                {w("howText")}
-              </p>
-            </div>
-          </section>
-          {workflows.isLoading ? <p role="status">{t("loading")}</p> : null}
-          {workflows.isError ? <p role="alert">{w("loadFailed")}</p> : null}
+          <Notice title={w("howTitle")}>{w("howText")}</Notice>
+          {workflows.isLoading ? (
+            <p role="status" className="text-sm text-aurum-text-3">{t("loading")}</p>
+          ) : null}
+          {workflows.isError ? <Notice tone="error">{w("loadFailed")}</Notice> : null}
           {workflows.data?.data.length ? (
             <WorkflowTable
               workflows={workflows.data.data}
@@ -277,24 +261,22 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
               }
             />
           ) : workflows.data ? (
-            <section className="rounded-card border border-dashed border-aurum-border bg-aurum-surface p-8 text-center">
-              <BookOpen className="mx-auto mb-4 text-aurum-text-3" size={30} />
-              <h2 className="text-lg font-semibold">{w("emptyTitle")}</h2>
-              <p className="mx-auto my-3 max-w-xl text-sm leading-6 text-aurum-text-2">
-                {w("emptyHint")}
-              </p>
-              <button
-                type="button"
-                className={button}
-                aria-label={w("browseExamples")}
-                onClick={() => switchView("examples")}
-              >
-                {w("examples")}
-              </button>
-            </section>
+            <EmptyState
+              icon={<BookOpen size={30} aria-hidden="true" />}
+              title={w("emptyTitle")}
+              description={w("emptyHint")}
+              action={
+                <Button
+                  variant="secondary"
+                  aria-label={w("browseExamples")}
+                  onClick={() => switchView("examples")}
+                >
+                  {w("examples")}
+                </Button>
+              }
+            />
           ) : null}
-          {grantWorkflow ? renderGrants(grantWorkflow) : null}
-          {archive.isError ? <p role="alert">{w("loadFailed")}</p> : null}
+          {archive.isError ? <Notice tone="error">{w("loadFailed")}</Notice> : null}
         </>
       ) : null}
       {view === "examples" ? (
@@ -315,14 +297,6 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
       ) : null}
       {view === "editor" && editor && canWrite ? (
         <>
-          <button
-            type="button"
-            className={button}
-            disabled={busy}
-            onClick={() => switchView("overview")}
-          >
-            {w("cancel")}
-          </button>
           {editor.fromTemplate ? (
             <p className="rounded-input border border-aurum-border bg-aurum-surface-2 p-4 text-sm">
               {examples("templateCopyNotice")}
@@ -330,7 +304,7 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
           ) : null}
           {(!agents.data && agents.isLoading) ||
           (editor.id && !detail.data && detail.isLoading) ? (
-            <p role="status">{w("loadingDetail")}</p>
+            <p role="status" className="text-sm text-aurum-text-3">{w("loadingDetail")}</p>
           ) : (!agents.data && agents.isError) ||
             (editor.id && !detail.data?.data) ? (
             <div role="alert" className="space-y-3">
@@ -359,7 +333,7 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
               {!agents.data?.data.length ? (
                 <p className="rounded-input bg-aurum-surface-3 p-4 text-sm">
                   {w("agentsMissing")}{" "}
-                  <Link href="/agents/constructor" className="underline">
+                  <Link href="/admin/agents/new" className="underline">
                     {w("agentsLink")}
                   </Link>
                 </p>
@@ -430,8 +404,8 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
         </>
       ) : null}
       {view === "diagnostics" ? (
-        <section className="space-y-4 rounded-card border border-aurum-border bg-aurum-surface p-5">
-          <h2 className="text-lg font-semibold">{w("diagnostics")}</h2>
+        <section className="space-y-4 rounded-card border border-aurum-border bg-aurum-surface p-5 shadow-card">
+          <h2 className="text-base font-semibold">{w("diagnostics")}</h2>
           <p className="text-sm text-aurum-text-2">{w("runHint")}</p>
           <form
             onSubmit={(event) => {
@@ -460,7 +434,7 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
           {diagnosticRunId && diagnostic.isLoading ? (
             <p role="status">{w("runLoading")}</p>
           ) : null}
-          {diagnostic.isError ? <p role="alert">{w("runFailed")}</p> : null}
+          {diagnostic.isError ? <Notice tone="error">{w("runFailed")}</Notice> : null}
           {diagnostic.data ? (
             <WorkflowDiagnostics diagnostic={diagnostic.data.data} />
           ) : null}
@@ -493,6 +467,15 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
           setArchiveTarget(null);
         }}
       />
-    </main>
+      <AccessDialog
+        target={
+          grantWorkflow
+            ? { resourceType: "workflow", resourceId: grantWorkflow.id, label: grantWorkflow.name }
+            : null
+        }
+        onClose={() => setGrantWorkflow(null)}
+      />
+      </PageBody>
+    </div>
   );
 }

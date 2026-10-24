@@ -16,8 +16,6 @@ import {
   useUploadCodeSkill,
   useReplaceCodeSkillBundle,
 } from "@/hooks/useSkills";
-import { useAuth } from "@/providers/AuthProvider";
-import { GrantEditor } from "@/components/authorization/GrantEditor";
 import type { McpToolInfo, Skill, SkillCreate } from "@/lib/api";
 import { useTranslations } from "next-intl";
 
@@ -83,8 +81,6 @@ export function SkillFormDialog({ open, skill, onClose }: SkillFormDialogProps) 
   const discover = useDiscoverMcpTools();
   const upload = useUploadCodeSkill();
   const replaceBundle = useReplaceCodeSkillBundle();
-  const { user } = useAuth();
-  const isOrgAdmin = user?.role === "org_admin";
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -440,7 +436,7 @@ export function SkillFormDialog({ open, skill, onClose }: SkillFormDialogProps) 
                   type="file"
                   accept=".zip"
                   onChange={(e) => setBundleFile(e.target.files?.[0] ?? null)}
-                  className="block w-full text-sm text-aurum-text-2 file:mr-3 file:rounded-md file:border-0 file:bg-aurum-surface-3 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-aurum-text"
+                  className="block w-full text-sm text-aurum-text-2 file:mr-3 file:rounded-btn file:border-0 file:bg-aurum-surface-3 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-aurum-text"
                 />
                 <p className="text-xs text-aurum-text-3">
                   {t("bundleHint")}
@@ -481,7 +477,7 @@ export function SkillFormDialog({ open, skill, onClose }: SkillFormDialogProps) 
                     type="file"
                     accept=".zip"
                     onChange={(e) => setReplaceBundleFile(e.target.files?.[0] ?? null)}
-                    className="text-sm text-aurum-text-2 file:mr-3 file:rounded-md file:border-0 file:bg-aurum-surface-3 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-aurum-text"
+                    className="text-sm text-aurum-text-2 file:mr-3 file:rounded-btn file:border-0 file:bg-aurum-surface-3 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-aurum-text"
                   />
                   <Button
                     type="button"
@@ -535,14 +531,6 @@ export function SkillFormDialog({ open, skill, onClose }: SkillFormDialogProps) 
                 />
               </>
             )}
-
-            {isEditing && skill && isOrgAdmin ? (
-              <GrantEditor
-                resourceType="skill"
-                resourceId={skill.id}
-                resourceLabel={skill.name}
-              />
-            ) : null}
 
             {formError && <p className="text-sm text-aurum-err-fg">{formError}</p>}
             {create.isError && (

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from src.core.auth import UserInfo
 from src.core.authorization_dependencies import require_org_admin
 from src.core.dependencies import get_org_db_session
 from src.models.group import Group
+from src.models.user_group import UserGroup
 from src.repositories.group_repository import group_repository
 from src.schemas.common import ApiResponse, Meta
 from src.schemas.group import (
@@ -26,14 +27,22 @@ def _meta() -> Meta:
     return Meta(requestId=f"req_{uuid.uuid4().hex}", timestamp=datetime.now(timezone.utc).isoformat())
 
 
-def _group_response(group: Group) -> GroupResponse:
+def _group_response(group: Group, member_count: int = 0) -> GroupResponse:
     return GroupResponse(
         id=str(group.id),
         orgId=str(group.org_id) if group.org_id else None,
         name=group.name,
         keycloakId=str(group.keycloak_id) if group.keycloak_id else None,
         lastSyncedAt=group.last_synced_at.isoformat() if group.last_synced_at else None,
+        memberCount=member_count,
     )
+
+
+async def _member_count(session: AsyncSession, group_id: UUID) -> int:
+    count = await session.scalar(
+        select(func.count()).select_from(UserGroup).where(UserGroup.group_id == group_id)
+    )
+    return int(count or 0)
 
 
 def _require_org_id(user: UserInfo) -> UUID:
@@ -48,11 +57,20 @@ async def list_groups(
     session: AsyncSession = Depends(get_org_db_session),
 ) -> ApiResponse[list[GroupResponse]]:
     org_id = _require_org_id(user)
-    result = await session.execute(
-        select(Group).where(Group.org_id == org_id).order_by(Group.name)
+    member_count = (
+        select(func.count())
+        .select_from(UserGroup)
+        .where(UserGroup.group_id == Group.id)
+        .correlate(Group)
+        .scalar_subquery()
     )
-    groups = result.scalars().all()
-    return ApiResponse(data=[_group_response(g) for g in groups], meta=_meta())
+    result = await session.execute(
+        select(Group, member_count).where(Group.org_id == org_id).order_by(Group.name)
+    )
+    return ApiResponse(
+        data=[_group_response(group, int(count)) for group, count in result.all()],
+        meta=_meta(),
+    )
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -124,7 +142,9 @@ async def update_group(
 
     await session.commit()
     await session.refresh(group)
-    return ApiResponse(data=_group_response(group), meta=_meta())
+    return ApiResponse(
+        data=_group_response(group, await _member_count(session, group.id)), meta=_meta()
+    )
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -142,7 +142,7 @@ test.describe("Organization models and analytics: full UI lifecycle", () => {
       await loginAt(
         memberAdminPage,
         ADMIN_URL,
-        /\/admin\/agents$/,
+        /\/admin\/users$/,
         "user",
         "user"
       );
@@ -160,7 +160,7 @@ test.describe("Organization models and analytics: full UI lifecycle", () => {
       await loginAt(
         adminPage,
         ADMIN_URL,
-        /\/admin\/agents$/,
+        /\/admin\/users$/,
         "admin",
         "admin"
       );

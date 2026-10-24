@@ -53,7 +53,7 @@ TLS before exposing any service outside a trusted development environment.
 | Business API | Chat, conversations, user settings, runtime admission | `business-backend/`, port 8000 |
 | Admin API | Skills, grants, agents, workflow definitions/templates | Same backend, port 8001 |
 | Chat UI | Conversations, history, knowledge, questions, workflow progress | `business-ui/`, port 3000 |
-| Admin UI | Resource access, models/analytics, agents and workflow authoring | `admin-ui/`, port 3100 |
+| Admin UI | Users and groups, agents, skills, workflows, knowledge access, models and analytics | `admin-ui/`, port 3100 |
 | Conversation runner | Per-conversation Temporal worker and agent/workflow execution | `conversation-runner/` |
 | Tool worker | Skill dispatch and tenant MCP over SSE | `tool-worker/` |
 | Skill executor/sandbox | Isolated multi-round code-skill execution | `skill-executor/`, `skill-sandbox/` |

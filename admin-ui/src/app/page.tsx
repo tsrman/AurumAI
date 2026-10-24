@@ -14,7 +14,7 @@ export default function HomePage() {
     if (isLoading) return;
 
     if (isAuthenticated) {
-      router.push("/admin/agents");
+      router.push("/admin/users");
     } else {
       router.push("/login");
     }

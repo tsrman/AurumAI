@@ -18,9 +18,9 @@ const planes = [
     url: process.env.E2E_ADMIN_UI_URL || "http://localhost:3100",
     username: process.env.E2E_ADMIN_USERNAME || "admin",
     password: process.env.E2E_ADMIN_PASSWORD || "admin",
-    landing: "/admin/agents",
-    link: "Groups",
-    apiPath: "/v1/admin/groups",
+    landing: "/admin/users",
+    link: "Agents",
+    apiPath: "/v1/agent-definitions",
   },
 ] as const;
 type Plane = (typeof planes)[number];

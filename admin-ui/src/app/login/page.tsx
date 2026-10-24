@@ -13,7 +13,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      router.push("/admin/agents");
+      router.push("/admin/users");
     }
   }, [isLoading, isAuthenticated, router]);
 

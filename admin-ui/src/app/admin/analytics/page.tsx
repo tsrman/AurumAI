@@ -7,6 +7,8 @@ import { UsageChart, type UsageChartMetric } from "@/components/analytics/UsageC
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useAdminUsage, useAdminUsers } from "@/hooks/useAdminAnalytics";
 import { useErrorMessage } from "@/lib/errors";
+import { Button, SegmentedControl } from "@/components/primitives";
+import { Notice, PageBody, PageHeader, Section, Table, Td, Th, Tr, controlClass } from "@/components/ui";
 import { useLocale, useTranslations } from "next-intl";
 
 
@@ -76,10 +78,12 @@ export default function AdminAnalyticsPage() {
   const usage = useAdminUsage(applied);
   const users = useAdminUsers({ limit: PAGE_SIZE, offset: userOffset });
 
-  if (access.isLoading) return <div className="p-6">{accessT("checking")}</div>;
+  if (access.isLoading) {
+    return <p role="status" className="p-6 text-sm text-aurum-text-3">{accessT("checking")}</p>;
+  }
   if (!access.allowed) {
     return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-6 text-red-700">
+      <div role="alert" className="m-6 rounded-card bg-aurum-err-bg p-6 text-sm text-aurum-err-fg">
         {access.error || accessT("adminRequired")}
       </div>
     );
@@ -105,46 +109,41 @@ export default function AdminAnalyticsPage() {
     draft.userId !== "" && !userRows.some((row) => row.id === draft.userId);
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold">{t("title")}</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          {t("utcNote")}
-        </p>
-      </div>
-
+    <>
+    <PageHeader title={t("title")} description={t("utcNote")} />
+    <PageBody>
       <form
         aria-label={t("filters")}
         onSubmit={applyFilters}
-        className="grid gap-4 rounded-md border p-4 md:grid-cols-2 lg:grid-cols-5"
+        className="grid gap-4 rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card md:grid-cols-2 lg:grid-cols-5"
       >
         <label className="text-sm">
-          <span className="mb-1 block font-medium">{t("from")}</span>
+          <span className="mb-1.5 block text-xs font-semibold text-aurum-text-3">{t("from")}</span>
           <input
             type="date"
             value={draft.from}
             onChange={(event) => updateDraft("from", event.target.value)}
-            className="w-full rounded-md border px-3 py-2"
+            className={controlClass}
             required
           />
         </label>
         <label className="text-sm">
-          <span className="mb-1 block font-medium">{t("to")}</span>
+          <span className="mb-1.5 block text-xs font-semibold text-aurum-text-3">{t("to")}</span>
           <input
             type="date"
             value={draft.to}
             onChange={(event) => updateDraft("to", event.target.value)}
-            className="w-full rounded-md border px-3 py-2"
+            className={controlClass}
             required
           />
         </label>
         <div className="text-sm">
           <label>
-            <span className="mb-1 block font-medium">{t("user")}</span>
+            <span className="mb-1.5 block text-xs font-semibold text-aurum-text-3">{t("user")}</span>
             <select
               value={draft.userId}
               onChange={(event) => updateDraft("userId", event.target.value)}
-              className="w-full rounded-md border px-3 py-2"
+              className={controlClass}
             >
               <option value="">{t("allUsers")}</option>
               {selectedUserIsMissing ? (
@@ -158,20 +157,21 @@ export default function AdminAnalyticsPage() {
             </select>
           </label>
           {users.error ? (
-            <span className="mt-1 block text-xs text-red-600">
+            <span className="mt-1 block text-xs text-aurum-err-fg">
               {errorMessage(users.error)}
             </span>
           ) : null}
           {users.isLoading ? (
-            <span className="mt-1 block text-xs text-gray-500">
+            <span className="mt-1 block text-xs text-aurum-text-3">
               {t("loadingUsers")}
             </span>
           ) : null}
           {/* The directory is paginated, so the dropdown only ever holds one
               page of it — these page that list, nothing on the report. */}
-          <span className="mt-1 flex gap-2 text-xs">
+          <span className="mt-1 flex gap-3 text-xs text-aurum-text-2">
             <button
               type="button"
+              className="hover:text-aurum-text disabled:opacity-40"
               aria-label={t("previousPage")}
               disabled={userOffset === 0}
               onClick={() =>
@@ -185,6 +185,7 @@ export default function AdminAnalyticsPage() {
             </button>
             <button
               type="button"
+              className="hover:text-aurum-text disabled:opacity-40"
               aria-label={t("nextPage")}
               disabled={!(users.data?.pagination?.hasMore ?? false)}
               onClick={() =>
@@ -196,28 +197,25 @@ export default function AdminAnalyticsPage() {
           </span>
         </div>
         <label className="text-sm">
-          <span className="mb-1 block font-medium">{t("model")}</span>
+          <span className="mb-1.5 block text-xs font-semibold text-aurum-text-3">{t("model")}</span>
           <input
             type="text"
             value={draft.model}
             onChange={(event) => updateDraft("model", event.target.value)}
-            className="w-full rounded-md border px-3 py-2"
+            className={controlClass}
             placeholder="provider/model"
           />
         </label>
-        <button
-          type="submit"
-          className="self-end rounded-md bg-primary-600 px-4 py-2 text-white"
-        >
+        <Button type="submit" className="self-end">
           {t("apply")}
-        </button>
+        </Button>
       </form>
 
-      {usage.isLoading ? <div>{t("loading")}</div> : null}
+      {usage.isLoading ? <p role="status" className="text-sm text-aurum-text-3">{t("loading")}</p> : null}
       {usage.error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-red-700">
+        <Notice tone="error">
           {isValidationError(usage.error) ? t("checkFilters") : errorMessage(usage.error)}
-        </div>
+        </Notice>
       ) : null}
 
       {usage.data ? (
@@ -227,7 +225,8 @@ export default function AdminAnalyticsPage() {
           onMetricChange={setMetric}
         />
       ) : null}
-    </div>
+    </PageBody>
+    </>
   );
 }
 
@@ -256,30 +255,30 @@ function UsageReport({ report, metric, onMetricChange }: UsageReportProps) {
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label={t("totals")}>
         <SummaryCard label={t("requests")} value={report.totals.requests} />
         <SummaryCard label={t("tokens")} value={report.totals.totalTokens} />
-        <div className="rounded-md border p-4">
-          <p className="text-sm text-gray-600">{t("requestLimit")}</p>
-          <p className="text-xl font-semibold">
+        <div className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+          <p className="text-xs font-semibold text-aurum-text-3">{t("requestLimit")}</p>
+          <p className="mt-1 text-xl font-semibold text-aurum-text">
             {report.limits.requestLimit === null
               ? t("unlimited")
               : number.format(report.limits.requestLimit)}
           </p>
-          <p className="text-sm text-gray-600">{t("usedIn", { month: quotaMonth, value: number.format(report.quota.requestsUsed) })}</p>
+          <p className="mt-1 text-xs text-aurum-text-3">{t("usedIn", { month: quotaMonth, value: number.format(report.quota.requestsUsed) })}</p>
           {requestsRemaining === null ? null : (
-            <p className="text-sm">
+            <p className="text-xs text-aurum-text-2">
               {t("requestsRemaining", { value: number.format(requestsRemaining) })}
             </p>
           )}
         </div>
-        <div className="rounded-md border p-4">
-          <p className="text-sm text-gray-600">{t("tokenLimit")}</p>
-          <p className="text-xl font-semibold">
+        <div className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+          <p className="text-xs font-semibold text-aurum-text-3">{t("tokenLimit")}</p>
+          <p className="mt-1 text-xl font-semibold text-aurum-text">
             {report.limits.tokenLimit === null
               ? t("unlimited")
               : number.format(report.limits.tokenLimit)}
           </p>
-          <p className="text-sm text-gray-600">{t("usedIn", { month: quotaMonth, value: number.format(report.quota.tokensUsed) })}</p>
+          <p className="mt-1 text-xs text-aurum-text-3">{t("usedIn", { month: quotaMonth, value: number.format(report.quota.tokensUsed) })}</p>
           {tokensRemaining === null ? null : (
-            <p className="text-sm">
+            <p className="text-xs text-aurum-text-2">
               {t("tokensRemaining", { value: number.format(tokensRemaining) })}
             </p>
           )}
@@ -287,65 +286,67 @@ function UsageReport({ report, metric, onMetricChange }: UsageReportProps) {
       </section>
 
       {report.totals.unaccountedRequests > 0 ? (
-        <div className="rounded-md border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
+        <Notice tone="warning">
           {t("unaccounted", {
             count: report.totals.unaccountedRequests,
             value: number.format(report.totals.unaccountedRequests),
           })}
-        </div>
+        </Notice>
       ) : null}
       {report.totals.requests === 0 ? (
-        <p className="rounded-md border p-4 text-gray-600">{t("noData")}</p>
+        <Notice>{t("noData")}</Notice>
       ) : null}
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-xl font-semibold">{t("dynamics")}</h2>
-          <div className="flex gap-2" aria-label={t("chartMetric")}>
-            <button type="button" onClick={() => onMetricChange("requests")}>
-              {t("requests")}
-            </button>
-            <button type="button" onClick={() => onMetricChange("totalTokens")}>
-              {t("tokens")}
-            </button>
-          </div>
-        </div>
+      <Section
+        title={t("dynamics")}
+        actions={
+          <SegmentedControl<UsageChartMetric>
+            aria-label={t("chartMetric")}
+            value={metric}
+            onChange={onMetricChange}
+            options={[
+              { value: "requests", label: t("requests") },
+              { value: "totalTokens", label: t("tokens") },
+            ]}
+          />
+        }
+      >
         <UsageChart daily={report.daily} metric={metric} />
-      </section>
+      </Section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold">{t("byModel")}</h2>
-        <table className="w-full border text-left text-sm">
-          <thead><tr><th className="border px-3 py-2">{t("model")}</th><th className="border px-3 py-2">{t("requests")}</th><th className="border px-3 py-2">{t("tokens")}</th></tr></thead>
+        <h2 className="text-base font-semibold text-aurum-text">{t("byModel")}</h2>
+        <Table>
+          <thead><tr><Th>{t("model")}</Th><Th className="text-right">{t("requests")}</Th><Th className="text-right">{t("tokens")}</Th></tr></thead>
           <tbody>
             {report.byModel.map((row) => (
-              <tr key={row.model}><td className="border px-3 py-2">{row.model}</td><td className="border px-3 py-2">{number.format(row.requests)}</td><td className="border px-3 py-2">{number.format(row.totalTokens)}</td></tr>
+              <Tr key={row.model}><Td className="font-mono text-xs text-aurum-text">{row.model}</Td><Td className="text-right tabular-nums">{number.format(row.requests)}</Td><Td className="text-right tabular-nums">{number.format(row.totalTokens)}</Td></Tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </section>
 
       {/* Rows come from the report, which the backend orders by tokens spent.
           Walking the paginated user directory instead put the biggest
           consumers on whichever page their UUID happened to land. */}
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold">{t("byUser")}</h2>
+        <h2 className="text-base font-semibold text-aurum-text">{t("byUser")}</h2>
         {report.byUserTotal > report.byUser.length ? (
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-aurum-text-3">
             {t("byUserTruncated", {
               shown: number.format(report.byUser.length),
               total: number.format(report.byUserTotal),
             })}
           </p>
         ) : null}
-        <table className="w-full border text-left text-sm">
-          <thead><tr><th className="border px-3 py-2">{t("user")}</th><th className="border px-3 py-2">{t("requests")}</th><th className="border px-3 py-2">{t("tokens")}</th></tr></thead>
+        <Table>
+          <thead><tr><Th>{t("user")}</Th><Th className="text-right">{t("requests")}</Th><Th className="text-right">{t("tokens")}</Th></tr></thead>
           <tbody>
             {report.byUser.map((row) => (
-              <tr key={row.userId}><td className="border px-3 py-2">{row.fullName || row.email}<div className="text-xs text-gray-500">{row.email}</div></td><td className="border px-3 py-2">{number.format(row.requests)}</td><td className="border px-3 py-2">{number.format(row.totalTokens)}</td></tr>
+              <Tr key={row.userId}><Td><span className="font-medium text-aurum-text">{row.fullName || row.email}</span><div className="text-xs text-aurum-text-3">{row.email}</div></Td><Td className="text-right tabular-nums">{number.format(row.requests)}</Td><Td className="text-right tabular-nums">{number.format(row.totalTokens)}</Td></Tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </section>
     </>
   );
@@ -353,5 +354,10 @@ function UsageReport({ report, metric, onMetricChange }: UsageReportProps) {
 
 function SummaryCard({ label, value }: { label: string; value: number }) {
   const number = useNumberFormat();
-  return <div className="rounded-md border p-4"><p className="text-sm text-gray-600">{label}</p><p className="text-2xl font-semibold">{number.format(value)}</p></div>;
+  return (
+    <div className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
+      <p className="text-xs font-semibold text-aurum-text-3">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-aurum-text">{number.format(value)}</p>
+    </div>
+  );
 }

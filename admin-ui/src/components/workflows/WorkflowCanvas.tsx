@@ -129,7 +129,7 @@ function WorkflowNodeCard({ data }: NodeProps<Node<NodeCardData>>) {
       aria-label={t("node", { name: data.displayName || data.nodeKey })}
       className={`w-[180px] rounded-card border bg-aurum-surface px-3 py-3 text-sm text-aurum-text shadow-sm ${
         data.selected
-          ? "border-primary-600 ring-2 ring-primary-200"
+          ? "border-aurum-accent ring-2 ring-aurum-accent/30"
           : "border-aurum-border"
       }`}
     >
@@ -146,7 +146,7 @@ function WorkflowNodeCard({ data }: NodeProps<Node<NodeCardData>>) {
         <p className="truncate text-xs text-aurum-text-2">{data.agentName}</p>
       ) : null}
       {data.requiresConfirmation ? (
-        <p className="text-xs text-amber-700">{t("requiresConfirmation")}</p>
+        <p className="text-xs text-c-amber-fg">{t("requiresConfirmation")}</p>
       ) : null}
       <Handle
         type="source"
@@ -215,7 +215,7 @@ function WorkflowEdgeCard({
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             pointerEvents: "all",
           }}
-          className="flex items-center gap-1 rounded-md border border-aurum-border bg-aurum-surface px-1 py-0.5 text-xs shadow-sm"
+          className="flex items-center gap-1 rounded-input border border-aurum-border bg-aurum-surface px-1 py-0.5 text-xs shadow-sm"
         >
           <select
             aria-label={t("edgeCondition", { source, target })}
@@ -231,7 +231,7 @@ function WorkflowEdgeCard({
           <button
             type="button"
             aria-label={t("removeEdge", { source, target })}
-            className="text-red-700"
+            className="text-aurum-err-fg"
             onClick={() => data?.onRemove()}
           >
             ×
@@ -370,7 +370,7 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
         <button
           type="button"
           onClick={addWorkflowNode}
-          className="rounded-md border px-3 py-2"
+          className="rounded-btn border border-aurum-border bg-aurum-surface px-3 py-2 text-sm font-medium text-aurum-text-2 hover:bg-aurum-surface-3"
         >
           {t("addNode")}
         </button>
@@ -483,7 +483,7 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
                     />
                   </label>
                   {hasReservedKey(selectedNode.nodeKey) ? (
-                    <p className="text-sm text-red-600">{t("reservedKey")}</p>
+                    <p className="text-sm text-aurum-err-fg">{t("reservedKey")}</p>
                   ) : null}
                   {edges.some(
                     (edge) =>
@@ -499,7 +499,7 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
                           addSelfLoop(edges, selectedNode.nodeKey),
                         )
                       }
-                      className="text-sm text-primary-700"
+                      className="text-sm font-medium text-aurum-text underline"
                     >
                       {t("addLoop")}
                     </button>
@@ -510,7 +510,7 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
                 <button
                   type="button"
                   onClick={removeSelected}
-                  className="text-sm text-red-700"
+                  className="text-sm text-aurum-err-fg"
                 >
                   {t("removeNode", { index: selectedIndex + 1 })}
                 </button>
@@ -540,7 +540,7 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
                     source: selectedLoopEdge.sourceNodeKey,
                     target: selectedLoopEdge.targetNodeKey,
                   })}
-                  className="mt-1 w-full rounded-md border px-3 py-2"
+                  className="mt-1 w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
                   value={selectedLoopEdge.maxIterations ?? ""}
                   onChange={(event) =>
                     onChange(

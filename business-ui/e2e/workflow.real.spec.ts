@@ -110,11 +110,11 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
       await loginAt(
         adminPage,
         ADMIN_UI_URL,
-        new RegExp(`${ADMIN_UI_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/admin/agents$`),
+        new RegExp(`${ADMIN_UI_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/admin/users$`),
         "admin",
         "admin"
       );
-      await expect(adminPage.getByRole("link", { name: "Groups", exact: true })).toBeVisible();
+      await expect(adminPage.getByRole("link", { name: "Agents", exact: true })).toBeVisible();
       await loginAt(
         memberPage,
         BUSINESS_UI_URL,
@@ -191,9 +191,7 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
       await memberPage.keyboard.press("Escape");
 
       await renamedRow.getByRole("button", { name: "Access", exact: true }).click();
-      const grantEditor = adminPage
-        .getByRole("heading", { name: "Resource grants" })
-        .locator("..");
+      const grantEditor = adminPage.getByRole("dialog", { name: `Access to “${renamedName}”` });
       const recipient = grantEditor.getByLabel("Recipient of the new grant");
       await expect(
         recipient.locator("option", { hasText: "User: Regular User" })
@@ -207,6 +205,8 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
       await confirm.getByRole("button", { name: "Apply", exact: true }).click();
       await expect(confirm).not.toBeVisible();
       await expect(grantEditor.getByText("Regular User", { exact: true })).toBeVisible();
+      await grantEditor.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(grantEditor).not.toBeVisible();
 
       await memberPage.reload();
       await expect(memberPage.getByLabel("Message")).toBeVisible();
@@ -264,7 +264,11 @@ test.describe("Workflow: end-to-end Admin UI → Business UI", () => {
       await expect(assistantContents).toHaveCount(successfulReplyCount);
 
       await renamedRow.getByRole("button", { name: "Archive", exact: true }).click();
-      await expect(renamedRow.locator("td").nth(2)).toHaveText("archived");
+      await adminPage
+        .getByRole("alertdialog")
+        .getByRole("button", { name: "Archive workflow", exact: true })
+        .click();
+      await expect(renamedRow.locator("td").nth(2)).toHaveText("Archived");
       await memberPage.reload();
       await expect(memberPage.getByLabel("Message")).toBeVisible();
       await memberPage.getByRole("button", { name: "Choose workflow" }).click();

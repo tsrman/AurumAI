@@ -49,6 +49,7 @@ async def list_admin_users(
     offset: int = Query(default=0, ge=0),
     search_query: str | None = Query(default=None, alias="search", max_length=200),
     user_status: str | None = Query(default=None, alias="status", max_length=20),
+    group_id: UUID | None = Query(default=None, alias="groupId"),
     user: UserInfo = Depends(require_org_admin),
     org_id: UUID = Depends(get_current_org_id),
     session: AsyncSession = Depends(get_org_db_session),
@@ -61,6 +62,7 @@ async def list_admin_users(
         offset=offset,
         search=search_query,
         status=user_status,
+        group_id=group_id,
     )
     return ApiResponse(
         data=[_response(row) for row in page.items],

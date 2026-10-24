@@ -1,56 +1,52 @@
 import { test, expect } from "@playwright/test";
 import { login } from "./helpers/auth";
 
+// Must be a model the stack's gateway publishes and the organization may use.
+const MODEL = process.env.E2E_AGENT_MODEL || process.env.E2E_WORKFLOW_CANVAS_MODEL || "gpt-4o-mini";
+
 /**
- * /admin/agents is real end-to-end: useAdminAccess() is a thin wrapper over
- * the authenticated organization role, and the
- * SkillFormDialog/SkillsTable hit the real /v1/skills + /v1/skills/{id}
- * (read) and /v1/skills (write, skills_admin.py) routers on the admin
- * backend (:8001). No stubbing.
+ * /admin/agents end to end against the real agent-definitions router on the
+ * admin backend: create through the editor, edit (PATCH), then delete.
  */
-test.describe("Admin: agents/skills", () => {
-  test("a user without admin:write sees access denied", async ({ page }) => {
+test.describe("Admin: agents", () => {
+  test("a user without the administrator role sees access denied", async ({ page }) => {
     await login(page, "user", "user");
     await page.goto("/admin/agents");
-
     await expect(page.getByText(/access denied/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Add skill" })).not.toBeVisible();
+    await expect(page.getByRole("link", { name: "New agent" })).toHaveCount(0);
   });
 
-  test("admin can create, edit and delete a skill", async ({ page }) => {
+  test("admin creates, edits and deletes an agent", async ({ page }) => {
     await login(page, "admin", "admin");
     await page.goto("/admin/agents");
+    await page.getByRole("link", { name: "New agent" }).first().click();
+    await expect(page).toHaveURL(/\/admin\/agents\/new$/);
 
-    await expect(page.getByText(/access denied/i)).not.toBeVisible();
+    const name = `e2e-agent-${Date.now()}`;
+    await page.getByLabel("Agent name").fill(name);
+    await page.getByLabel("Short description").fill("Created by e2e");
+    // The picker trigger is named after the current model.
+    await page.locator('button[aria-haspopup="listbox"]').click();
+    await page.getByRole("listbox", { name: "Choose model" }).getByRole("option", { name: MODEL, exact: true }).click();
+    await page.getByRole("button", { name: "Create agent" }).click();
 
-    const dialog = page.getByRole("dialog");
-
-    await page.getByRole("button", { name: "Add skill" }).click();
-    const skillName = `e2e-skill-${Date.now()}`;
-    await dialog.getByLabel("Name", { exact: true }).fill(skillName);
-    await dialog.getByRole("button", { name: "tool", exact: true }).click();
-    await dialog.getByRole("button", { name: "Create skill" }).click();
-    await expect(dialog).not.toBeVisible();
-
-    const row = page.locator("tr", { hasText: skillName });
+    await expect(page).toHaveURL(/\/admin\/agents$/);
+    const row = page.locator("tr", { hasText: name });
     await expect(row).toBeVisible();
-    await expect(row.getByText("tool")).toBeVisible();
+    await expect(row.getByText("Created by e2e")).toBeVisible();
 
-    await row.getByRole("button", { name: "Edit", exact: true }).click();
-    const renamed = `${skillName}-renamed`;
-    await dialog.getByLabel("Name", { exact: true }).fill(renamed);
-    await dialog.getByRole("button", { name: "Update skill" }).click();
-    await expect(dialog).not.toBeVisible();
+    await row.getByRole("button", { name: `Edit ${name}`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: `Agent “${name}”` })).toBeVisible();
+    await expect(page.getByLabel("Short description")).toHaveValue("Created by e2e");
+    await page.getByLabel("Short description").fill("Edited by e2e");
+    await page.getByRole("button", { name: "Save changes" }).click();
 
-    const renamedRow = page.locator("tr", { hasText: renamed });
-    await expect(renamedRow).toBeVisible();
-    // the original (pre-rename) name must no longer appear anywhere
-    await expect(page.getByText(skillName, { exact: true })).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/agents$/);
+    const edited = page.locator("tr", { hasText: name });
+    await expect(edited.getByText("Edited by e2e")).toBeVisible();
 
-    await renamedRow.getByRole("button", { name: "Delete", exact: true }).click();
-    const confirmDialog = page.getByRole("alertdialog");
-    await expect(confirmDialog).toBeVisible();
-    await confirmDialog.getByRole("button", { name: "Delete", exact: true }).click();
-    await expect(page.locator("tr", { hasText: renamed })).toHaveCount(0);
+    await edited.getByRole("button", { name: `Delete ${name}`, exact: true }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(page.locator("tr", { hasText: name })).toHaveCount(0);
   });
 });

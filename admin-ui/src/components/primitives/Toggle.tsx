@@ -24,7 +24,9 @@ export function Toggle({
       <input
         ref={ref}
         type="checkbox"
-        className="peer sr-only"
+        // Transparent but laid over the track rather than sr-only, so the
+        // real checkbox is what pointers (and browser automation) hit.
+        className="peer absolute inset-0 z-10 m-0 h-full w-full cursor-pointer opacity-0"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         {...props}

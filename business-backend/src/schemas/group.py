@@ -13,6 +13,7 @@ class GroupResponse(GroupSchema):
     name: str
     keycloakId: Optional[str] = None
     lastSyncedAt: Optional[str] = None
+    memberCount: int = 0
 
 
 class GroupCreateRequest(GroupSchema):

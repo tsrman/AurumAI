@@ -18,6 +18,7 @@ export interface Group {
   name: string;
   keycloakId?: string | null;
   lastSyncedAt?: string | null;
+  memberCount?: number;
 }
 
 export interface Me {
@@ -186,6 +187,7 @@ export interface AdminUserFilters {
   offset: number;
   search?: string;
   status?: string;
+  groupId?: string;
 }
 
 export interface KnowledgeBase {
@@ -644,6 +646,24 @@ export async function createAgentDefinition(payload: AgentDefinitionCreate) {
   return (await api.post("agent-definitions", { json: payload })).json<
     ApiResponse<AgentDefinition>
   >();
+}
+
+export type AgentDefinitionUpdate = Partial<AgentDefinitionCreate>;
+
+export async function getAgentDefinition(id: string) {
+  return (await api.get(`agent-definitions/${id}`)).json<
+    ApiResponse<AgentDefinition>
+  >();
+}
+
+export async function updateAgentDefinition(id: string, payload: AgentDefinitionUpdate) {
+  return (await api.patch(`agent-definitions/${id}`, { json: payload })).json<
+    ApiResponse<AgentDefinition>
+  >();
+}
+
+export async function deleteAgentDefinition(id: string) {
+  return api.delete(`agent-definitions/${id}`);
 }
 
 export async function getAdminWorkflows(includeArchived = false) {

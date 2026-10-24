@@ -28,21 +28,26 @@ test.describe("Authorization v2: admin UI", () => {
     await login(page, "user", "user");
     await page.goto("/admin/groups");
     await expect(page.getByText(/access denied/i)).toBeVisible();
-    await expect(page.getByText("Organization capabilities")).not.toBeVisible();
+    await expect(page.getByText("Default permissions")).not.toBeVisible();
 
     const adminPage = await page.context().browser()?.newPage();
     expect(adminPage).toBeDefined();
     if (!adminPage) return;
     await login(adminPage, "admin", "admin");
     await adminPage.goto("/admin/groups");
+    await adminPage.getByRole("button", { name: /Default permissions/ }).click();
     await expect(
       adminPage.getByRole("heading", { name: "Organization capabilities" })
     ).toBeVisible();
     await expect(adminPage.getByLabel(/Permissions/)).toHaveCount(0);
-    await adminPage.getByRole("button", { name: "Configure capabilities analysts" }).click();
+    await adminPage.getByRole("button", { name: "Close" }).click();
+    await adminPage.getByRole("button", { name: "Edit group analysts", exact: true }).click();
+    const groupDialog = adminPage.getByRole("dialog", { name: "Group “analysts”" });
+    await groupDialog.getByRole("tab", { name: "Permissions", exact: true }).click();
     await expect(
-      adminPage.getByRole("heading", { name: "Capabilities of group analysts" })
+      groupDialog.getByRole("heading", { name: "Capabilities of group analysts" })
     ).toBeVisible();
+    await groupDialog.getByRole("button", { name: "Close" }).click();
 
     const token = await adminToken(request);
     const marker = `authorization-v2-ui-${Date.now()}`;
@@ -54,17 +59,17 @@ test.describe("Authorization v2: admin UI", () => {
     const skillId = ((await created.json()) as { data: { id: string } }).data.id;
 
     try {
-      await adminPage.goto("/admin/agents");
+      await adminPage.goto("/admin/skills");
       const row = adminPage.locator("tr", { hasText: marker });
       await expect(row).toBeVisible();
-      await row.getByRole("button", { name: "Edit", exact: true }).click();
-      const dialog = adminPage.getByRole("dialog");
-      await expect(dialog.getByRole("heading", { name: "Resource grants" })).toBeVisible();
+      await row.getByRole("button", { name: `Access to ${marker}`, exact: true }).click();
+      const dialog = adminPage.getByRole("dialog", { name: `Access to “${marker}”` });
+      await expect(dialog.getByRole("heading", { name: "Who has access" })).toBeVisible();
       await dialog
         .getByLabel("Recipient of the new grant")
         .selectOption({ label: "User: Regular User" });
       await dialog.getByRole("button", { name: "Add grant" }).click();
-      await expect(dialog.getByText("Regular User · read")).toBeVisible();
+      await expect(dialog.getByLabel("Access level of Regular User")).toHaveValue("read");
       await dialog.getByRole("button", { name: "Save grants" }).click();
       const confirmation = adminPage.getByRole("alertdialog");
       await expect(confirmation.getByText(/the change applies immediately/i)).toBeVisible();

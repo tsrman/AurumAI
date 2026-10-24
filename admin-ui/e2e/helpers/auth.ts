@@ -21,10 +21,9 @@ export async function login(
   await page.locator("#username").fill(username);
   await page.locator("#password").fill(password);
   await page.locator("#kc-login").click();
-  await page.waitForURL(/\/admin\/agents$/, { timeout: 30_000 });
-  // AdminNav renders regardless of the landed page's own admin:write check
-  // A non-admin user still reaches /admin/agents but sees access denied
-  // instead of the SkillsTable; reaching the route confirms login.
-  // the app shell loaded without baking in a permission assumption.
-  await expect(page.getByRole("link", { name: "Groups", exact: true })).toBeVisible();
+  await page.waitForURL(/\/admin\/users$/, { timeout: 30_000 });
+  // The admin sidebar renders for every signed-in user; a non-admin still
+  // reaches /admin/users but sees access denied instead of the directory, so
+  // reaching the route plus the shell confirms login without assuming a role.
+  await expect(page.getByRole("link", { name: "Agents", exact: true })).toBeVisible();
 }

@@ -245,7 +245,7 @@ export function WorkflowForm({
             {agents.length === 0 ? (
               <p role="status">
                 {g("noAgents")}{" "}
-                <Link className="underline" href="/agents/constructor">
+                <Link className="underline" href="/admin/agents/new">
                   {g("agents")}
                 </Link>
               </p>

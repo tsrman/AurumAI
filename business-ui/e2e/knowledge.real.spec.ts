@@ -64,8 +64,9 @@ test.describe("Knowledge/RAG: full UI lifecycle", () => {
         memberPage.getByRole("button", { name: "Create knowledge base" })
       ).toHaveCount(0);
 
-      await loginAt(adminPage, ADMIN_UI_URL, "admin", "admin", /\/admin\/agents$/);
+      await loginAt(adminPage, ADMIN_UI_URL, "admin", "admin", /\/admin\/users$/);
       await adminPage.goto(`${ADMIN_UI_URL}/admin/groups`);
+      await adminPage.getByRole("button", { name: /Default permissions/ }).click();
       const capability = adminPage.getByRole("checkbox", {
         name: /workspace\.knowledge\.create/,
       });

@@ -1,182 +1,172 @@
 "use client";
 
-import { useState } from "react";
-import { useAdminAccess } from "@/hooks/useAdminAccess";
-import { useGroups, useCreateGroup, useDeleteGroup } from "@/hooks/useGroups";
-import { useErrorMessage } from "@/lib/errors";
-import type { Group } from "@/lib/api";
-import { ConfirmDialog } from "@/components/primitives";
-import {
-  GroupCapabilityEditor,
-  OrganizationCapabilityEditor,
-} from "@/components/authorization/CapabilityEditor";
+import { useMemo, useState } from "react";
+import { ChevronRight, Plus, Settings2, Users } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { Badge, Button, Field } from "@/components/primitives";
+import { OrganizationCapabilityEditor } from "@/components/authorization/CapabilityEditor";
+import { AdminGate, EmptyState, Modal, Notice, PageBody, PageHeader, SearchInput, Table, Td, Th, Tr } from "@/components/ui";
+import { PeopleTabs } from "@/components/people/PeopleTabs";
+import { GroupDialog, isKeycloakGroup } from "@/components/people/GroupDialog";
+import { useCreateGroup, useGroups } from "@/hooks/useGroups";
+import { useErrorMessage } from "@/lib/errors";
 
 export default function AdminGroupsPage() {
-  const t = useTranslations("groups");
-  const accessT = useTranslations("access");
+  const t = useTranslations("people.groups");
+  const [creating, setCreating] = useState(false);
+  return (
+    <AdminGate>
+      {({ canWrite }) => (
+        <>
+          <PageHeader
+            title={t("title")}
+            description={t("subtitle")}
+            tabs={<PeopleTabs />}
+            actions={
+              canWrite ? (
+                <Button onClick={() => setCreating(true)}>
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  {t("create")}
+                </Button>
+              ) : null
+            }
+          />
+          <GroupsContent canWrite={canWrite} creating={creating} onCreatingChange={setCreating} />
+        </>
+      )}
+    </AdminGate>
+  );
+}
+
+function GroupsContent({
+  canWrite,
+  creating,
+  onCreatingChange,
+}: {
+  canWrite: boolean;
+  creating: boolean;
+  onCreatingChange: (open: boolean) => void;
+}) {
+  const t = useTranslations("people.groups");
   const errorMessage = useErrorMessage();
-  const { allowed, canWrite, error: accessError, isLoading: checking } = useAdminAccess();
   const { data, isLoading, error } = useGroups();
-  const create = useCreateGroup();
-  const remove = useDeleteGroup();
-  const [name, setName] = useState("");
-  const [deletingGroup, setDeletingGroup] = useState<Group | null>(null);
-  const [capabilityGroup, setCapabilityGroup] = useState<Group | null>(null);
-
-  if (checking) return <div className="p-6">{accessT("checking")}</div>;
-
-  if (!allowed) {
-    return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-6 text-red-700">
-        {accessError || accessT("adminRequired")}
-      </div>
-    );
-  }
-
-  const groups = data?.data ?? [];
-
-  const handleCreate = (event: React.FormEvent) => {
-    event.preventDefault();
-    create.mutate({ name }, { onSuccess: () => setName("") });
-  };
-
-  const confirmDelete = () => {
-    if (!deletingGroup) return;
-    remove.mutate(deletingGroup.id, { onSuccess: () => setDeletingGroup(null) });
-  };
+  const [search, setSearch] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
+  const groups = useMemo(() => data?.data ?? [], [data]);
+  const filtered = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return query ? groups.filter((group) => group.name.toLocaleLowerCase().includes(query)) : groups;
+  }, [groups, search]);
+  // Looked up by id so the dialog follows renames and refetches.
+  const editing = groups.find((group) => group.id === editingId) ?? null;
 
   return (
-    <div>
-      <h1 className="mb-6 text-2xl font-semibold">{t("title")}</h1>
+    <PageBody>
+      <button
+        type="button"
+        onClick={() => setDefaultsOpen(true)}
+        className="flex w-full items-center gap-4 rounded-card border border-aurum-border bg-aurum-surface px-5 py-4 text-left shadow-card transition hover:bg-aurum-surface-2 focus:outline-none focus:ring-2 focus:ring-aurum-accent/50"
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-aurum-accent-soft text-aurum-text">
+          <Settings2 className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-aurum-text">{t("defaults.title")}</span>
+          <span className="block text-xs leading-5 text-aurum-text-3">{t("defaults.description")}</span>
+        </span>
+        <ChevronRight className="h-5 w-5 text-aurum-text-3" aria-hidden="true" />
+      </button>
 
-      <div className="mb-8">
-        <OrganizationCapabilityEditor />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SearchInput value={search} onChange={setSearch} placeholder={t("search")} />
+        <span className="text-sm text-aurum-text-3">{t("count", { count: groups.length })}</span>
       </div>
 
-      {error && !isLoading && (
-        <div className="mb-6 rounded-md border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
-          {errorMessage(error)}
-        </div>
-      )}
-
-      {canWrite && (
-        <form onSubmit={handleCreate} className="mb-8 space-y-4 rounded-md border p-4">
-          <h2 className="font-medium">{t("create")}</h2>
-          <div>
-            <label htmlFor="group-name" className="mb-1 block text-sm font-medium">
-              {t("name")}
-            </label>
-            <input
-              id="group-name"
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              className="w-full rounded-md border px-3 py-2"
-              required
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={create.isPending}
-            className="rounded-md bg-primary-600 px-4 py-2 text-white disabled:opacity-50"
-          >
-            {create.isPending ? t("creating") : t("create")}
-          </button>
-          {create.isError && (
-            <p className="text-sm text-red-600">{errorMessage(create.error)}</p>
-          )}
-        </form>
-      )}
+      {error && !isLoading ? <Notice tone="error">{errorMessage(error)}</Notice> : null}
 
       {isLoading ? (
-        <div>{t("loading")}</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border text-left text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="border px-4 py-2">{t("name")}</th>
-                <th className="border px-4 py-2">{t("actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map((group) => (
-                <tr key={group.id}>
-                  <td className="border px-4 py-2">
-                    <span className="inline-flex items-center gap-2">
-                      {group.name}
-                      {group.lastSyncedAt && (
-                        <span
-                          className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700"
-                          title={t("syncedFromKeycloak", { date: group.lastSyncedAt })}
-                        >
-                          Keycloak
-                        </span>
-                      )}
-                    </span>
-                  </td>
-                  <td className="border px-4 py-2">
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCapabilityGroup(group)}
-                        aria-label={t("configureCapabilities", { group: group.name })}
-                        className="rounded-md bg-blue-600 px-3 py-1 text-white hover:bg-blue-700"
-                      >
-                        Capabilities
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeletingGroup(group)}
-                        disabled={remove.isPending || !canWrite || Boolean(group.lastSyncedAt || group.keycloakId)}
-                        className="rounded-md bg-red-600 px-3 py-1 text-white hover:bg-red-700 disabled:opacity-50"
-                      >
-                        {t("delete")}
-                      </button>
-                    </div>
-                    {group.lastSyncedAt || group.keycloakId ? (
-                      <p className="mt-2 text-xs text-gray-600">{t("managedInKeycloak")}</p>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-              {groups.length === 0 && !error && (
-                <tr>
-                  <td className="border px-4 py-4 text-center text-gray-500" colSpan={2}>
-                    {t("empty")}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {capabilityGroup ? (
-        <div className="mt-8">
-          <GroupCapabilityEditor
-            groupId={capabilityGroup.id}
-            groupLabel={capabilityGroup.name}
-          />
-        </div>
+        <p role="status" className="text-sm text-aurum-text-3">{t("loading")}</p>
+      ) : filtered.length === 0 && !error ? (
+        <EmptyState
+          icon={<Users className="h-8 w-8" aria-hidden="true" />}
+          title={search ? t("noMatches") : t("empty")}
+          description={search ? undefined : t("emptyHint")}
+        />
+      ) : filtered.length > 0 ? (
+        <Table label={t("title")}>
+          <thead>
+            <tr>
+              <Th>{t("columns.name")}</Th>
+              <Th>{t("columns.source")}</Th>
+              <Th>{t("columns.members")}</Th>
+              <Th className="text-right">{t("columns.actions")}</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((group) => (
+              <Tr key={group.id} onClick={() => setEditingId(group.id)}>
+                <Td className="font-medium text-aurum-text">{group.name}</Td>
+                <Td>
+                  {isKeycloakGroup(group) ? <Badge color="blue">Keycloak</Badge> : <Badge color="amber">{t("local")}</Badge>}
+                </Td>
+                <Td>{group.memberCount ?? "—"}</Td>
+                <Td className="text-right">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setEditingId(group.id);
+                    }}
+                    aria-label={t("editAria", { group: group.name })}
+                    className="rounded-btn px-2 py-1.5 text-xs font-medium text-aurum-text-2 hover:bg-aurum-surface-3 hover:text-aurum-text"
+                  >
+                    {t("edit")}
+                  </button>
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
       ) : null}
 
-      <ConfirmDialog
-        open={deletingGroup != null}
-        title={t("deleteTitle")}
-        description={
-          remove.isError
-            ? errorMessage(remove.error)
-            : deletingGroup
-            ? t("deleteDescription", { group: deletingGroup.name })
-            : undefined
-        }
-        confirmLabel={t("delete")}
-        destructive
-        onConfirm={confirmDelete}
-        onCancel={() => setDeletingGroup(null)}
-      />
-    </div>
+      <CreateGroupDialog open={creating} onClose={() => onCreatingChange(false)} />
+      <GroupDialog group={editing} canWrite={canWrite} onClose={() => setEditingId(null)} />
+      <Modal open={defaultsOpen} title={t("defaults.title")} onClose={() => setDefaultsOpen(false)}>
+        <OrganizationCapabilityEditor />
+      </Modal>
+    </PageBody>
+  );
+}
+
+function CreateGroupDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useTranslations("people.groups");
+  const errorMessage = useErrorMessage();
+  const create = useCreateGroup();
+  const [name, setName] = useState("");
+  const close = () => {
+    setName("");
+    create.reset();
+    onClose();
+  };
+  return (
+    <Modal open={open} title={t("createTitle")} description={t("createHint")} onClose={close} size="md">
+      <form
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          create.mutate({ name: name.trim() }, { onSuccess: close });
+        }}
+      >
+        <Field label={t("columns.name")} value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
+        {create.isError ? <Notice tone="error">{errorMessage(create.error)}</Notice> : null}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={close}>{t("cancel")}</Button>
+          <Button type="submit" disabled={create.isPending || !name.trim()}>
+            {create.isPending ? t("creating") : t("create")}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
