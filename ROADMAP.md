@@ -20,21 +20,29 @@ Detailed fresh verification belongs in the release report and CI.
   switches, deadlines and exact-owned recovery.
 - Optional background identity synchronization, monthly payload partitions and
   verified operator-only Parquet archive/export/restore.
+- Admin UI in the chat app's shell: users and groups (default and per-group
+  permissions, read-only Keycloak membership), agents (create, edit, delete),
+  skills, workflows, knowledge bases, models and usage analytics, with access
+  configured from each resource.
+- Guided workflow authoring with runnable examples, and starter tools
+  (`install-platform.sh`, CSV statistics and JSON formatting code skills).
 - Service lint/types/tests, frontend tests/builds, migration checks, image builds
   and offline acceptance-harness contracts.
 
-## Current release preparation
+## Public release
 
 - AurumAI branding, AGPL-3.0-only licensing and third-party attribution.
-- English public documentation, comments and docstrings.
+- English public documentation, comments, docstrings and source strings; Russian
+  text lives only in the UI locale catalogs.
 - Portable examples/bootstrap with persistent secrets and explicit provider models.
-- Manifest-selected export without private history, runtime data or credentials.
-- Public-fork CI and redacted independent secret scanning of the exported candidate.
-- Clean-install verification from the candidate rather than the private checkout.
+- Manifest-selected export without private history, runtime data or credentials,
+  with redacted independent secret scanning of the exported candidate.
+- Public repository at github.com/tsrman/AurumAI with CI on every change, tagged
+  releases starting at `v0.0.1`, and service images published to
+  `ghcr.io/tsrman/aurum-ai-*` by the `publish images` workflow.
+- Grouped Dependabot updates for Python, npm, Docker and GitHub Actions.
 
-Source preparation is complete and verified from an independent snapshot. Public
-repository creation, the initial commit and publication await the chosen destination
-and explicit authorization. Provider/Kubernetes/long-deadline gates below remain separate.
+Provider/Kubernetes/long-deadline gates below remain separate from the release.
 
 ## Remaining product and verification work
 
@@ -50,7 +58,11 @@ and explicit authorization. Provider/Kubernetes/long-deadline gates below remain
   with MCP, questions, web, complete REST history and reload.
 - Operator rollout hardening and operational documentation across deployment-specific
   credentials, model revisions, network enforcement and backup/recovery.
-- Removal of remaining upstream development-tool advisories when patches are available.
+- Removal of remaining upstream development-tool advisories when patches are available,
+  and the major dependency upgrades Dependabot proposes (Node 26, zod 4, vitest 5,
+  redis 8, mypy 2 and others) once each is migrated and tested.
+- Editable group membership in the Admin UI: today sign-in synchronization replaces
+  memberships from the Keycloak `groups` claim, so membership is managed in Keycloak.
 
 Default-off features stay gated until their prerequisites and enforcement checks
 are satisfied. A historical acceptance pass does not automatically close a fresh
