@@ -38,7 +38,7 @@ async function login(page: Page, admin: boolean) {
   await page.locator("#username").fill(admin ? process.env.E2E_ADMIN_USERNAME || "admin" : process.env.E2E_MEMBER_USERNAME || "user");
   await page.locator("#password").fill(admin ? process.env.E2E_ADMIN_PASSWORD || "admin" : process.env.E2E_MEMBER_PASSWORD || "user");
   await page.locator("#kc-login").click();
-  await page.waitForURL(`${url}${admin ? "/admin/agents" : "/chat"}`);
+  await page.waitForURL(`${url}${admin ? "/admin/users" : "/chat"}`);
   await expect.poll(() => page.evaluate(() => Boolean(window.keycloak?.token))).toBe(true);
 }
 

@@ -1,14 +1,5 @@
-import { AdminNav } from "@/components/AdminNav";
+import { AdminShell } from "@/components/shell/AdminShell";
 
-export default function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="mx-auto max-w-6xl p-6">
-      <AdminNav />
-      {children}
-    </div>
-  );
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return <AdminShell>{children}</AdminShell>;
 }

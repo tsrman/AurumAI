@@ -904,7 +904,13 @@ def test_browser_source_covers_ui_only_acl_and_all_resource_boundaries() -> None
     ):
         assert principal in source
     assert 'test.use({ trace: "off" })' in source
-    assert 'new URL(page.url()).pathname !== "/admin/access"' in source
+    # Access is edited from each resource's own admin list, reached through
+    # the admin sidebar, in a dialog titled after the resource.
+    assert 'getByRole("navigation", { name: "Administration sections" })' in source
+    assert "new URL(page.url()).pathname !== section.path" in source
+    for section in ("/admin/models", "/admin/skills", "/admin/knowledge", "/admin/agents", "/admin/workflows"):
+        assert section in source
+    assert 'getByRole("dialog", { name: `Access to “${label}”` })' in source
     new_chat_helper = source.split("async function goToNewChat", 1)[1].split(
         "async function", 1
     )[0]
@@ -913,22 +919,15 @@ def test_browser_source_covers_ui_only_acl_and_all_resource_boundaries() -> None
     assert 'name: "Knowledge bases", exact: true' in source
     assert 'goto(`${ADMIN_UI_URL}/admin/' not in source
     assert 'goto(`${BUSINESS_UI_URL}/' not in source
-    assert (
-        'getByRole("combobox", { name: "Resource type", exact: true })'
-        in source
-    )
-    assert (
-        'getByRole("textbox", { name: "Search resources", exact: true })'
-        in source
-    )
-    assert 'getByRole("combobox", { name: "Resource", exact: true })' in source
+    assert '"/admin/access"' not in source
     assert "getByText(id" not in source
     assert "function pickerOption" in source
     assert source.count('getByRole("option"') == 1
     assert 'getByRole("button", { name: "Save grants" })' in source
     assert 'getByRole("button", { name: "Apply" })' in source
     assert "function analystsCapabilitiesEditor" in source
-    assert source.count("analystsCapabilitiesEditor(adminPage)") == 2
+    assert source.count("await analystsCapabilitiesEditor(adminPage)") == 2
+    assert 'getByRole("tab", { name: "Permissions", exact: true })' in source
     assert "MULTI_AGENT_FINAL:authorized-node" in source
     assert "Access to the workflow was revoked" in source
     assert ".request.put(" not in source

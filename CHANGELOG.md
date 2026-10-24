@@ -26,6 +26,16 @@ Knowledge search's query-embedding timeout is configurable
 (`RAG_API_SEARCH_EMBEDDING_TIMEOUT_SECONDS`, default 10). Workflow cancel/decision
 and conversation-start failures that return 503 now log their cause.
 
+The Admin UI is redesigned around the chat app's shell: a collapsible sidebar
+with Users (users and groups), Agents, Skills and tools, Workflows, Knowledge
+bases, Models and Analytics. Its layout and interactions follow Open WebUI's admin
+panel: searchable tables with row actions, a group dialog with General,
+Permissions and Members tabs, default permissions as their own entry, and access
+configured from each resource's "Access" action instead of a separate page.
+Agents can now be listed, edited and deleted, not only created. `/admin/access`
+and `/agents/constructor` redirect to their new places. The admin API adds a
+`memberCount` to groups and a `groupId` filter to `GET /v1/admin/users`.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

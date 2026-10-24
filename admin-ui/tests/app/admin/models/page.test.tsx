@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 
 import AdminModelsPage from "@/app/admin/models/page";
@@ -80,10 +80,10 @@ test("renders catalog and saves a cleared default", () => {
 
   expect(screen.getByText("Gateway available")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  expect(screen.getByRole("link", { name: /Configure model access/ })).toHaveAttribute(
-    "href",
-    "/admin/access"
-  );
+  const catalog = screen.getByRole("table", { name: "Catalog" });
+  expect(within(catalog).getByText("provider/private").closest("tr")).toHaveTextContent("Restricted");
+  fireEvent.click(screen.getByRole("button", { name: "Access to provider/private" }));
+  expect(screen.getByRole("dialog", { name: "Access to “provider/private”" })).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Default model"), {
     target: { value: "" },
@@ -103,8 +103,11 @@ test("allows choosing an ungranted model and explains access before saving", () 
   fireEvent.change(picker, { target: { value: "provider/private" } });
 
   expect(picker).toHaveValue("provider/private");
-  expect(screen.getByText("Grant this model read access for the organization below, then save the default. Choosing a model does not grant access."))
+  expect(screen.getByText("Give the organization access to this model, then save the default. Choosing a model does not grant access."))
     .toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Give the organization access" }));
+  expect(screen.getByRole("dialog", { name: "Access to “provider/private”" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(mutate).not.toHaveBeenCalled();
 

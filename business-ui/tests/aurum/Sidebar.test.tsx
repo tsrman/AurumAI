@@ -179,7 +179,7 @@ test("resource navigation does not depend on client-side permission strings", ()
 
   expect(hrefs).toContain("/knowledge");
   expect(hrefs).toContain("/history");
-  expect(hrefs.some((h) => h?.includes("/admin/groups"))).toBe(false);
+  expect(hrefs.some((h) => h?.includes("/admin/"))).toBe(false);
 });
 
 test("Administration points at the external admin-ui app for an org admin", () => {
@@ -198,5 +198,5 @@ test("Administration points at the external admin-ui app for an org admin", () =
     .getAllByRole("link")
     .map((link) => link.getAttribute("href"));
 
-  expect(hrefs).toContain("http://localhost:3100/admin/groups");
+  expect(hrefs).toContain("http://localhost:3100/admin/users");
 });

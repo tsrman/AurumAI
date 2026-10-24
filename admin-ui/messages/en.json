@@ -38,7 +38,8 @@
     "confirm": "Confirm",
     "cancel": "Cancel",
     "language": "Language",
-    "logout": "Sign out"
+    "logout": "Sign out",
+    "close": "Close"
   },
   "login": {
     "subtitle": "Sign in to continue",
@@ -62,7 +63,10 @@
       "temperature": "Temperature",
       "inherit": "Inherit from the organization",
       "saving": "Saving…",
-      "create": "Create agent"
+      "create": "Create agent",
+      "cancel": "Cancel",
+      "noTools": "No skills yet. Add them under Skills and tools.",
+      "noKnowledgeBases": "No knowledge bases yet. Create them in the chat app."
     },
     "preview": {
       "newAgent": "New agent",
@@ -76,25 +80,7 @@
     "adminRequired": "Access denied. The organization administrator role is required.",
     "checking": "Checking access...",
     "orgReadable": "Available to the organization",
-    "orgClosed": "Closed to the organization",
-    "page": {
-      "resourceTypes": {
-        "model": "Model",
-        "skill": "Skill",
-        "knowledge_base": "Knowledge base",
-        "agent_definition": "Agent",
-        "workflow": "Workflow"
-      },
-      "title": "Resource access",
-      "subtitle": "Manage organization, group and user grants for one resource at a time.",
-      "resourceType": "Resource type",
-      "search": "Search resources",
-      "loading": "Loading resources...",
-      "empty": "No resources of this type were found.",
-      "resource": "Resource",
-      "chooseResource": "Choose a resource",
-      "adminWriteRequired": "Access denied. The admin:write permission is required."
-    }
+    "orgClosed": "Closed to the organization"
   },
   "workflows": {
     "page": {
@@ -120,7 +106,8 @@
       "saveTemplate": "Save as template",
       "archive": "Archive",
       "active": "Active",
-      "archived": "Archived"
+      "archived": "Archived",
+      "label": "Workflows"
     },
     "form": {
       "validateFailed": "Workflow validation failed",
@@ -368,7 +355,11 @@
       "organizationDirect": "An organization grant applies directly to every member.",
       "checking": "Checking…",
       "check": "Check effective access",
-      "noAccess": "no access"
+      "noAccess": "no access",
+      "hint": "See what {subject} can do with this resource after saving.",
+      "capabilities": "Capabilities",
+      "canWrite": "can edit",
+      "canRead": "can use"
     },
     "capabilities": {
       "loading": "Loading capabilities…",
@@ -377,7 +368,9 @@
       "organizationTitle": "Organization capabilities",
       "organizationSave": "Save organization capabilities",
       "groupTitle": "Capabilities of group {group}",
-      "groupSave": "Save capabilities of group {group}"
+      "groupSave": "Save capabilities of group {group}",
+      "organizationDescription": "Turned-on capabilities apply to every member of the organization.",
+      "groupDescription": "Members get these capabilities in addition to the organization defaults."
     },
     "grants": {
       "principal": {
@@ -397,33 +390,60 @@
       "save": "Save grants",
       "applyTitle": "Apply resource grants?",
       "applyDescription": "The complete set of grants for “{resource}” will be replaced. The change applies immediately.",
-      "apply": "Apply"
-    }
-  },
-  "groups": {
-    "title": "Groups and access",
-    "create": "Create group",
-    "name": "Name",
-    "creating": "Creating...",
-    "loading": "Loading groups...",
-    "actions": "Actions",
-    "syncedFromKeycloak": "Synchronized from Keycloak: {date}",
-    "configureCapabilities": "Configure capabilities {group}",
-    "delete": "Delete",
-    "empty": "No groups yet",
-    "deleteTitle": "Delete the group?",
-    "deleteDescription": "“{group}” will be deleted and member access will change immediately.",
-    "managedInKeycloak": "Manage this group in Keycloak. Local deletion would be undone by synchronization."
-  },
-  "agents": {
-    "page": {
-      "title": "Agents / Skills",
-      "subtitle": "Tools and MCP servers available to the LLM in chat",
-      "addSkill": "Add skill",
-      "loading": "Loading skills...",
-      "deleteTitle": "Delete the skill?",
-      "deleteDescription": "“{skill}” will no longer be available to the LLM in chat.",
-      "delete": "Delete"
+      "apply": "Apply",
+      "current": "Who has access",
+      "none": "Nobody has access yet. Administrators always do.",
+      "permissionAria": "Access level of {subject}",
+      "permission": {
+        "read": "Can use",
+        "write": "Can edit"
+      },
+      "addTitle": "Give access",
+      "hint": "Grant the organization to share with everyone, or pick a group or a single user."
+    },
+    "dialog": {
+      "title": "Access to “{resource}”",
+      "description": {
+        "model": "Who can choose this model in chat and in agents.",
+        "skill": "Who can use this skill in chat and in agents.",
+        "knowledge_base": "Who can search this knowledge base and who can change its documents.",
+        "agent_definition": "Who can chat with this agent and who can edit it.",
+        "workflow": "Who can start this workflow and who can edit it."
+      }
+    },
+    "capabilityCatalog": {
+      "admin_users_read": {
+        "label": "View users",
+        "description": "View users and their effective access inside the organization."
+      },
+      "admin_users_write": {
+        "label": "Manage users",
+        "description": "Manage organization user settings outside Keycloak group membership."
+      },
+      "chat_send": {
+        "label": "Send chat messages",
+        "description": "Start and continue AI conversations."
+      },
+      "sharing_manage": {
+        "label": "Manage sharing",
+        "description": "Grant others access to resources. Requires the administrator role as well."
+      },
+      "web_access": {
+        "label": "Access the web",
+        "description": "Search and read public web pages through the platform's isolated web service."
+      },
+      "workspace_agents_create": {
+        "label": "Create agents",
+        "description": "Create their own agents in the organization workspace."
+      },
+      "workspace_knowledge_create": {
+        "label": "Create knowledge bases",
+        "description": "Create knowledge bases and upload documents to them."
+      },
+      "workspace_skills_create": {
+        "label": "Create skills",
+        "description": "Add their own skills to the organization workspace."
+      }
     }
   },
   "models": {
@@ -434,32 +454,41 @@
     },
     "loading": "Loading models...",
     "loadFailed": "Could not load models",
-    "title": "Organization models",
-    "subtitle": "Choose the model offered to users who have not set a personal default.",
+    "title": "Models",
+    "subtitle": "Organization defaults and who may use each model from the gateway.",
     "gatewayUnavailableHint": "The gateway catalog is unavailable. You can clear the saved setting but cannot choose a new model.",
     "defaultModel": "Default model",
     "noDefault": "No default model",
     "unavailable": "{model} — unavailable",
-    "grantsHint": "Model availability is controlled by resource grants. This setting does not change user permissions.",
+    "grantsHint": "Who may use each model is set with Access in the catalog. These settings do not change user permissions.",
     "staleDefault": "The saved model is no longer available to the organization.",
     "defaultTemperature": "Default temperature",
     "temperatureUnset": "Not set — the system default (0.7) is used.",
     "saving": "Saving...",
     "save": "Save",
-    "configureAccess": "Configure model access",
     "requiresAccess": "{model} — requires organization access",
-    "grantAccessHint": "Grant this model read access for the organization below, then save the default. Choosing a model does not grant access."
-  },
-  "nav": {
-    "backToChat": "← To chat",
-    "groups": "Groups",
-    "models": "Models",
+    "grantAccessHint": "Give the organization access to this model, then save the default. Choosing a model does not grant access.",
+    "gatewayMockHint": "The platform runs with a test catalog instead of a real gateway.",
+    "defaultsTitle": "Defaults",
+    "defaultModelHint": "Offered to users who have not chosen a personal default.",
+    "grantAccess": "Give the organization access",
+    "temperatureHint": "Used by agents that inherit the organization temperature.",
+    "overrideTemperature": "Set an organization temperature",
+    "catalogTitle": "Catalog",
+    "catalogHint": "Models published by the gateway. Use Access to choose who may pick each one.",
+    "search": "Search models",
+    "noMatches": "No models match the search",
+    "empty": "The gateway publishes no models",
+    "columns": {
+      "model": "Model",
+      "availability": "Availability",
+      "actions": "Actions"
+    },
+    "defaultBadge": "Default",
+    "orgReadable": "Whole organization",
+    "restricted": "Restricted",
     "access": "Access",
-    "workflows": "Workflows",
-    "analytics": "Analytics",
-    "agents": "Agents / Skills",
-    "constructor": "Constructor",
-    "about": "License and source"
+    "accessAria": "Access to {model}"
   },
   "skills": {
     "table": {
@@ -468,7 +497,19 @@
       "actions": "Actions",
       "edit": "Edit",
       "delete": "Delete",
-      "empty": "No skills yet"
+      "empty": "No skills yet",
+      "label": "Skills",
+      "target": "Endpoint or activity",
+      "types": {
+        "agent": "Agent",
+        "tool": "Tool",
+        "mcp": "MCP",
+        "code": "Code"
+      },
+      "access": "Access",
+      "accessAria": "Access to {skill}",
+      "editAria": "Edit {skill}",
+      "deleteAria": "Delete {skill}"
     },
     "form": {
       "sseRequired": "Choose SSE and enter the external MCP server address before saving.",
@@ -500,6 +541,21 @@
       "saving": "Saving...",
       "update": "Update skill",
       "allowedChildSkills": "Allowed child skills (JSON list)"
+    },
+    "page": {
+      "title": "Skills and tools",
+      "subtitle": "Tools, MCP servers and code skills that agents and chat can call.",
+      "addSkill": "Add skill",
+      "search": "Search skills",
+      "typeFilter": "Skill type",
+      "allTypes": "All",
+      "loading": "Loading skills...",
+      "noMatches": "No skills match the filters",
+      "empty": "No skills yet",
+      "emptyHint": "Connect an MCP server or upload a code skill so agents can act, not only answer.",
+      "deleteTitle": "Delete the skill?",
+      "deleteDescription": "“{skill}” will no longer be available to the LLM in chat.",
+      "delete": "Delete"
     }
   },
   "analytics": {
@@ -553,5 +609,186 @@
     "sourceIncluded": "Source code is included in the AurumAI source distribution. Configure RUNTIME_SOURCE_CODE_URL to link the source of this deployment.",
     "thirdParty": "Third-party dependencies retain their upstream licenses; see THIRD_PARTY_NOTICES.md in the source distribution.",
     "returnToSignIn": "Return to sign in"
+  },
+  "shell": {
+    "panel": "Administration panel",
+    "brandSuffix": "Admin",
+    "backToChat": "Back to chat",
+    "navigation": "Administration sections",
+    "sections": {
+      "people": "PEOPLE",
+      "workspace": "WORKSPACE",
+      "monitoring": "MONITORING"
+    },
+    "items": {
+      "users": "Users",
+      "agents": "Agents",
+      "skills": "Skills and tools",
+      "workflows": "Workflows",
+      "knowledge": "Knowledge bases",
+      "models": "Models",
+      "analytics": "Analytics"
+    },
+    "about": "License and source",
+    "expand": "Expand panel",
+    "collapse": "Collapse panel",
+    "logout": "Sign out",
+    "userFallback": "Administrator"
+  },
+  "people": {
+    "tabsLabel": "People sections",
+    "tabs": {
+      "users": "Users",
+      "groups": "Groups"
+    },
+    "pagination": {
+      "rangeOf": "{from}–{to} of {total}",
+      "range": "{from}–{to}",
+      "previous": "Previous page",
+      "next": "Next page"
+    },
+    "roles": {
+      "org_admin": "Administrator",
+      "member": "Member"
+    },
+    "statuses": {
+      "active": "Active",
+      "inactive": "Inactive",
+      "suspended": "Suspended"
+    },
+    "users": {
+      "title": "Users",
+      "subtitle": "Everyone who has signed in to your organization, with their role and last activity.",
+      "search": "Search by name or email",
+      "count": "{count, plural, one {# user} other {# users}}",
+      "keycloakHint": "Accounts, roles and group membership are managed in Keycloak and appear here after the person signs in.",
+      "loading": "Loading users...",
+      "noMatches": "No users match the search",
+      "empty": "No users yet",
+      "emptyHint": "People appear here after their first sign-in.",
+      "columns": {
+        "user": "User",
+        "role": "Role",
+        "status": "Status",
+        "lastActive": "Last active",
+        "created": "Joined",
+        "actions": "Actions"
+      },
+      "never": "Never",
+      "usage": "Usage",
+      "usageAria": "Usage of {user}"
+    },
+    "groups": {
+      "title": "Groups",
+      "subtitle": "Groups combine users so you can give them capabilities and access to resources at once.",
+      "create": "New group",
+      "defaults": {
+        "title": "Default permissions",
+        "description": "Capabilities every member of the organization has, whatever their groups."
+      },
+      "search": "Search groups",
+      "count": "{count, plural, one {# group} other {# groups}}",
+      "loading": "Loading groups...",
+      "noMatches": "No groups match the search",
+      "empty": "No groups yet",
+      "emptyHint": "Groups from Keycloak appear after their members sign in. Create one here to configure it before then.",
+      "columns": {
+        "name": "Name",
+        "source": "Source",
+        "members": "Members",
+        "actions": "Actions"
+      },
+      "local": "Created here",
+      "edit": "Edit",
+      "editAria": "Edit group {group}",
+      "createTitle": "New group",
+      "createHint": "Use the exact name of the Keycloak group: its members join this group when they sign in.",
+      "cancel": "Cancel",
+      "creating": "Creating...",
+      "dialog": {
+        "title": "Group “{group}”",
+        "tabsLabel": "Group settings",
+        "tabs": {
+          "general": "General",
+          "permissions": "Permissions",
+          "members": "Members"
+        },
+        "keycloakTitle": "Synchronized with Keycloak",
+        "keycloakSynced": "Membership was last updated from Keycloak on {date}.",
+        "keycloakLinked": "This group is linked to a Keycloak group.",
+        "name": "Name",
+        "renameBlocked": "A group that has synchronized from Keycloak keeps its Keycloak name.",
+        "saved": "Group saved.",
+        "saving": "Saving...",
+        "save": "Save",
+        "deleteTitle": "Delete group",
+        "deleteManaged": "Manage this group in Keycloak. Local deletion would be undone by synchronization.",
+        "deleteHint": "Members lose the capabilities and access granted through this group immediately.",
+        "delete": "Delete",
+        "deleteConfirmTitle": "Delete the group?",
+        "deleteConfirm": "“{group}” will be deleted and member access will change immediately.",
+        "membersHint": "Members are taken from the Keycloak group “{group}” each time a person signs in.",
+        "membersLoading": "Loading members...",
+        "membersEmpty": "No members yet.",
+        "memberName": "User",
+        "memberRole": "Role"
+      }
+    }
+  },
+  "agentsAdmin": {
+    "list": {
+      "title": "Agents",
+      "subtitle": "Assistants with their own model, instructions, tools and knowledge, offered to users in chat.",
+      "create": "New agent",
+      "search": "Search agents",
+      "loading": "Loading agents...",
+      "noMatches": "No agents match the search",
+      "empty": "No agents yet",
+      "emptyHint": "Create an agent to give users a ready assistant for a specific task.",
+      "columns": {
+        "name": "Agent",
+        "model": "Model",
+        "tools": "Uses",
+        "updated": "Updated",
+        "actions": "Actions"
+      },
+      "toolsSummary": "{skills, plural, one {# skill} other {# skills}} · {bases, plural, one {# base} other {# bases}}",
+      "access": "Access",
+      "accessAria": "Access to {agent}",
+      "edit": "Edit",
+      "editAria": "Edit {agent}",
+      "delete": "Delete",
+      "deleteAria": "Delete {agent}",
+      "deleteTitle": "Delete the agent?",
+      "deleteDescription": "“{agent}” will disappear from chat for everyone. Workflows that use it will stop working."
+    },
+    "editor": {
+      "createTitle": "New agent",
+      "editTitle": "Agent “{agent}”",
+      "subtitle": "Choose the model, write its instructions and connect the tools and knowledge it may use.",
+      "back": "Back to agents",
+      "save": "Save changes",
+      "loading": "Loading agent...",
+      "notFound": "Agent not found."
+    }
+  },
+  "knowledgeAdmin": {
+    "title": "Knowledge bases",
+    "subtitle": "Document collections agents search for answers. Documents are managed in the chat app.",
+    "manageInChat": "Manage documents",
+    "search": "Search knowledge bases",
+    "loading": "Loading knowledge bases...",
+    "noMatches": "No knowledge bases match the search",
+    "empty": "No knowledge bases yet",
+    "emptyHint": "Create knowledge bases and upload documents in the chat app; configure who can use them here.",
+    "columns": {
+      "name": "Knowledge base",
+      "updated": "Updated",
+      "actions": "Actions"
+    },
+    "access": "Access",
+    "accessAria": "Access to {base}",
+    "open": "Open",
+    "openAria": "Open {base} in the chat app"
   }
 }

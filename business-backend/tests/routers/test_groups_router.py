@@ -214,3 +214,40 @@ def test_legacy_group_catalog_route_is_removed() -> None:
     }
 
     assert ("/permission-catalog", frozenset({"GET"})) not in routes
+
+
+@pytest.mark.asyncio
+async def test_group_listing_reports_member_counts(admin_client, db, test_org, test_user):
+    from src.models.group import Group
+    from src.models.user_group import UserGroup
+
+    staffed = Group(org_id=test_org.id, name="staffed")
+    empty = Group(org_id=test_org.id, name="empty")
+    db.add_all([staffed, empty])
+    await db.flush()
+    colleague = User(
+        keycloak_id=uuid.uuid4(),
+        email=f"colleague-{uuid.uuid4().hex[:8]}@example.com",
+        org_id=test_org.id,
+    )
+    db.add(colleague)
+    await db.flush()
+    db.add_all(
+        [
+            UserGroup(user_id=test_user.id, group_id=staffed.id),
+            UserGroup(user_id=colleague.id, group_id=staffed.id),
+        ]
+    )
+    await db.commit()
+
+    response = await admin_client.get("/v1/admin/groups/")
+
+    counts = {g["name"]: g["memberCount"] for g in response.json()["data"]}
+    assert counts == {"empty": 0, "staffed": 2}
+
+
+@pytest.mark.asyncio
+async def test_created_group_starts_without_members(admin_client):
+    response = await admin_client.post("/v1/admin/groups/", json={"name": "fresh"})
+
+    assert response.json()["data"]["memberCount"] == 0

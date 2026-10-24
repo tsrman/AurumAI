@@ -1,113 +1,129 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
-
-import { useAdminAccess } from "@/hooks/useAdminAccess";
-import {
-  useAdminModels,
-  useUpdateOrganizationModelSettings,
-} from "@/hooks/useAdminModels";
-import { useErrorMessage } from "@/lib/errors";
-import { Slider } from "@/components/primitives/Slider";
-import { GrantEditor } from "@/components/authorization/GrantEditor";
+import { useMemo, useState } from "react";
+import { Cpu, KeyRound } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { Badge, Button, Slider, Toggle } from "@/components/primitives";
+import { AccessDialog, type AccessTarget } from "@/components/authorization/AccessDialog";
+import {
+  AdminGate,
+  EmptyState,
+  Notice,
+  PageBody,
+  PageHeader,
+  RowAction,
+  SearchInput,
+  Section,
+  SettingRow,
+  Table,
+  Td,
+  Th,
+  Tr,
+  controlClass,
+} from "@/components/ui";
+import { useAdminModels, useUpdateOrganizationModelSettings } from "@/hooks/useAdminModels";
+import { useErrorMessage } from "@/lib/errors";
+import type { AdminModelSettings } from "@/lib/api";
 
 const DEFAULT_TEMPERATURE_IF_ENABLED = 0.7;
 
-
-
 export default function AdminModelsPage() {
   const t = useTranslations("models");
-  const accessT = useTranslations("access");
+  return (
+    <>
+      <PageHeader title={t("title")} description={t("subtitle")} />
+      <AdminGate>{({ canWrite }) => <ModelsContent canWrite={canWrite} />}</AdminGate>
+    </>
+  );
+}
+
+function ModelsContent({ canWrite }: { canWrite: boolean }) {
+  const t = useTranslations("models");
   const errorMessage = useErrorMessage();
-  const { allowed, canWrite, error: accessError, isLoading: checking } =
-    useAdminAccess();
   const models = useAdminModels();
+  const [access, setAccess] = useState<AccessTarget | null>(null);
+
+  if (models.isLoading) return <p role="status" className="p-6 text-sm text-aurum-text-3">{t("loading")}</p>;
+  if (models.error || !models.data) {
+    return (
+      <PageBody>
+        <Notice tone="error">{models.error ? errorMessage(models.error) : t("loadFailed")}</Notice>
+      </PageBody>
+    );
+  }
+  const settings = models.data.data;
+  const openAccess = (id: string) => setAccess({ resourceType: "model", resourceId: id, label: id });
+
+  return (
+    <PageBody>
+      <GatewayNotice settings={settings} />
+      <DefaultsSection settings={settings} canWrite={canWrite} onGrantAccess={openAccess} />
+      <CatalogSection settings={settings} canWrite={canWrite} onAccess={openAccess} />
+      <AccessDialog target={access} onClose={() => setAccess(null)} />
+    </PageBody>
+  );
+}
+
+function GatewayNotice({ settings }: { settings: AdminModelSettings }) {
+  const t = useTranslations("models");
+  if (settings.gatewayStatus === "available") {
+    return <Notice tone="success">{t("gateway.available")}</Notice>;
+  }
+  if (settings.gatewayStatus === "mock") {
+    return <Notice tone="info" title={t("gateway.mock")}>{t("gatewayMockHint")}</Notice>;
+  }
+  return (
+    <Notice tone="warning" title={t("gateway.unavailable")}>
+      {t("gatewayUnavailableHint")}
+    </Notice>
+  );
+}
+
+function DefaultsSection({
+  settings,
+  canWrite,
+  onGrantAccess,
+}: {
+  settings: AdminModelSettings;
+  canWrite: boolean;
+  onGrantAccess: (id: string) => void;
+}) {
+  const t = useTranslations("models");
+  const errorMessage = useErrorMessage();
   const update = useUpdateOrganizationModelSettings();
-  const savedDefault = models.data?.data.defaultModel ?? null;
+  const savedDefault = settings.defaultModel;
   const savedValue = savedDefault ?? "";
-  const [draft, setDraft] = useState<{
-    baseline: string;
-    value: string;
-  } | null>(null);
-  const selected = draft?.baseline === savedValue ? draft.value : savedValue;
-  const savedTemperature = models.data?.data.defaultTemperature ?? null;
+  const savedTemperature = settings.defaultTemperature;
+  // Drafts remember the saved value they were made against, so a refetch
+  // that changes the saved value discards a stale draft.
+  const [draft, setDraft] = useState<{ baseline: string; value: string } | null>(null);
   const [temperatureDraft, setTemperatureDraft] = useState<{
     baseline: number | null;
     value: number | null;
   } | null>(null);
+  const selected = draft?.baseline === savedValue ? draft.value : savedValue;
   const selectedTemperature =
-    temperatureDraft?.baseline === savedTemperature
-      ? temperatureDraft.value
-      : savedTemperature;
+    temperatureDraft?.baseline === savedTemperature ? temperatureDraft.value : savedTemperature;
 
-  if (checking) return <div className="p-6">{accessT("checking")}</div>;
-  if (!allowed) {
-    return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-6 text-red-700">
-        {accessError || accessT("adminRequired")}
-      </div>
-    );
-  }
-  if (models.isLoading) return <div>{t("loading")}</div>;
-  if (models.error || !models.data) {
-    return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-4 text-red-700">
-        {models.error ? errorMessage(models.error) : t("loadFailed")}
-      </div>
-    );
-  }
-
-  const settings = models.data.data;
-  const isStale =
-    savedDefault !== null &&
-    !settings.models.some((model) => model.id === savedDefault);
-  const changed = selected !== (savedDefault ?? "");
+  const isStale = savedDefault !== null && !settings.models.some((model) => model.id === savedDefault);
+  const changed = selected !== savedValue;
   const selectedDefault = selected || null;
   const selectedModel = settings.models.find((model) => model.id === selectedDefault);
   const requiresGrant = Boolean(selectedModel && !selectedModel.organizationReadable);
   const temperatureChanged = selectedTemperature !== savedTemperature;
-  const unavailableSelection =
-    settings.gatewayStatus === "unavailable" && selectedDefault !== null;
+  const unavailableSelection = settings.gatewayStatus === "unavailable" && selectedDefault !== null;
   const saveDisabled =
-    !canWrite ||
-    (!changed && !temperatureChanged) ||
-    update.isPending ||
-    requiresGrant ||
-    unavailableSelection;
+    !canWrite || (!changed && !temperatureChanged) || update.isPending || requiresGrant || unavailableSelection;
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{t("title")}</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          {t("subtitle")}
-        </p>
-      </div>
-
-      <div className="rounded-md border p-4">
-        <p className="text-sm font-medium">
-          {t(`gateway.${settings.gatewayStatus}`)}
-        </p>
-        {settings.gatewayStatus === "unavailable" ? (
-          <p className="mt-2 text-sm text-yellow-700">
-            {t("gatewayUnavailableHint")}
-          </p>
-        ) : null}
-      </div>
-
-      <div>
-        <label htmlFor="organization-default-model" className="mb-1 block text-sm font-medium">
-          {t("defaultModel")}
-        </label>
+    <Section title={t("defaultsTitle")} description={t("grantsHint")}>
+      <SettingRow label={t("defaultModel")} description={t("defaultModelHint")} htmlFor="organization-default-model">
         <select
           id="organization-default-model"
           value={selected}
-          onChange={(event) =>
-            setDraft({ baseline: savedValue, value: event.target.value })
-          }
-          className="w-full rounded-md border px-3 py-2"
+          disabled={!canWrite}
+          onChange={(event) => setDraft({ baseline: savedValue, value: event.target.value })}
+          className={controlClass}
         >
           <option value="">{t("noDefault")}</option>
           {isStale ? (
@@ -116,106 +132,144 @@ export default function AdminModelsPage() {
             </option>
           ) : null}
           {settings.models.map((model) => (
-            <option
-              key={model.id}
-              value={model.id}
-            >
-              {model.organizationReadable
-                ? model.id
-                : t("requiresAccess", { model: model.id })}
+            <option key={model.id} value={model.id}>
+              {model.organizationReadable ? model.id : t("requiresAccess", { model: model.id })}
             </option>
           ))}
         </select>
-        <p className="mt-2 text-sm text-gray-600">
-          {t("grantsHint")}
-        </p>
         {savedDefault !== null && !settings.defaultAvailable ? (
-          <p className="mt-2 text-sm text-yellow-700">
-            {t("staleDefault")}
-          </p>
+          <p className="mt-2 text-xs text-c-amber-fg">{t("staleDefault")}</p>
         ) : null}
-      </div>
+      </SettingRow>
 
       {requiresGrant && selectedModel ? (
-        <div className="space-y-3">
-          <p role="status" className="text-sm text-yellow-700">{t("grantAccessHint")}</p>
-          <GrantEditor
-            key={selectedModel.id}
-            resourceType="model"
-            resourceId={selectedModel.id}
-            resourceLabel={selectedModel.id}
-          />
-        </div>
+        <Notice tone="warning" className="mb-4">
+          <p>{t("grantAccessHint")}</p>
+          <Button variant="secondary" className="mt-2" onClick={() => onGrantAccess(selectedModel.id)}>
+            <KeyRound className="h-4 w-4" aria-hidden="true" />
+            {t("grantAccess")}
+          </Button>
+        </Notice>
       ) : null}
 
-      <div className="rounded-md border p-4">
-        <label className="mb-1 flex items-center gap-2 text-sm font-medium">
-          <input
-            type="checkbox"
+      <SettingRow label={t("defaultTemperature")} description={t("temperatureHint")}>
+        <div className="flex items-center gap-3">
+          <Toggle
+            aria-label={t("overrideTemperature")}
             checked={selectedTemperature !== null}
-            onChange={(event) =>
+            disabled={!canWrite}
+            onChange={(checked) =>
               setTemperatureDraft({
                 baseline: savedTemperature,
-                value: event.target.checked
-                  ? DEFAULT_TEMPERATURE_IF_ENABLED
-                  : null,
+                value: checked ? DEFAULT_TEMPERATURE_IF_ENABLED : null,
               })
             }
           />
-          {t("defaultTemperature")}
-        </label>
-        {selectedTemperature !== null ? (
-          <div className="mt-2 flex max-w-xs items-center gap-3">
-            <Slider
-              value={selectedTemperature}
-              min={0}
-              max={2}
-              step={0.1}
-              onChange={(value) =>
-                setTemperatureDraft({ baseline: savedTemperature, value })
-              }
-            />
-            <span className="w-10 text-sm text-gray-600">
-              {selectedTemperature.toFixed(1)}
-            </span>
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-gray-600">
-            {t("temperatureUnset")}
-          </p>
-        )}
-      </div>
+          {selectedTemperature !== null ? (
+            <>
+              <Slider
+                aria-label={t("defaultTemperature")}
+                value={selectedTemperature}
+                min={0}
+                max={2}
+                step={0.1}
+                onChange={(value) => setTemperatureDraft({ baseline: savedTemperature, value })}
+              />
+              <span className="w-8 text-right text-sm tabular-nums text-aurum-text-2">
+                {selectedTemperature.toFixed(1)}
+              </span>
+            </>
+          ) : (
+            <span className="text-xs text-aurum-text-3">{t("temperatureUnset")}</span>
+          )}
+        </div>
+      </SettingRow>
 
-      <div className="flex flex-wrap items-center gap-4">
-        <button
-          type="button"
-          disabled={saveDisabled}
-          onClick={() =>
-            update.mutate(
-              {
-                defaultModel: selectedDefault,
-                defaultTemperature: selectedTemperature,
-              },
-              {
-                onSuccess: () => {
-                  setDraft(null);
-                  setTemperatureDraft(null);
-                },
-              }
-            )
-          }
-          className="rounded-md bg-primary-600 px-4 py-2 text-white disabled:opacity-50"
-        >
-          {update.isPending ? t("saving") : t("save")}
-        </button>
-        <Link href="/admin/access" className="text-sm text-primary-700 underline">
-          {t("configureAccess")}
-        </Link>
-      </div>
+      {update.isError ? <Notice tone="error" className="mt-4">{errorMessage(update.error)}</Notice> : null}
 
-      {update.isError ? (
-        <p className="text-sm text-red-600">{errorMessage(update.error)}</p>
+      {canWrite ? (
+        <div className="mt-5 flex justify-end">
+          <Button
+            disabled={saveDisabled}
+            onClick={() =>
+              update.mutate(
+                { defaultModel: selectedDefault, defaultTemperature: selectedTemperature },
+                {
+                  onSuccess: () => {
+                    setDraft(null);
+                    setTemperatureDraft(null);
+                  },
+                }
+              )
+            }
+          >
+            {update.isPending ? t("saving") : t("save")}
+          </Button>
+        </div>
       ) : null}
-    </div>
+    </Section>
+  );
+}
+
+function CatalogSection({
+  settings,
+  canWrite,
+  onAccess,
+}: {
+  settings: AdminModelSettings;
+  canWrite: boolean;
+  onAccess: (id: string) => void;
+}) {
+  const t = useTranslations("models");
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return query ? settings.models.filter((model) => model.id.toLocaleLowerCase().includes(query)) : settings.models;
+  }, [settings.models, search]);
+
+  return (
+    <Section title={t("catalogTitle")} description={t("catalogHint")}>
+      <SearchInput value={search} onChange={setSearch} placeholder={t("search")} className="mb-4" />
+      {filtered.length === 0 ? (
+        <EmptyState icon={<Cpu className="h-8 w-8" aria-hidden="true" />} title={settings.models.length ? t("noMatches") : t("empty")} />
+      ) : (
+        <Table label={t("catalogTitle")} className="shadow-none">
+          <thead>
+            <tr>
+              <Th>{t("columns.model")}</Th>
+              <Th>{t("columns.availability")}</Th>
+              <Th className="text-right">{t("columns.actions")}</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((model) => (
+              <Tr key={model.id}>
+                <Td>
+                  <span className="font-mono text-xs text-aurum-text">{model.id}</span>
+                  {model.isDefault ? <Badge color="amber" className="ml-2">{t("defaultBadge")}</Badge> : null}
+                </Td>
+                <Td>
+                  {model.organizationReadable ? (
+                    <Badge color="green">{t("orgReadable")}</Badge>
+                  ) : (
+                    <Badge color="rose">{t("restricted")}</Badge>
+                  )}
+                </Td>
+                <Td className="text-right">
+                  {canWrite ? (
+                    <RowAction
+                      icon={<KeyRound className="h-4 w-4" aria-hidden="true" />}
+                      label={t("access")}
+                      ariaLabel={t("accessAria", { model: model.id })}
+                      onClick={() => onAccess(model.id)}
+                    />
+                  ) : null}
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </Section>
   );
 }

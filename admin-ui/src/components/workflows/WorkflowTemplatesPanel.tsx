@@ -193,7 +193,7 @@ export function WorkflowTemplatesPanel({
           {t("source")}
           <select
             aria-label={t("source")}
-            className="mt-1 w-full rounded-md border px-3 py-2"
+            className="mt-1 w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
             value={sourceWorkflowId ?? ""}
             disabled
             onChange={() => undefined}
@@ -210,7 +210,7 @@ export function WorkflowTemplatesPanel({
           {t("templateName")}
           <input
             aria-label={t("templateName")}
-            className="mt-1 w-full rounded-md border px-3 py-2"
+            className="mt-1 w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
             value={templateName}
             disabled={busy || conflict}
             onChange={(event) => setTemplateName(event.target.value)}
@@ -219,7 +219,7 @@ export function WorkflowTemplatesPanel({
       </div>
       <button
         type="button"
-        className="rounded-md border px-3 py-2 disabled:opacity-50"
+        className="rounded-btn border border-aurum-border bg-aurum-surface px-3 py-2 text-sm font-medium text-aurum-text-2 hover:bg-aurum-surface-3 disabled:opacity-50"
         disabled={busy || conflict || !sourceReady || !templateName.trim()}
         onClick={() =>
           void run(async () => {
@@ -244,7 +244,7 @@ export function WorkflowTemplatesPanel({
           {t("template")}
           <select
             aria-label={t("template")}
-            className="mt-1 w-full rounded-md border px-3 py-2"
+            className="mt-1 w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
             value={effectiveSelectedId ?? ""}
             disabled={busy || conflict || templates.isLoading}
             onChange={(event) => {
@@ -266,7 +266,7 @@ export function WorkflowTemplatesPanel({
           {t("copyName")}
           <input
             aria-label={t("copyName")}
-            className="mt-1 w-full rounded-md border px-3 py-2"
+            className="mt-1 w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
             value={copyName}
             disabled={busy || conflict || selectedArchived}
             onChange={(event) => setCopyName(event.target.value)}
@@ -277,7 +277,7 @@ export function WorkflowTemplatesPanel({
       <div className="flex flex-wrap gap-3">
         <button
           type="button"
-          className="rounded-md border px-3 py-2 disabled:opacity-50"
+          className="rounded-btn border border-aurum-border bg-aurum-surface px-3 py-2 text-sm font-medium text-aurum-text-2 hover:bg-aurum-surface-3 disabled:opacity-50"
           disabled={selectedWriteDisabled || !sourceReady}
           onClick={() =>
             void run(async () => {
@@ -300,7 +300,7 @@ export function WorkflowTemplatesPanel({
         </button>
         <button
           type="button"
-          className="rounded-md bg-primary-600 px-3 py-2 text-white disabled:opacity-50"
+          className="rounded-btn bg-aurum-accent px-3 py-2 text-sm font-semibold text-aurum-accent-ink disabled:opacity-50"
           disabled={selectedWriteDisabled || !copyName.trim()}
           onClick={() =>
             void run(async () => {
@@ -319,7 +319,7 @@ export function WorkflowTemplatesPanel({
         </button>
         <button
           type="button"
-          className="rounded-md border px-3 py-2 text-red-700 disabled:opacity-50"
+          className="rounded-btn border border-aurum-border bg-aurum-surface px-3 py-2 text-sm font-medium text-aurum-err-fg hover:bg-aurum-surface-3 disabled:opacity-50"
           disabled={selectedWriteDisabled}
           onClick={() =>
             void run(async () => {
@@ -336,11 +336,11 @@ export function WorkflowTemplatesPanel({
         </button>
       </div>
 
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-aurum-err-fg">{error}</p> : null}
       {conflict ? (
         <button
           type="button"
-          className="rounded-md border px-3 py-2"
+          className="rounded-btn border border-aurum-border bg-aurum-surface px-3 py-2 text-sm font-medium text-aurum-text-2 hover:bg-aurum-surface-3"
           disabled={busy}
           onClick={() => void refreshAfterConflict()}
         >
@@ -348,7 +348,7 @@ export function WorkflowTemplatesPanel({
         </button>
       ) : null}
       {copyNotice ? (
-        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        <p className="rounded-input bg-c-amber-bg p-3 text-sm text-c-amber-fg">
           {t("copyNotice")}
         </p>
       ) : null}

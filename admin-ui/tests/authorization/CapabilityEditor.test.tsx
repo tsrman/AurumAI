@@ -64,13 +64,16 @@ beforeEach(() => {
 test("renders the server catalog and reconciles the complete organization capability set", () => {
   render(<OrganizationCapabilityEditor />);
 
-  expect(screen.getByText("Send chat")).toBeInTheDocument();
-  expect(screen.getByText("Start and continue chats")).toBeInTheDocument();
-  expect(screen.getByText("Internet access")).toBeInTheDocument();
+  // Known keys are labelled from the UI catalog, unknown ones by the server.
+  expect(screen.getByText("Send chat messages")).toBeInTheDocument();
+  expect(screen.getByText("Start and continue AI conversations.")).toBeInTheDocument();
+  expect(screen.getByText("Access the web")).toBeInTheDocument();
+  expect(screen.getByText("Use skills")).toBeInTheDocument();
+  expect(screen.getByText("Run assigned skills")).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: /Send chat/ })).toBeChecked();
 
   fireEvent.click(screen.getByRole("checkbox", { name: /Use skills/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /Internet access/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Access the web/ }));
   fireEvent.click(screen.getByRole("button", { name: "Save organization capabilities" }));
 
   expect(putOrganization).toHaveBeenCalledWith(

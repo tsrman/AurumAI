@@ -63,7 +63,7 @@ async function login(page: Page, admin = false, username?: string) {
   await page.locator("#username").fill(account);
   await page.locator("#password").fill(account);
   await page.locator("#kc-login").click();
-  await expect.poll(() => new URL(page.url()).pathname).toBe(admin ? "/admin/agents" : "/chat");
+  await expect.poll(() => new URL(page.url()).pathname).toBe(admin ? "/admin/users" : "/chat");
   await expect.poll(() => page.evaluate(() => Boolean(window.keycloak?.token))).toBe(true);
 }
 

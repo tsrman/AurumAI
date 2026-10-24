@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ConfirmDialog } from "@/components/primitives/ConfirmDialog";
+import { Building2, Plus, User, Users, X } from "lucide-react";
 import { Button } from "@/components/primitives/Button";
+import { IconButton } from "@/components/primitives/IconButton";
+import { Notice, controlClass } from "@/components/ui";
 import {
   useAuthorizationSubjects,
   useReconcileGrants,
@@ -23,6 +26,8 @@ export interface GrantEditorProps {
   resourceId: string;
   resourceLabel: string;
 }
+
+const PRINCIPAL_ICONS = { organization: Building2, group: Users, user: User } as const;
 
 function principalKey(principal: AuthorizationPrincipal | GrantSpec): string {
   return `${principal.principalType}:${principal.principalId}`;
@@ -94,28 +99,76 @@ export function GrantEditor({ resourceType, resourceId, resourceLabel }: GrantEd
   };
 
   return (
-    <section className="rounded-md border border-aurum-border bg-aurum-surface p-4">
-      <h3 className="text-sm font-semibold text-aurum-text">Resource grants</h3>
-      <p className="mt-1 text-xs text-aurum-text-3">{resourceLabel}</p>
-
+    <div className="space-y-5">
       {subjectsQuery.error || grantsQuery.error ? (
-        <p className="mt-3 text-sm text-aurum-err-fg">
-          {errorMessage(subjectsQuery.error ?? grantsQuery.error)}
-        </p>
+        <Notice tone="error">{errorMessage(subjectsQuery.error ?? grantsQuery.error)}</Notice>
       ) : null}
 
       {isLoading ? (
-        <p className="mt-3 text-sm text-aurum-text-3">{t("loading")}</p>
+        <p role="status" className="text-sm text-aurum-text-3">{t("loading")}</p>
       ) : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-[1fr_10rem_auto]">
-        <label className="text-sm text-aurum-text-2">
-          {t("recipient")}
+      <section aria-label={t("current")}>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-aurum-text-3">
+          {t("current")}
+        </h3>
+        {desired.length === 0 && !isLoading ? (
+          <p className="rounded-input border border-dashed border-aurum-border px-3 py-3 text-sm text-aurum-text-3">
+            {t("none")}
+          </p>
+        ) : (
+          <ul className="divide-y divide-aurum-border-soft rounded-input border border-aurum-border">
+            {desired.map((grant) => {
+              const key = principalKey(grant);
+              const subject = subjectByKey.get(key);
+              const label = subject?.label ?? grant.principalId;
+              const Icon = PRINCIPAL_ICONS[grant.principalType];
+              return (
+                <li key={key} className="flex items-center gap-3 px-3 py-2 text-sm">
+                  <Icon className="h-4 w-4 shrink-0 text-aurum-text-3" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-aurum-text">{label}</span>
+                    <span className="block text-xs text-aurum-text-3">{t(`principal.${grant.principalType}`)}</span>
+                  </div>
+                  <select
+                    aria-label={t("permissionAria", { subject: label })}
+                    value={grant.permission}
+                    disabled={isBusy}
+                    onChange={(event) => {
+                      const next = event.target.value as AccessPermission;
+                      setDesired((current) =>
+                        current.map((item) => (principalKey(item) === key ? { ...item, permission: next } : item))
+                      );
+                    }}
+                    className="rounded-input border border-aurum-border bg-aurum-surface px-2 py-1 text-xs text-aurum-text-2"
+                  >
+                    <option value="read">{t("permission.read")}</option>
+                    <option value="write">{t("permission.write")}</option>
+                  </select>
+                  <IconButton
+                    bare
+                    disabled={isBusy}
+                    onClick={() => setDesired((current) => current.filter((item) => principalKey(item) !== key))}
+                    aria-label={t("removeAria", { subject: label })}
+                    className="h-8 w-8 text-aurum-text-3 hover:text-aurum-err-fg disabled:opacity-50"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </IconButton>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section aria-label={t("addTitle")} className="rounded-input bg-aurum-surface-2 p-3">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-aurum-text-3">{t("addTitle")}</h3>
+        <div className="grid gap-2 sm:grid-cols-[1fr_13rem_auto]">
           <select
             aria-label={t("recipientAria")}
             value={selectedKey}
             onChange={(event) => setSelectedKey(event.target.value)}
-            className="mt-1 block w-full rounded-md border border-aurum-border bg-aurum-surface px-3 py-2"
+            className={controlClass}
           >
             {subjects.map((subject) => (
               <option key={principalKey(subject)} value={principalKey(subject)}>
@@ -123,65 +176,27 @@ export function GrantEditor({ resourceType, resourceId, resourceLabel }: GrantEd
               </option>
             ))}
           </select>
-        </label>
-        <label className="text-sm text-aurum-text-2">
-          {t("access")}
           <select
             aria-label={t("accessAria")}
             value={permission}
             onChange={(event) => setPermission(event.target.value as AccessPermission)}
-            className="mt-1 block w-full rounded-md border border-aurum-border bg-aurum-surface px-3 py-2"
+            className={controlClass}
           >
-            <option value="read">read</option>
-            <option value="write">write</option>
+            <option value="read">{t("permission.read")}</option>
+            <option value="write">{t("permission.write")}</option>
           </select>
-        </label>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={addGrant}
-          disabled={isBusy || !selectedSubject}
-        >
-          {t("add")}
-        </Button>
-      </div>
+          <Button type="button" variant="secondary" onClick={addGrant} disabled={isBusy || !selectedSubject}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            {t("add")}
+          </Button>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-aurum-text-3">{t("hint")}</p>
+      </section>
 
-      <ul className="mt-4 space-y-2">
-        {desired.map((grant) => {
-          const key = principalKey(grant);
-          const subject = subjectByKey.get(key);
-          return (
-            <li key={key} className="flex items-center justify-between rounded bg-aurum-surface-2 px-3 py-2 text-sm">
-              <div>
-                <span className="font-medium text-aurum-text">
-                  {subject?.label ?? grant.principalId}
-                </span>{" "}
-                <span className="text-aurum-text-3">· {grant.permission}</span>
-              </div>
-              <button
-                type="button"
-                disabled={isBusy}
-                onClick={() => setDesired((current) => current.filter((item) => principalKey(item) !== key))}
-                className="text-aurum-err-fg disabled:opacity-50"
-                aria-label={t("removeAria", { subject: subject?.label ?? grant.principalId })}
-              >
-                {t("remove")}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      {reconcile.isError ? <Notice tone="error">{errorMessage(reconcile.error)}</Notice> : null}
 
-      {reconcile.isError ? (
-        <p className="mt-3 text-sm text-aurum-err-fg">{errorMessage(reconcile.error)}</p>
-      ) : null}
-
-      <div className="mt-4 flex justify-end">
-        <Button
-          type="button"
-          disabled={isBusy || reconcile.isPending}
-          onClick={() => setConfirming(true)}
-        >
+      <div className="flex justify-end">
+        <Button type="button" disabled={isBusy || reconcile.isPending} onClick={() => setConfirming(true)}>
           {reconcile.isPending ? t("saving") : t("save")}
         </Button>
       </div>
@@ -199,6 +214,6 @@ export function GrantEditor({ resourceType, resourceId, resourceLabel }: GrantEd
         onConfirm={confirmSave}
         onCancel={() => setConfirming(false)}
       />
-    </section>
+    </div>
   );
 }

@@ -21,6 +21,9 @@ export interface ConstructorFormProps {
   save: () => Promise<boolean>;
   isSaving: boolean;
   saveError: string | null;
+  /** Defaults to the create label. */
+  submitLabel?: string;
+  onCancel?: () => void;
 }
 
 export function ConstructorForm({
@@ -35,6 +38,8 @@ export function ConstructorForm({
   save,
   isSaving,
   saveError,
+  submitLabel,
+  onCancel,
 }: ConstructorFormProps) {
   const t = useTranslations("constructor.form");
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -84,6 +89,7 @@ export function ConstructorForm({
       <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
         <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{t("tools")}</h3>
         <div className="space-y-4">
+          {skills.length === 0 ? <p className="text-xs text-aurum-text-3">{t("noTools")}</p> : null}
           {skills.map((skill) => (
             <ToolToggle
               key={skill.id}
@@ -99,6 +105,7 @@ export function ConstructorForm({
       <section className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
         <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{t("knowledgeBases")}</h3>
         <div className="space-y-4">
+          {knowledgeBases.length === 0 ? <p className="text-xs text-aurum-text-3">{t("noKnowledgeBases")}</p> : null}
           {knowledgeBases.map((kb) => (
             <BaseToggle
               key={kb.id}
@@ -145,14 +152,19 @@ export function ConstructorForm({
       </section>
 
       {saveError ? (
-        <div className="rounded-card border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+        <div role="alert" className="rounded-card bg-aurum-err-bg p-4 text-sm text-aurum-err-fg">
           {saveError}
         </div>
       ) : null}
 
       <div className="flex items-center justify-end gap-3 pt-2">
+        {onCancel ? (
+          <Button variant="secondary" onClick={onCancel}>
+            {t("cancel")}
+          </Button>
+        ) : null}
         <Button type="submit" disabled={!isValid || isSaving}>
-          {isSaving ? t("saving") : t("create")}
+          {isSaving ? t("saving") : (submitLabel ?? t("create"))}
         </Button>
       </div>
     </form>

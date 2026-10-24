@@ -1,108 +1,137 @@
 "use client";
 
-import { useState } from "react";
-import { Plus } from "lucide-react";
-import { useAdminAccess } from "@/hooks/useAdminAccess";
-import { useSkills, useDeleteSkill } from "@/hooks/useSkills";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Bot, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
+import { ConfirmDialog } from "@/components/primitives";
+import { AccessDialog, type AccessTarget } from "@/components/authorization/AccessDialog";
+import { AdminGate, EmptyState, Notice, PageBody, PageHeader, RowAction, RowActions, SearchInput, Table, Td, Th, Tr } from "@/components/ui";
+import { formatDate } from "@/components/people/format";
+import { useAgentDefinitions, useDeleteAgentDefinition } from "@/hooks/useAgentDefinitions";
 import { useErrorMessage } from "@/lib/errors";
-import { Button, ConfirmDialog } from "@/components/primitives";
-import { SkillFormDialog } from "@/components/aurum/admin/SkillFormDialog";
-import { SkillsTable } from "@/components/aurum/admin/SkillsTable";
-import type { Skill } from "@/lib/api";
-import { useTranslations } from "next-intl";
+import type { AgentDefinition } from "@/lib/api";
+
+const newAgentLink =
+  "inline-flex items-center justify-center gap-2 rounded-btn bg-aurum-accent px-4 py-2 font-semibold text-aurum-accent-ink shadow-card transition hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-aurum-accent/50";
 
 export default function AdminAgentsPage() {
-  const t = useTranslations("agents.page");
-  const accessT = useTranslations("access");
-  const accessPageT = useTranslations("access.page");
+  return <AdminGate>{({ canWrite }) => <AgentsContent canWrite={canWrite} />}</AdminGate>;
+}
+
+function AgentsContent({ canWrite }: { canWrite: boolean }) {
+  const t = useTranslations("agentsAdmin.list");
+  const locale = useLocale();
+  const router = useRouter();
   const errorMessage = useErrorMessage();
-  const { allowed, canWrite, error: accessError, isLoading: checking } = useAdminAccess();
-  const { data, isLoading, error } = useSkills();
-  const remove = useDeleteSkill();
+  const agents = useAgentDefinitions();
+  const remove = useDeleteAgentDefinition();
+  const [search, setSearch] = useState("");
+  const [deleting, setDeleting] = useState<AgentDefinition | null>(null);
+  const [access, setAccess] = useState<AccessTarget | null>(null);
+  const rows = useMemo(() => agents.data?.data ?? [], [agents.data]);
+  const filtered = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return query
+      ? rows.filter((agent) => `${agent.name}\n${agent.description ?? ""}\n${agent.modelId}`.toLocaleLowerCase().includes(query))
+      : rows;
+  }, [rows, search]);
 
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
-  const [deletingSkill, setDeletingSkill] = useState<Skill | null>(null);
-
-  if (checking) {
-    return <div className="p-6 text-sm text-aurum-text-3">{accessT("checking")}</div>;
-  }
-
-  if (!allowed) {
-    return (
-      <div className="m-6 rounded-card border border-aurum-err-fg/30 bg-aurum-err-bg p-6 text-sm text-aurum-err-fg">
-        {accessError || accessPageT("adminWriteRequired")}
-      </div>
-    );
-  }
-
-  const skills = data?.data ?? [];
-
-  const openCreate = () => {
-    setEditingSkill(null);
-    setFormOpen(true);
-  };
-
-  const openEdit = (skill: Skill) => {
-    setEditingSkill(skill);
-    setFormOpen(true);
-  };
-
-  const confirmDelete = () => {
-    if (!deletingSkill) return;
-    remove.mutate(deletingSkill.id, { onSuccess: () => setDeletingSkill(null) });
-  };
+  const newAgent = canWrite ? (
+    <Link href="/admin/agents/new" className={newAgentLink}>
+      <Plus className="h-4 w-4" aria-hidden="true" />
+      {t("create")}
+    </Link>
+  ) : null;
 
   return (
-    <div className="flex h-full flex-1 flex-col">
-      <header className="flex items-center justify-between border-b border-aurum-border-soft bg-aurum-surface px-6 py-4">
-        <div>
-          <h1 className="text-base font-semibold text-aurum-text">{t("title")}</h1>
-          <p className="text-sm text-aurum-text-3">
-            {t("subtitle")}
-          </p>
-        </div>
-        {canWrite && (
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            {t("addSkill")}
-          </Button>
-        )}
-      </header>
+    <>
+      <PageHeader title={t("title")} description={t("subtitle")} actions={newAgent} />
+      <PageBody>
+        <SearchInput value={search} onChange={setSearch} placeholder={t("search")} />
 
-      <main className="flex-1 overflow-y-auto px-6 py-6">
-        {error && !isLoading && (
-          <div className="mb-6 rounded-card border border-aurum-err-fg/30 bg-aurum-err-bg p-4 text-sm text-aurum-err-fg">
-            {errorMessage(error)}
-          </div>
-        )}
+        {agents.error ? <Notice tone="error">{errorMessage(agents.error)}</Notice> : null}
 
-        {isLoading ? (
-          <div className="text-sm text-aurum-text-3">{t("loading")}</div>
-        ) : (
-          <SkillsTable
-            skills={skills}
-            onEdit={openEdit}
-            onDelete={setDeletingSkill}
-            deletingId={remove.isPending ? deletingSkill?.id : null}
-            readOnly={!canWrite}
+        {agents.isLoading ? (
+          <p role="status" className="text-sm text-aurum-text-3">{t("loading")}</p>
+        ) : filtered.length === 0 && !agents.error ? (
+          <EmptyState
+            icon={<Bot className="h-8 w-8" aria-hidden="true" />}
+            title={rows.length ? t("noMatches") : t("empty")}
+            description={rows.length ? undefined : t("emptyHint")}
+            action={rows.length ? undefined : newAgent}
           />
-        )}
-      </main>
+        ) : filtered.length > 0 ? (
+          <Table label={t("title")}>
+            <thead>
+              <tr>
+                <Th>{t("columns.name")}</Th>
+                <Th>{t("columns.model")}</Th>
+                <Th>{t("columns.tools")}</Th>
+                <Th>{t("columns.updated")}</Th>
+                <Th className="text-right">{t("columns.actions")}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((agent) => {
+                const writable = canWrite && agent.canWrite;
+                return (
+                  <Tr key={agent.id} onClick={writable ? () => router.push(`/admin/agents/${agent.id}`) : undefined}>
+                    <Td>
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-btn bg-aurum-accent-soft text-aurum-text">
+                          <Bot className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-aurum-text">{agent.name}</p>
+                          {agent.description ? <p className="line-clamp-1 text-xs text-aurum-text-3">{agent.description}</p> : null}
+                        </div>
+                      </div>
+                    </Td>
+                    <Td className="font-mono text-xs">{agent.modelId}</Td>
+                    <Td className="whitespace-nowrap text-xs">
+                      {t("toolsSummary", { skills: agent.skillIds.length, bases: agent.knowledgeBaseIds.length })}
+                    </Td>
+                    <Td className="whitespace-nowrap">{formatDate(agent.updatedAt, locale)}</Td>
+                    <Td>
+                      <RowActions>
+                        {canWrite ? (
+                          <RowAction icon={<KeyRound className="h-4 w-4" aria-hidden="true" />} label={t("access")} ariaLabel={t("accessAria", { agent: agent.name })} onClick={() => setAccess({ resourceType: "agent_definition", resourceId: agent.id, label: agent.name })} />
+                        ) : null}
+                        {writable ? (
+                          <>
+                            <RowAction icon={<Pencil className="h-4 w-4" aria-hidden="true" />} label={t("edit")} ariaLabel={t("editAria", { agent: agent.name })} onClick={() => router.push(`/admin/agents/${agent.id}`)} />
+                            <RowAction tone="danger" icon={<Trash2 className="h-4 w-4" aria-hidden="true" />} label={t("delete")} ariaLabel={t("deleteAria", { agent: agent.name })} onClick={() => setDeleting(agent)} />
+                          </>
+                        ) : null}
+                      </RowActions>
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        ) : null}
+      </PageBody>
 
-      <SkillFormDialog open={formOpen} skill={editingSkill} onClose={() => setFormOpen(false)} />
-
+      <AccessDialog target={access} onClose={() => setAccess(null)} />
       <ConfirmDialog
-        open={deletingSkill != null}
+        open={deleting !== null}
         title={t("deleteTitle")}
         description={
-          deletingSkill ? t("deleteDescription", { skill: deletingSkill.name }) : undefined
+          remove.isError ? errorMessage(remove.error) : deleting ? t("deleteDescription", { agent: deleting.name }) : undefined
         }
         confirmLabel={t("delete")}
         destructive
-        onConfirm={confirmDelete}
-        onCancel={() => setDeletingSkill(null)}
+        onCancel={() => {
+          remove.reset();
+          setDeleting(null);
+        }}
+        onConfirm={() => {
+          if (deleting) remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) });
+        }}
       />
-    </div>
+    </>
   );
 }

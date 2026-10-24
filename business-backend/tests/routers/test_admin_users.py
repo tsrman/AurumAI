@@ -140,3 +140,84 @@ async def test_admin_users_validates_query_bounds(
         response = await client.get(f"/v1/admin/users?{query}")
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_users_filters_by_group_membership(
+    db: AsyncSession,
+    test_org: Organization,
+    test_user: User,
+) -> None:
+    from src.models.group import Group
+    from src.models.user_group import UserGroup
+
+    group = Group(org_id=test_org.id, name="members-filter")
+    db.add(group)
+    outsider = User(
+        keycloak_id=uuid.uuid4(),
+        email=f"outsider-{uuid.uuid4().hex[:8]}@example.com",
+        org_id=test_org.id,
+    )
+    db.add(outsider)
+    await db.flush()
+    db.add(UserGroup(user_id=test_user.id, group_id=group.id))
+    await db.commit()
+
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=_app(db, test_org, test_user)),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(f"/v1/admin/users?groupId={group.id}")
+        unknown = await client.get(f"/v1/admin/users?groupId={uuid.uuid4()}")
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["data"]] == [str(test_user.id)]
+    assert response.json()["pagination"]["total"] == 1
+    assert unknown.status_code == 200
+    assert unknown.json()["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_users_group_filter_ignores_foreign_groups(
+    db: AsyncSession,
+    test_org: Organization,
+    test_user: User,
+) -> None:
+    from src.models.group import Group
+    from src.models.user_group import UserGroup
+
+    foreign_org = Organization(
+        name="Foreign group org",
+        slug=f"foreign-group-{uuid.uuid4().hex}",
+    )
+    db.add(foreign_org)
+    await db.flush()
+    foreign_group = Group(org_id=foreign_org.id, name="foreign-members")
+    db.add(foreign_group)
+    await db.flush()
+    db.add(UserGroup(user_id=test_user.id, group_id=foreign_group.id))
+    await db.commit()
+
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=_app(db, test_org, test_user)),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(f"/v1/admin/users?groupId={foreign_group.id}")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_users_rejects_malformed_group_id(
+    db: AsyncSession,
+    test_org: Organization,
+    test_user: User,
+) -> None:
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=_app(db, test_org, test_user)),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/v1/admin/users?groupId=not-a-uuid")
+
+    assert response.status_code == 422

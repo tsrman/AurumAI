@@ -165,16 +165,16 @@ test("the table selects only an active saved workflow as the template source", a
   const user = userEvent.setup();
   render(<AdminWorkflowsPage />);
 
-  await user.click(screen.getByRole("button", { name: "Saved templates" }));
+  await user.click(screen.getByRole("tab", { name: "Saved templates" }));
   expect(screen.getByLabelText("Source workflow")).toHaveValue("");
-  await user.click(screen.getByRole("button", { name: "My workflows" }));
+  await user.click(screen.getByRole("tab", { name: "My workflows" }));
   await user.click(
     within(screen.getByRole("row", { name: /Active/ })).getByRole("button", {
       name: "Save as template",
     }),
   );
   expect(screen.getByLabelText("Source workflow")).toHaveValue("active");
-  await user.click(screen.getByRole("button", { name: "My workflows" }));
+  await user.click(screen.getByRole("tab", { name: "My workflows" }));
   expect(
     within(screen.getByRole("row", { name: /Archived/ })).queryByRole(
       "button",
@@ -213,7 +213,7 @@ test("a created copy opens in the editor, reloads agents, and preserves HITL", a
   const user = userEvent.setup();
   render(<AdminWorkflowsPage />);
 
-  await user.click(screen.getByRole("button", { name: "Saved templates" }));
+  await user.click(screen.getByRole("tab", { name: "Saved templates" }));
   await user.selectOptions(
     screen.getByLabelText("Workflow template"),
     "template-1",
@@ -249,7 +249,7 @@ test("starts with a task overview and previews examples without creating resourc
   render(<AdminWorkflowsPage />);
   expect(screen.getByRole("button", { name: "Create workflow" })).toBeVisible();
   expect(screen.queryByLabelText("Workflow name")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Examples" }));
+  await user.click(screen.getByRole("tab", { name: "Examples" }));
   await user.click(
     screen.getByRole("button", { name: "Preview Customer support reply" }),
   );
@@ -272,10 +272,10 @@ test("keeps a dirty draft until navigation is explicitly confirmed", async () =>
   render(<AdminWorkflowsPage />);
   await user.click(screen.getByRole("button", { name: "Create workflow" }));
   await user.type(screen.getByLabelText("Workflow name"), "Keep this draft");
-  await user.click(screen.getByRole("button", { name: "Examples" }));
+  await user.click(screen.getByRole("tab", { name: "Examples" }));
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
   expect(screen.getByLabelText("Workflow name")).toHaveValue("Keep this draft");
-  await user.click(screen.getByRole("button", { name: "Examples" }));
+  await user.click(screen.getByRole("tab", { name: "Examples" }));
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   expect(screen.queryByLabelText("Workflow name")).not.toBeInTheDocument();
   expect(
@@ -292,7 +292,7 @@ test("loads an example locally and requires explicit agent assignment before sav
   };
   const user = userEvent.setup();
   render(<AdminWorkflowsPage />);
-  await user.click(screen.getByRole("button", { name: "Examples" }));
+  await user.click(screen.getByRole("tab", { name: "Examples" }));
   await user.click(
     screen.getByRole("button", { name: "Preview Workshop campaign plan" }),
   );
@@ -338,7 +338,7 @@ test("read-only administrators can explore examples without mutation controls", 
   expect(
     screen.queryByRole("button", { name: "Edit" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Examples" }));
+  await user.click(screen.getByRole("tab", { name: "Examples" }));
   await user.click(
     screen.getByRole("button", {
       name: "Preview Technical incident assessment",

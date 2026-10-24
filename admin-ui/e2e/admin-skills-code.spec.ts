@@ -3,17 +3,17 @@ import { login } from "./helpers/auth";
 import { bundleWithoutSkillMd, greetSkillBundle } from "./helpers/skillBundle";
 
 /**
- * /admin/agents for type="code" skills — real end-to-end against the real
+ * /admin/skills for type="code" skills — real end-to-end against the real
  * POST/PUT /v1/skills/code routes (business-backend/src/routers/
  * skill_bundles.py) and real MinIO storage, same "no stubbing" approach as
- * admin-agents.spec.ts. Uploads real .zip bundles built by
+ * admin-skills.spec.ts. Uploads real .zip bundles built by
  * helpers/skillBundle.ts, not fake bytes, since the backend actually parses
  * them with zipfile.
  */
 test.describe("Admin: code skills (bundle upload)", () => {
   test.beforeEach(async ({ page }) => {
     await login(page, "admin", "admin");
-    await page.goto("/admin/agents");
+    await page.goto("/admin/skills");
     await expect(page.getByText(/access denied/i)).not.toBeVisible();
   });
 
@@ -22,7 +22,7 @@ test.describe("Admin: code skills (bundle upload)", () => {
     const zip = greetSkillBundle(skillName);
 
     const dialog = page.getByRole("dialog");
-    await page.getByRole("button", { name: "Add skill" }).click();
+    await page.getByRole("button", { name: "Add skill" }).first().click();
     await dialog.getByLabel("Name", { exact: true }).fill(skillName);
     await dialog.getByRole("button", { name: "code", exact: true }).click();
 
@@ -35,13 +35,13 @@ test.describe("Admin: code skills (bundle upload)", () => {
 
     const row = page.locator("tr", { hasText: skillName });
     await expect(row).toBeVisible();
-    await expect(row.getByText("code", { exact: true })).toBeVisible();
-    // "Endpoint / Activity" column falls back to bundleSkillName, which
+    await expect(row.getByText("Code", { exact: true })).toBeVisible();
+    // "Endpoint or activity" column falls back to bundleSkillName, which
     // comes from the uploaded SKILL.md's frontmatter `name:`, not the
     // display name typed into the form.
     await expect(row.getByText(skillName)).toHaveCount(2);
 
-    await row.getByRole("button", { name: "Delete", exact: true }).click();
+    await row.getByRole("button", { name: `Delete ${skillName}`, exact: true }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();
     await expect(page.locator("tr", { hasText: skillName })).toHaveCount(0);
   });
@@ -51,7 +51,7 @@ test.describe("Admin: code skills (bundle upload)", () => {
     const zip = bundleWithoutSkillMd();
 
     const dialog = page.getByRole("dialog");
-    await page.getByRole("button", { name: "Add skill" }).click();
+    await page.getByRole("button", { name: "Add skill" }).first().click();
     await dialog.getByLabel("Name", { exact: true }).fill(skillName);
     await dialog.getByRole("button", { name: "code", exact: true }).click();
     await dialog
@@ -73,7 +73,7 @@ test.describe("Admin: code skills (bundle upload)", () => {
     const skillName = `e2e-replace-bundle-${Date.now()}`;
     const dialog = page.getByRole("dialog");
 
-    await page.getByRole("button", { name: "Add skill" }).click();
+    await page.getByRole("button", { name: "Add skill" }).first().click();
     await dialog.getByLabel("Name", { exact: true }).fill(skillName);
     await dialog.getByRole("button", { name: "code", exact: true }).click();
     await dialog
@@ -89,7 +89,7 @@ test.describe("Admin: code skills (bundle upload)", () => {
     const row = page.locator("tr", { hasText: skillName });
     await expect(row.getByText(`${skillName}-v1`)).toBeVisible();
 
-    await row.getByRole("button", { name: "Edit", exact: true }).click();
+    await row.getByRole("button", { name: /^Edit / }).click();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText(`${skillName}-v1`)).toBeVisible();
 
@@ -106,7 +106,7 @@ test.describe("Admin: code skills (bundle upload)", () => {
     const updatedRow = page.locator("tr", { hasText: skillName });
     await expect(updatedRow.getByText(`${skillName}-v2`)).toBeVisible();
 
-    await updatedRow.getByRole("button", { name: "Delete", exact: true }).click();
+    await updatedRow.getByRole("button", { name: /^Delete / }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();
     await expect(page.locator("tr", { hasText: skillName })).toHaveCount(0);
   });

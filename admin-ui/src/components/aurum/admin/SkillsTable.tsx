@@ -1,16 +1,17 @@
 "use client";
 
-import { Bot, FileArchive, Pencil, Trash2, Wrench, Zap } from "lucide-react";
+import { Bot, FileArchive, KeyRound, Pencil, Trash2, Wrench, Zap } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/primitives/Badge";
-import { IconButton } from "@/components/primitives/IconButton";
+import { RowAction, RowActions, Table, Td, Th, Tr } from "@/components/ui";
 import type { BadgeColor } from "@/types/aurum";
 import type { Skill } from "@/lib/api";
-import { useTranslations } from "next-intl";
 
 export interface SkillsTableProps {
   skills: Skill[];
   onEdit: (skill: Skill) => void;
   onDelete: (skill: Skill) => void;
+  onAccess: (skill: Skill) => void;
   deletingId?: string | null;
   /** admin:read-only viewer — hides edit/delete controls. */
   readOnly?: boolean;
@@ -23,102 +24,53 @@ const TYPE_STYLE: Record<Skill["type"], { color: BadgeColor; Icon: typeof Bot }>
   code: { color: "amber", Icon: FileArchive },
 };
 
-export function SkillsTable({
-  skills,
-  onEdit,
-  onDelete,
-  deletingId,
-  readOnly,
-}: SkillsTableProps) {
+export function SkillsTable({ skills, onEdit, onDelete, onAccess, deletingId, readOnly }: SkillsTableProps) {
   const t = useTranslations("skills.table");
   return (
-    <div className="overflow-hidden rounded-card border border-aurum-border bg-aurum-surface shadow-card">
-      <table className="w-full table-fixed">
-        <thead className="bg-aurum-surface-2">
-          <tr>
-            <th
-              scope="col"
-              className="w-[38%] px-4 py-2.5 text-left text-xs font-semibold text-aurum-text-3"
-            >
-              {t("name")}
-            </th>
-            <th
-              scope="col"
-              className="w-24 px-4 py-2.5 text-left text-xs font-semibold text-aurum-text-3"
-            >
-              {t("type")}
-            </th>
-            <th
-              scope="col"
-              className="w-[32%] px-4 py-2.5 text-left text-xs font-semibold text-aurum-text-3"
-            >
-              Endpoint / Activity
-            </th>
-            <th
-              scope="col"
-              className="w-20 px-4 py-2.5 text-left text-xs font-semibold text-aurum-text-3"
-            >
-              {t("actions")}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {skills.length > 0 ? (
-            skills.map((skill) => {
-              const { color, Icon } = TYPE_STYLE[skill.type];
-              return (
-                <tr key={skill.id} className="border-b border-aurum-border-soft last:border-b-0">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Icon className="h-4 w-4 shrink-0 text-aurum-text-3" aria-hidden="true" />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-aurum-text">{skill.name}</p>
-                        {skill.description && (
-                          <p className="truncate text-xs text-aurum-text-3">{skill.description}</p>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge color={color}>{skill.type}</Badge>
-                  </td>
-                  <td className="truncate px-4 py-3 text-sm text-aurum-text-2">
-                    {skill.mcpEndpoint ||
-                      skill.workflowType ||
-                      skill.activityName ||
-                      skill.bundleSkillName ||
-                      "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    {readOnly ? (
-                      "—"
-                    ) : (
-                      <div className="flex gap-2">
-                        <IconButton aria-label={t("edit")} onClick={() => onEdit(skill)}>
-                          <Pencil className="h-4 w-4" aria-hidden="true" />
-                        </IconButton>
-                        <IconButton
-                          aria-label={t("delete")}
-                          onClick={() => onDelete(skill)}
-                          disabled={deletingId === skill.id}
-                        >
-                          <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        </IconButton>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })
-          ) : (
-            <tr>
-              <td colSpan={4} className="px-4 py-8 text-center text-sm text-aurum-text-3">
-                {t("empty")}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+    <Table label={t("label")}>
+      <thead>
+        <tr>
+          <Th>{t("name")}</Th>
+          <Th>{t("type")}</Th>
+          <Th>{t("target")}</Th>
+          <Th className="text-right">{t("actions")}</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {skills.map((skill) => {
+          const { color, Icon } = TYPE_STYLE[skill.type];
+          return (
+            <Tr key={skill.id}>
+              <Td>
+                <div className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-btn bg-aurum-surface-3 text-aurum-text-2">
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-aurum-text">{skill.name}</p>
+                    {skill.description && <p className="line-clamp-1 text-xs text-aurum-text-3">{skill.description}</p>}
+                  </div>
+                </div>
+              </Td>
+              <Td><Badge color={color}>{t(`types.${skill.type}`)}</Badge></Td>
+              <Td className="max-w-[16rem] truncate font-mono text-xs">
+                {skill.mcpEndpoint || skill.workflowType || skill.activityName || skill.bundleSkillName || "—"}
+              </Td>
+              <Td>
+                {readOnly ? (
+                  <span className="block text-right">—</span>
+                ) : (
+                  <RowActions>
+                    <RowAction icon={<KeyRound className="h-4 w-4" aria-hidden="true" />} label={t("access")} ariaLabel={t("accessAria", { skill: skill.name })} onClick={() => onAccess(skill)} />
+                    <RowAction icon={<Pencil className="h-4 w-4" aria-hidden="true" />} label={t("edit")} ariaLabel={t("editAria", { skill: skill.name })} onClick={() => onEdit(skill)} />
+                    <RowAction tone="danger" icon={<Trash2 className="h-4 w-4" aria-hidden="true" />} label={t("delete")} ariaLabel={t("deleteAria", { skill: skill.name })} onClick={() => onDelete(skill)} disabled={deletingId === skill.id} />
+                  </RowActions>
+                )}
+              </Td>
+            </Tr>
+          );
+        })}
+      </tbody>
+    </Table>
   );
 }

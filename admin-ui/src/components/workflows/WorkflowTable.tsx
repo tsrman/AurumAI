@@ -1,5 +1,8 @@
-import type { WorkflowListItem } from "@/lib/api";
+import { Archive, BookmarkPlus, GitBranch, KeyRound, Pencil } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { Badge } from "@/components/primitives/Badge";
+import { RowAction, RowActions, Table, Td, Th, Tr } from "@/components/ui";
+import type { WorkflowListItem } from "@/lib/api";
 
 export function WorkflowTable({
   workflows,
@@ -17,80 +20,56 @@ export function WorkflowTable({
   onSaveTemplate?: (id: string) => void;
 }) {
   const t = useTranslations("workflows.table");
-  const action =
-    "rounded-btn border border-aurum-border px-3 py-1.5 text-xs font-medium hover:bg-aurum-surface-2";
+  const icon = "h-4 w-4";
   return (
-    <div className="min-w-0 overflow-x-auto rounded-card border border-aurum-border bg-aurum-surface">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-aurum-surface-2 text-xs text-aurum-text-2">
-          <tr>
-            <th className="p-4">{t("name")}</th>
-            <th className="p-4">{t("version")}</th>
-            <th className="p-4">{t("status")}</th>
-            <th className="p-4">{t("actions")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {workflows.map((item) => (
-            <tr key={item.id} className="border-t border-aurum-border">
-              <td className="max-w-72 break-words p-4">
-                <p className="font-medium">{item.name}</p>
-                {item.description ? (
-                  <p className="mt-1 text-xs text-aurum-text-2">
-                    {item.description}
-                  </p>
-                ) : null}
-              </td>
-              <td className="p-4 font-mono text-xs">{item.version}</td>
-              <td className="p-4">
-                <span className="rounded-chip bg-aurum-surface-3 px-2 py-1 text-xs">
-                  {t(item.status === "active" ? "active" : "archived")}
+    <Table label={t("label")}>
+      <thead>
+        <tr>
+          <Th>{t("name")}</Th>
+          <Th>{t("version")}</Th>
+          <Th>{t("status")}</Th>
+          <Th className="text-right">{t("actions")}</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {workflows.map((item) => (
+          <Tr key={item.id}>
+            <Td className="max-w-80">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-btn bg-c-violet-bg text-c-violet-fg">
+                  <GitBranch className={icon} aria-hidden="true" />
                 </span>
-              </td>
-              <td className="p-4">
-                <div className="flex flex-wrap gap-2">
-                  {canWrite ? (
-                    <>
-                      <button
-                        type="button"
-                        className={action}
-                        onClick={() => onEdit(item.id)}
-                      >
-                        {t("edit")}
-                      </button>
-                      <button
-                        type="button"
-                        className={action}
-                        onClick={() => onGrants(item)}
-                      >
-                        {t("access")}
-                      </button>
-                      {item.status === "active" && onSaveTemplate ? (
-                        <button
-                          type="button"
-                          className={action}
-                          onClick={() => onSaveTemplate(item.id)}
-                        >
-                          {t("saveTemplate")}
-                        </button>
-                      ) : null}
-                      {item.status === "active" ? (
-                        <button
-                          type="button"
-                          className={`${action} text-aurum-err-fg`}
-                          onClick={() => onArchive(item.id)}
-                        >
-                          {t("archive")}
-                        </button>
-                      ) : null}
-                    </>
+                <div className="min-w-0">
+                  <p className="break-words font-medium text-aurum-text">{item.name}</p>
+                  {item.description ? (
+                    <p className="mt-0.5 line-clamp-2 text-xs text-aurum-text-3">{item.description}</p>
                   ) : null}
                 </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+              </div>
+            </Td>
+            <Td className="font-mono text-xs">{item.version}</Td>
+            <Td>
+              <Badge color={item.status === "active" ? "green" : "rose"}>
+                {t(item.status === "active" ? "active" : "archived")}
+              </Badge>
+            </Td>
+            <Td>
+              {canWrite ? (
+                <RowActions>
+                  <RowAction icon={<Pencil className={icon} aria-hidden="true" />} label={t("edit")} onClick={() => onEdit(item.id)} />
+                  <RowAction icon={<KeyRound className={icon} aria-hidden="true" />} label={t("access")} onClick={() => onGrants(item)} />
+                  {item.status === "active" && onSaveTemplate ? (
+                    <RowAction icon={<BookmarkPlus className={icon} aria-hidden="true" />} label={t("saveTemplate")} onClick={() => onSaveTemplate(item.id)} />
+                  ) : null}
+                  {item.status === "active" ? (
+                    <RowAction tone="danger" icon={<Archive className={icon} aria-hidden="true" />} label={t("archive")} onClick={() => onArchive(item.id)} />
+                  ) : null}
+                </RowActions>
+              ) : null}
+            </Td>
+          </Tr>
+        ))}
+      </tbody>
+    </Table>
   );
 }

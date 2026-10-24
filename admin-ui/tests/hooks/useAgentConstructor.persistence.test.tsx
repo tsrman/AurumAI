@@ -14,9 +14,13 @@ const mocks = vi.hoisted(() => ({
   createAgentDefinition: vi.fn(),
   getKnowledgeBases: vi.fn(),
   push: vi.fn(),
+  organizationDefault: null as string | null,
 }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
+vi.mock("@/hooks/useAdminModels", () => ({
+  useAdminModels: () => ({ data: { data: { defaultModel: mocks.organizationDefault ?? null } } }),
+}));
 vi.mock("@/lib/api", () => ({
   createAgentDefinition: (payload: unknown) => mocks.createAgentDefinition(payload),
   getKnowledgeBases: () => mocks.getKnowledgeBases(),
@@ -109,5 +113,5 @@ test("save persists canonical model, skill and knowledge-base IDs", async () => 
     skillIds: ["11111111-1111-4111-8111-111111111111"],
     knowledgeBaseIds: ["22222222-2222-4222-8222-222222222222"],
   });
-  expect(mocks.push).toHaveBeenCalledWith("/");
+  expect(mocks.push).toHaveBeenCalledWith("/admin/agents");
 });

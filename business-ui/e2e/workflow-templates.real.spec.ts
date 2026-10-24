@@ -48,7 +48,7 @@ async function login(page: Page, admin: boolean) {
   await page.locator("#password").fill(admin
     ? process.env.E2E_ADMIN_PASSWORD || "admin" : process.env.E2E_MEMBER_PASSWORD || "user");
   await page.locator("#kc-login").click();
-  await page.waitForURL(`${url}${admin ? "/admin/agents" : "/chat"}`, { timeout: 30_000 });
+  await page.waitForURL(`${url}${admin ? "/admin/users" : "/chat"}`, { timeout: 30_000 });
 }
 
 // Tokens stay inside the authenticated browser; no headers, JWTs or traces are persisted.
@@ -76,29 +76,44 @@ function mutation(page: Page, endpoint: string, method = "POST") {
     && response.request().method() === method);
 }
 
+const RESOURCE_PAGES: Record<string, string> = {
+  model: "/admin/models",
+  workflow: "/admin/workflows",
+  agent_definition: "/admin/agents",
+};
+
 // Fail within seconds, naming the page state, instead of idling until the
 // five-minute test timeout with no usable artifact.
-async function openAccessPage(page: Page) {
-  await page.goto(`${ADMIN}/admin/access`);
-  const resourceType = page.getByRole("combobox", { name: "Resource type", exact: true });
+async function openResourceList(page: Page, type: string) {
+  await page.goto(`${ADMIN}${RESOURCE_PAGES[type]}`);
+  const table = page.getByRole("table").first();
   try {
-    await expect(resourceType).toBeVisible({ timeout: 45_000 });
+    await expect(table).toBeVisible({ timeout: 45_000 });
   } catch {
     const state = await page.getByText("Checking access...").isVisible()
       ? "auth initialization still pending"
       : await page.getByText(/Access denied/).isVisible()
         ? "admin role not present in session"
-        : "access page not rendered";
-    throw new Error(`Admin access page unavailable: ${state} (${page.url()})`);
+        : "resource list not rendered";
+    throw new Error(`Admin resource list unavailable: ${state} (${page.url()})`);
   }
-  return resourceType;
+}
+
+async function resourceLabel(page: Page, type: string, id: string): Promise<string> {
+  if (type === "workflow") return (await readData<{ name: string }>(page, `/v1/admin/workflows/${id}`)).name;
+  if (type === "agent_definition") return (await readData<{ name: string }>(page, `/v1/agent-definitions/${id}`)).name;
+  return id;
 }
 
 async function grant(page: Page, type: string, id: string, memberId: string) {
-  await (await openAccessPage(page)).selectOption(type);
-  await page.getByRole("textbox", { name: "Search resources", exact: true }).fill(id);
-  await page.getByRole("combobox", { name: "Resource", exact: true }).selectOption(id);
-  const editor = page.getByRole("heading", { name: "Resource grants" }).locator("..");
+  await openResourceList(page, type);
+  const label = await resourceLabel(page, type, id);
+  if (type === "workflow") {
+    await page.locator("tr", { hasText: label }).getByRole("button", { name: "Access", exact: true }).click();
+  } else {
+    await page.getByRole("button", { name: `Access to ${label}`, exact: true }).click();
+  }
+  const editor = page.getByRole("dialog", { name: `Access to “${label}”` });
   await expect(editor.getByText("Loading grants...")).toHaveCount(0);
   await expect(editor.getByRole("button", { name: "Save grants" })).toBeEnabled();
   await editor.getByLabel("Recipient of the new grant").selectOption(`user:${memberId}`);
@@ -120,7 +135,7 @@ async function noGrants(page: Page, copy: Copy) {
 }
 
 async function copyTemplate(page: Page, templateId: string, suffix: "a" | "b"): Promise<Copy> {
-  await page.getByRole("button", { name: "Saved templates", exact: true }).click();
+  await page.getByRole("tab", { name: "Saved templates", exact: true }).click();
   await page.getByLabel("Workflow template", { exact: true }).selectOption(templateId);
   await page.getByLabel("Workflow copy name").fill(`${MARKER}-copy-${suffix}`);
   const created = mutation(page, `${TEMPLATES}/${templateId}/instantiate`);
@@ -272,7 +287,7 @@ test.describe("Workflow templates: independent copies through real UI", () => {
       expect([...Object.values(state.source_agent_ids), ...copyA.agentIds]).not.toContain(copyB.agentIds[0]);
       await assertCopy(admin, copyB, template.id, 2);
       await noGrants(admin, copyB);
-      await admin.getByRole("button", { name: "Saved templates", exact: true }).click();
+      await admin.getByRole("tab", { name: "Saved templates", exact: true }).click();
       await admin.getByLabel("Workflow template", { exact: true }).selectOption(template.id);
       const archived = mutation(admin, `${TEMPLATES}/${template.id}/archive`);
       await admin.getByRole("button", { name: "Archive template" }).click();

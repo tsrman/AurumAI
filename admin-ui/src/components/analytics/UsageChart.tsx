@@ -43,7 +43,7 @@ export function UsageChart({ daily, metric }: UsageChartProps) {
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="img"
         aria-label={label}
-        className="h-64 w-full rounded-md border bg-white"
+        className="h-64 w-full rounded-input border border-aurum-border-soft bg-aurum-surface-2"
       >
         <line
           x1={PADDING}
@@ -59,7 +59,7 @@ export function UsageChart({ daily, metric }: UsageChartProps) {
             cy={singlePoint.y.toFixed(2)}
             r="5"
             fill="currentColor"
-            className="text-primary-600"
+            className="text-aurum-accent"
           />
         ) : (
           <polyline
@@ -67,28 +67,28 @@ export function UsageChart({ daily, metric }: UsageChartProps) {
             fill="none"
             stroke="currentColor"
             strokeWidth="3"
-            className="text-primary-600"
+            className="text-aurum-accent"
           />
         )}
       </svg>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto rounded-input border border-aurum-border-soft">
         <table
-          className="w-full border text-left text-sm"
+          className="w-full text-left text-sm"
           aria-label={t("tableLabel")}
         >
           <thead>
             <tr>
-              <th className="border px-3 py-2">{t("dateUtc")}</th>
-              <th className="border px-3 py-2">{t("requests")}</th>
-              <th className="border px-3 py-2">{t("tokens")}</th>
+              <th className="bg-aurum-surface-2 px-3 py-2 text-xs font-semibold text-aurum-text-3">{t("dateUtc")}</th>
+              <th className="bg-aurum-surface-2 px-3 py-2 text-right text-xs font-semibold text-aurum-text-3">{t("requests")}</th>
+              <th className="bg-aurum-surface-2 px-3 py-2 text-right text-xs font-semibold text-aurum-text-3">{t("tokens")}</th>
             </tr>
           </thead>
           <tbody>
             {daily.map((row) => (
-              <tr key={row.date}>
-                <td className="border px-3 py-2">{row.date}</td>
-                <td className="border px-3 py-2">{row.requests}</td>
-                <td className="border px-3 py-2">{row.totalTokens}</td>
+              <tr key={row.date} className="border-t border-aurum-border-soft text-aurum-text-2">
+                <td className="px-3 py-2 font-mono text-xs">{row.date}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{row.requests}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{row.totalTokens}</td>
               </tr>
             ))}
           </tbody>

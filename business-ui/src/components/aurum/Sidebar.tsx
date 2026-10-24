@@ -61,7 +61,7 @@ const STUDIO_LINKS: {
   {
     icon: <ShieldCheck className="h-5 w-5" aria-hidden="true" />,
     labelKey: "links.admin",
-    href: `${ADMIN_URL}/admin/groups`,
+    href: `${ADMIN_URL}/admin/users`,
     adminOnly: true,
   },
 ];

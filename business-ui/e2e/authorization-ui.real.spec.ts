@@ -131,25 +131,55 @@ function pickerOption(page: Page, optionName: string): Locator {
   });
 }
 
+// Sidebar entries of the admin list that owns each resource type.
+const RESOURCE_SECTIONS: Record<ResourceType, { link: string; path: string }> = {
+  model: { link: "Models", path: "/admin/models" },
+  skill: { link: "Skills and tools", path: "/admin/skills" },
+  knowledge_base: { link: "Knowledge bases", path: "/admin/knowledge" },
+  agent_definition: { link: "Agents", path: "/admin/agents" },
+  workflow: { link: "Workflows", path: "/admin/workflows" },
+};
+
+function adminSidebar(page: Page): Locator {
+  return page.getByRole("navigation", { name: "Administration sections" });
+}
+
+// The previous resource's dialog covers the page; close it before navigating.
+async function closeOpenDialog(page: Page): Promise<void> {
+  const dialog = page.getByRole("dialog");
+  if ((await dialog.count()) === 0) return;
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+}
+
+// Access is configured from each resource's own admin list ("Access" row
+// action), which opens the grant editor in a dialog titled after the
+// resource. Navigation stays client-side so the session under test is kept.
 async function selectResource(
   page: Page,
   type: ResourceType,
-  id: string
+  label: string
 ): Promise<Locator> {
-  if (new URL(page.url()).pathname !== "/admin/access") {
-    await page.getByRole("link", { name: "Access", exact: true }).click();
-    await expect(page).toHaveURL(`${ADMIN_UI_URL}/admin/access`);
+  await closeOpenDialog(page);
+  const section = RESOURCE_SECTIONS[type];
+  if (new URL(page.url()).pathname !== section.path) {
+    await adminSidebar(page)
+      .getByRole("link", { name: section.link, exact: true })
+      .click();
+    await expect(page).toHaveURL(`${ADMIN_UI_URL}${section.path}`);
   }
-  await page
-    .getByRole("combobox", { name: "Resource type", exact: true })
-    .selectOption(type);
-  await page
-    .getByRole("textbox", { name: "Search resources", exact: true })
-    .fill(id);
-  const resourcePicker = page.getByRole("combobox", { name: "Resource", exact: true });
-  await expect(resourcePicker).toBeVisible();
-  await resourcePicker.selectOption(id);
-  const editor = page.getByRole("heading", { name: "Resource grants" }).locator("..");
+  if (type === "workflow") {
+    await page
+      .getByRole("row")
+      .filter({ has: page.getByText(label, { exact: true }) })
+      .getByRole("button", { name: "Access", exact: true })
+      .click();
+  } else {
+    await page
+      .getByRole("button", { name: `Access to ${label}`, exact: true })
+      .click();
+  }
+  const editor = page.getByRole("dialog", { name: `Access to “${label}”` });
   await expect(editor).toBeVisible();
   await expect(editor.getByText("Loading grants...")).toHaveCount(0);
   await expect(
@@ -158,13 +188,27 @@ async function selectResource(
   return editor;
 }
 
-function analystsCapabilitiesEditor(page: Page): Locator {
-  return page
-    .getByRole("heading", {
-      name: "Capabilities of group analysts",
-      exact: true,
-    })
-    .locator("..");
+async function analystsCapabilitiesEditor(page: Page): Promise<Locator> {
+  await closeOpenDialog(page);
+  if (new URL(page.url()).pathname !== "/admin/groups") {
+    await adminSidebar(page)
+      .getByRole("link", { name: "Users", exact: true })
+      .click();
+    await page
+      .getByRole("navigation", { name: "People sections" })
+      .getByRole("link", { name: "Groups", exact: true })
+      .click();
+    await expect(page).toHaveURL(`${ADMIN_UI_URL}/admin/groups`);
+  }
+  await page
+    .getByRole("button", { name: "Edit group analysts", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Group “analysts”" });
+  await dialog.getByRole("tab", { name: "Permissions", exact: true }).click();
+  return dialog.getByRole("region", {
+    name: "Capabilities of group analysts",
+    exact: true,
+  });
 }
 
 async function saveGrants(page: Page, editor: Locator): Promise<void> {
@@ -263,25 +307,21 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
       await loginAt(
         adminPage,
         ADMIN_UI_URL,
-        new RegExp(`${escapeRegExp(ADMIN_UI_URL)}/admin/agents$`),
+        new RegExp(`${escapeRegExp(ADMIN_UI_URL)}/admin/users$`),
         "admin",
         "admin"
       );
       await loginAt(
         memberAdminPage,
         ADMIN_UI_URL,
-        new RegExp(`${escapeRegExp(ADMIN_UI_URL)}/admin/agents$`),
+        new RegExp(`${escapeRegExp(ADMIN_UI_URL)}/admin/users$`),
         "user",
         "user"
       );
-      await goToAdminPage(memberAdminPage, "Access", "/admin/access");
+      await goToAdminPage(memberAdminPage, "Models", "/admin/models");
       await expect(memberAdminPage.getByText(/access denied/i)).toBeVisible();
 
-      await goToAdminPage(adminPage, "Groups", "/admin/groups");
-      await adminPage
-        .getByRole("button", { name: "Configure capabilities analysts" })
-        .click();
-      const analystsCapabilities = analystsCapabilitiesEditor(adminPage);
+      const analystsCapabilities = await analystsCapabilitiesEditor(adminPage);
       await analystsCapabilities
         .getByRole("checkbox", { name: /workspace\.knowledge\.create/ })
         .check();
@@ -302,7 +342,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
       );
       await addGrant(
         adminPage,
-        await selectResource(adminPage, "skill", state.skill.id),
+        await selectResource(adminPage, "skill", state.skill.name),
         "Group: analysts",
         "read"
       );
@@ -311,20 +351,20 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
         await selectResource(
           adminPage,
           "knowledge_base",
-          state.knowledge_base.id
+          state.knowledge_base.name
         ),
         "User: Regular User",
         "write"
       );
       await addGrant(
         adminPage,
-        await selectResource(adminPage, "agent_definition", state.agent.id),
+        await selectResource(adminPage, "agent_definition", state.agent.name),
         "User: Regular User",
         "read"
       );
       await addGrant(
         adminPage,
-        await selectResource(adminPage, "workflow", state.workflow.id),
+        await selectResource(adminPage, "workflow", state.workflow.name),
         "Group: analysts",
         "read"
       );
@@ -332,7 +372,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
       const skillEditor = await selectResource(
         adminPage,
         "skill",
-        state.skill.id
+        state.skill.name
       );
       await skillEditor
         .getByLabel("Recipient of the new grant")
@@ -345,7 +385,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
       const knowledgeEditor = await selectResource(
         adminPage,
         "knowledge_base",
-        state.knowledge_base.id
+        state.knowledge_base.name
       );
       await knowledgeEditor
         .getByLabel("Recipient of the new grant")
@@ -427,7 +467,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
       ).toContainText("Running", { timeout: 90_000 });
       await removeGrant(
         adminPage,
-        await selectResource(adminPage, "skill", state.skill.id),
+        await selectResource(adminPage, "skill", state.skill.name),
         "analysts"
       );
       await expect(progress).toContainText("Access to the workflow was revoked", {
@@ -439,13 +479,13 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
 
       await addGrant(
         adminPage,
-        await selectResource(adminPage, "skill", state.skill.id),
+        await selectResource(adminPage, "skill", state.skill.name),
         "Group: analysts",
         "read"
       );
       await removeGrant(
         adminPage,
-        await selectResource(adminPage, "agent_definition", state.agent.id),
+        await selectResource(adminPage, "agent_definition", state.agent.name),
         "Regular User"
       );
       await expectWorkflowPreflightDenied(
@@ -454,7 +494,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
       );
       await addGrant(
         adminPage,
-        await selectResource(adminPage, "agent_definition", state.agent.id),
+        await selectResource(adminPage, "agent_definition", state.agent.name),
         "User: Regular User",
         "read"
       );
@@ -464,7 +504,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
         await selectResource(
           adminPage,
           "knowledge_base",
-          state.knowledge_base.id
+          state.knowledge_base.name
         ),
         "Regular User"
       );
@@ -482,7 +522,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
         await selectResource(
           adminPage,
           "knowledge_base",
-          state.knowledge_base.id
+          state.knowledge_base.name
         ),
         "User: Regular User",
         "write"
@@ -490,7 +530,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
 
       await removeGrant(
         adminPage,
-        await selectResource(adminPage, "workflow", state.workflow.id),
+        await selectResource(adminPage, "workflow", state.workflow.name),
         "analysts"
       );
       const noWorkflowPage = await openBusinessPage("user", "user");
@@ -500,7 +540,7 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
       await expect(pickerOption(noWorkflowPage, state.workflow.name)).toHaveCount(0);
       await addGrant(
         adminPage,
-        await selectResource(adminPage, "workflow", state.workflow.id),
+        await selectResource(adminPage, "workflow", state.workflow.name),
         "Group: analysts",
         "read"
       );
@@ -517,12 +557,12 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
 
       await removeGrant(
         adminPage,
-        await selectResource(adminPage, "skill", state.skill.id),
+        await selectResource(adminPage, "skill", state.skill.name),
         "analysts"
       );
       await removeGrant(
         adminPage,
-        await selectResource(adminPage, "agent_definition", state.agent.id),
+        await selectResource(adminPage, "agent_definition", state.agent.name),
         "Regular User"
       );
       await removeGrant(
@@ -530,21 +570,17 @@ test.describe("Authorization v2: Admin UI to workflow runtime", () => {
         await selectResource(
           adminPage,
           "knowledge_base",
-          state.knowledge_base.id
+          state.knowledge_base.name
         ),
         "Regular User"
       );
       await removeGrant(
         adminPage,
-        await selectResource(adminPage, "workflow", state.workflow.id),
+        await selectResource(adminPage, "workflow", state.workflow.name),
         "analysts"
       );
 
-      await goToAdminPage(adminPage, "Groups", "/admin/groups");
-      await adminPage
-        .getByRole("button", { name: "Configure capabilities analysts" })
-        .click();
-      const finalAnalystsCapabilities = analystsCapabilitiesEditor(adminPage);
+      const finalAnalystsCapabilities = await analystsCapabilitiesEditor(adminPage);
       await finalAnalystsCapabilities
         .getByRole("checkbox", { name: /workspace\.knowledge\.create/ })
         .uncheck();

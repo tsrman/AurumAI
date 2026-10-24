@@ -12,7 +12,7 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"]],
   use: {
-    // The suites assert the Russian UI; pin it instead of the browser default.
+    // The suites assert the English UI; pin it instead of the browser default.
     locale: "en-US",
     baseURL: process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100",
     trace: "retain-on-failure",

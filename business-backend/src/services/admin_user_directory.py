@@ -5,7 +5,9 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.models.group import Group
 from src.models.user import User
+from src.models.user_group import UserGroup
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,7 @@ class AdminUserDirectory:
         offset: int,
         search: str | None,
         status: str | None,
+        group_id: UUID | None = None,
     ) -> AdminUserPage:
         predicates = [User.org_id == org_id]
         normalized_search = (search or "").strip()
@@ -52,6 +55,16 @@ class AdminUserDirectory:
             )
         if status is not None:
             predicates.append(User.status == status)
+        if group_id is not None:
+            # The group's org is checked here as well: membership rows carry
+            # no org of their own, so a foreign group id must match nobody.
+            predicates.append(
+                User.id.in_(
+                    select(UserGroup.user_id)
+                    .join(Group, Group.id == UserGroup.group_id)
+                    .where(UserGroup.group_id == group_id, Group.org_id == org_id)
+                )
+            )
 
         total = int(
             await session.scalar(
@@ -64,8 +77,8 @@ class AdminUserDirectory:
                 await session.scalars(
                     select(User)
                     .where(*predicates)
-                    # Ordered for findability, not recency: this listing's
-                    # only consumer is the analytics user filter, and a
+                    # Ordered for findability, not recency: the listing backs
+                    # people pickers and the admin user table, and a
                     # recency column ties for every user who has not been
                     # seen yet — which used to collapse the whole listing
                     # into `id ASC`, i.e. random UUID order.
