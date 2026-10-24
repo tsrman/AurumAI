@@ -24,12 +24,19 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 TOOL_CALL_TAG = "<tool_call>"
+UNSUPPORTED_TOOL_TAGS = ("<\uff5cDSML\uff5c", "<\uff5c\uff5cDSML\uff5c\uff5c")
 
 
 class _LLMGatewayError(Exception):
     """A real upstream failure reported inside the SSE body (see llm_call's
     error-chunk handling) — must propagate out of the parsing loop's broad
     except-and-continue, not be swallowed as a malformed chunk."""
+
+
+class _UnsupportedToolFormat(_LLMGatewayError):
+    def __init__(self, response_text: str) -> None:
+        super().__init__("Model emitted an unsupported tool-call format; use <tool_call> JSON")
+        self.response_text = response_text
 
 
 def _holdback_length(text: str, tag: str) -> int:
@@ -55,11 +62,41 @@ async def llm_call(
     reasoning and content) — used for internal, non-chat-facing calls that
     must never appear in the conversation's SSE stream (EvaluationWorkflow's
     judge call, CodeSkillSessionWorkflow's sub-loop). `hide_tool_call_tag`
-    is a separate, narrower knob only meaningful when publish_events=True:
-    ConversationWorkflow's skills planning call still wants reasoning and
+    additionally rejects unsupported tool markup, with one internal format
+    repair attempt. ConversationWorkflow's skills planning call wants reasoning and
     (almost all) content to stream live, just with a `<tool_call>` tag (and
     anything after it) held back so the user never sees the raw
     skill-selection protocol."""
+    try:
+        return await _stream_completion(request, turn_id, publish_events, hide_tool_call_tag)
+    except _UnsupportedToolFormat as exc:
+        # One format repair, without executing or parsing the rejected
+        # protocol. Keep it internal and let the common parser validate the
+        # returned text. A second invalid response fails the activity.
+        repair_request = {
+            **request,
+            "messages": [
+                *request.get("messages", []),
+                {"role": "assistant", "content": exc.response_text},
+                {"role": "user", "content": (
+                    "Your previous tool call was not executed: DSML is unsupported. "
+                    "Re-emit the same invocation JSON as plain text between literal ASCII "
+                    "<tool_call> and </tool_call> tags. Follow the system instructions for "
+                    "skill_id or built-in tool and args fields; preserve the same offered "
+                    "tool and arguments. Do not emit DSML, native invocation markup, "
+                    "or Markdown fences."
+                )},
+            ],
+        }
+        return await _stream_completion(repair_request, turn_id, False, hide_tool_call_tag)
+
+
+async def _stream_completion(
+    request: dict[str, Any],
+    turn_id: str | None,
+    publish_events: bool,
+    hide_tool_call_tag: bool,
+) -> str:
     trace.get_current_span().set_attribute("conversation_id", settings.conversation_id or "")
     langfuse = get_langfuse()
     generation = None
@@ -123,7 +160,8 @@ async def llm_call(
                     await event_publisher.publish("content-delta", {"delta": delta, "turn_id": turn_id})
                 elif not suppressed:
                     pending += delta
-                    tag_idx = pending.find(TOOL_CALL_TAG)
+                    indexes = [pending.find(tag) for tag in (TOOL_CALL_TAG, *UNSUPPORTED_TOOL_TAGS)]
+                    tag_idx = min((idx for idx in indexes if idx != -1), default=-1)
                     if tag_idx != -1:
                         suppressed = True
                         safe = pending[:tag_idx]
@@ -133,7 +171,8 @@ async def llm_call(
                                 "content-delta", {"delta": safe, "turn_id": turn_id}
                             )
                     else:
-                        hold = _holdback_length(pending, TOOL_CALL_TAG)
+                        hold = max(_holdback_length(pending, tag)
+                                   for tag in (TOOL_CALL_TAG, *UNSUPPORTED_TOOL_TAGS))
                         safe = pending[: len(pending) - hold] if hold else pending
                         pending = pending[len(pending) - hold :] if hold else ""
                         if safe:
@@ -149,6 +188,15 @@ async def llm_call(
         await event_publisher.publish("content-delta", {"delta": pending, "turn_id": turn_id})
     if generation:
         generation.end(output={"completion": sanitize_content(full)})
+    if not full.strip():
+        # A clean SSE EOF, reasoning-only reply, or filtered completion is
+        # not a successful answer. Let the workflow's bounded activity retry
+        # and terminal failure path handle it instead of persisting a blank.
+        raise _LLMGatewayError("LLM returned no answer content")
+    if hide_tool_call_tag and any(tag in full for tag in UNSUPPORTED_TOOL_TAGS):
+        # Reject provider-native markup; only the shared tool_call parser
+        # may select tools. Never persist or expose this internal payload.
+        raise _UnsupportedToolFormat(full)
     return full
 
 

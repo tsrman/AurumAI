@@ -1,5 +1,10 @@
 import { expect, type Page } from "@playwright/test";
 
+export async function expectSelectedModel(page: Page, model: string): Promise<void> {
+  await expect(page.getByRole("button", { name: "Choose model" })).toHaveText(model);
+  await expect(page.getByLabel("Message")).toBeEnabled();
+}
+
 export async function expectNewAssistantReply(
   page: Page,
   previousReplyCount: number,

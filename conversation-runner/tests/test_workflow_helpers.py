@@ -1,3 +1,7 @@
+import json
+
+from jsonschema import Draft202012Validator
+
 from src.workflows.conversation import ConversationWorkflow
 
 
@@ -62,8 +66,13 @@ def test_build_skills_system_message_shows_input_schema_for_normal_skills() -> N
 
     message = _build_skills_system_message(skills)
 
-    assert "id=skill-1 name=get-sum: Sums two numbers" in message
-    assert '"a": {"type": "number"}' in message
+    catalog = json.loads(message.rsplit("Available tools:\n", 1)[1])
+    assert catalog == [{
+        "skill_id": "skill-1",
+        "name": "get-sum",
+        "description": "Sums two numbers",
+        "args_schema": {"type": "object", "properties": {"a": {"type": "number"}}},
+    }]
 
 
 def test_build_skills_system_message_shows_task_hint_for_code_skills() -> None:
@@ -81,8 +90,12 @@ def test_build_skills_system_message_shows_task_hint_for_code_skills() -> None:
 
     message = _build_skills_system_message(skills)
 
-    assert "id=skill-2 name=greet: Greets the user" in message
-    assert '{"task": "<describe what you want the skill to accomplish>"}' in message
+    catalog = json.loads(message.rsplit("Available tools:\n", 1)[1])
+    assert catalog[0]["skill_id"] == "skill-2"
+    schema = Draft202012Validator(catalog[0]["args_schema"])
+    assert schema.is_valid({"task": "Compute the result"})
+    assert not schema.is_valid({})
+    assert not schema.is_valid({"task": 42})
 
 
 def test_feature_off_removes_question_tool_from_both_runtime_prompts() -> None:

@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from src.state_manager import StateManager
+from src.workflows.conversation import ConversationWorkflow
 
 
 @pytest.fixture
@@ -71,6 +72,24 @@ def test_append_adds_message_to_list():
     manager = StateManager()
     manager.append({"role": "user", "content": "hi"})
     assert manager.messages == [{"role": "user", "content": "hi"}]
+
+
+@pytest.mark.asyncio
+async def test_restored_turn_is_not_duplicated_by_its_queued_signal(mock_client_with_response):
+    response = MagicMock()
+    response.json.return_value = {"data": {"messages": {"data": [
+        {"role": "user", "content": "hi", "turnId": "turn-1"},
+    ]}}}
+    mock_client_with_response(response)
+    manager = StateManager()
+    await manager.load()
+    workflow = ConversationWorkflow()
+    workflow.messages = manager.messages
+
+    workflow._append_message_once({"role": "user", "content": "hi", "turn_id": "turn-1"})
+    assert len(workflow.messages) == 1
+    workflow._append_message_once({"role": "user", "content": "hi", "turn_id": "turn-2"})
+    assert len(workflow.messages) == 2
 
 
 @pytest.mark.asyncio

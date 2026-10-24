@@ -175,9 +175,10 @@ async def _run_one_turn(activities: list, tool_activities: list, message: dict):
                     activities=activities + [mock_record_langfuse_score, mock_record_message_score],
                 )
             )
-            await stack.enter_async_context(
-                Worker(env.client, task_queue="tools", activities=tool_activities)
-            )
+            if tool_activities:
+                await stack.enter_async_context(
+                    Worker(env.client, task_queue="tools", activities=tool_activities)
+                )
             handle = await env.client.start_workflow(
                 ConversationWorkflow.run,
                 ConversationInput(conversation_id="conv-tools"),
@@ -187,6 +188,42 @@ async def _run_one_turn(activities: list, tool_activities: list, message: dict):
             await handle.signal(ConversationWorkflow.user_message, message)
             await env.sleep(timedelta(seconds=settings.idle_ttl_seconds + 10))
             return await handle.result()
+
+
+@pytest.mark.asyncio
+async def test_empty_stream_retries_then_persists_only_the_successful_answer(monkeypatch):
+    from src.workflows.activities import llm_call as real_llm_call
+
+    monkeypatch.setattr("src.workflows.conversation.settings.evaluator_enabled", False)
+    monkeypatch.setattr("src.workflows.activities.get_langfuse", lambda: None)
+    attempts = 0
+
+    async def stream_chat(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 3:
+            yield json.dumps({"choices": [{"delta": {"content": "Recovered answer"}}]})
+        yield "[DONE]"
+
+    publish, events = _make_publish_event()
+    persist, persisted = _make_persist_assistant_message()
+    monkeypatch.setattr("src.workflows.activities.llm_client.stream_chat", stream_chat)
+    monkeypatch.setattr("src.workflows.activities.event_publisher.publish", publish)
+
+    result = await _run_one_turn(
+        [mock_load_conversation_state, mock_list_available_skills,
+         mock_get_session_token, mock_get_conversation_temperature,
+         real_llm_call, publish, persist],
+        [],
+        {"role": "user", "content": "hello", "turn_id": "turn-retry", "model": "test-model"},
+    )
+
+    assert attempts == 3
+    assert result == "Recovered answer"
+    assert len(persisted) == 1
+    assert persisted[0]["content"] == "Recovered answer"
+    assert persisted[0]["model"] == "test-model"
+    assert ("done", {"turn_id": "turn-retry", "evaluation_pending": False}) in events
 
 
 @pytest.mark.asyncio

@@ -162,7 +162,7 @@ test("keeps a valid personal model ahead of the organization default", () => {
 
 test("does not override a model the user picked manually", () => {
   authState = { isAuthenticated: true, isLoading: false };
-  modelsData = { data: [{ id: "model-a" }, { id: "model-b" }] };
+  modelsData = { data: [{ id: "model-a" }, { id: "manual" }] };
   settingsData = { data: { default_model: "model-a" } };
 
   const { rerender } = render(
@@ -174,7 +174,7 @@ test("does not override a model the user picked manually", () => {
   fireEvent.click(screen.getByText("pick manual"));
   expect(screen.getByTestId("active-model").textContent).toBe("manual");
 
-  modelsData = { data: [{ id: "model-c" }] };
+  modelsData = { data: [{ id: "model-c" }, { id: "manual" }] };
   rerender(
     <Wrapper>
       <ModelSpy />

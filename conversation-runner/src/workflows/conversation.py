@@ -62,7 +62,16 @@ SKILLS_SYSTEM_PROMPT_TEMPLATE = (
     "You have access to the following tools. To call one, emit exactly:\n"
     '<tool_call>{{"skill_id": "<id>", "args": {{...}}}}</tool_call>\n'
     "You may emit multiple <tool_call> blocks in one response. Only call a tool "
-    "when it actually helps answer the user; otherwise just answer normally.\n\n"
+    "when it helps answer the user; otherwise answer normally. If the user explicitly "
+    "requests using a tool, call the matching available tool before answering, even "
+    "for a simple calculation. For questions about attached files, first search "
+    "those files with the available attachment search tool; never guess their contents. "
+    "Copy the exact id from the list into skill_id, not the tool's name. "
+    "Emit the tool_call block rather than describing a call. After a successful "
+    "result, answer from that result without repeating the same completed call.\n\n"
+    "The tool protocol is plain response text with literal ASCII <tool_call> and "
+    "</tool_call> tags. Do not use DSML, native function invocation markup, XML "
+    "attributes, or Markdown fences for tool calls.\n\n"
     "Available tools:\n{tools}"
 )
 
@@ -73,7 +82,7 @@ def _build_skills_system_message(
     user_questions_enabled: bool = True,
     web_tools_enabled: bool = False,
 ) -> str:
-    lines = []
+    tools = []
     for skill in skills:
         description = skill.get("description") or ""
         if skill.get("type") == "code":
@@ -82,13 +91,22 @@ def _build_skills_system_message(
             # (CodeSkillSessionWorkflow) that reads the skill's own SKILL.md
             # and runs shell commands on its own until the task is done, so
             # the only thing the outer loop provides is the task itself.
-            schema = '{"task": "<describe what you want the skill to accomplish>"}'
+            schema = {
+                "type": "object",
+                "properties": {"task": {"type": "string"}},
+                "required": ["task"],
+            }
         else:
-            schema = json.dumps(skill.get("inputSchema") or {})
-        lines.append(
-            f"- id={skill.get('id')} name={skill.get('name')}: {description} args_schema={schema}"
-        )
-    skill_prompt = SKILLS_SYSTEM_PROMPT_TEMPLATE.format(tools="\n".join(lines))
+            schema = skill.get("inputSchema") or {}
+        # Use the same key as the invocation protocol. A separate `id=` next
+        # to `name=` led real models to copy the name into skill_id instead.
+        tools.append({
+            "skill_id": skill.get("id"),
+            "name": skill.get("name"),
+            "description": description,
+            "args_schema": schema,
+        })
+    skill_prompt = SKILLS_SYSTEM_PROMPT_TEMPLATE.format(tools=json.dumps(tools))
     sections = [skill_prompt]
     builtin_prompt = builtin_instructions(
         "ordinary",

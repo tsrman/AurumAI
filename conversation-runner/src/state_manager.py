@@ -29,6 +29,7 @@ class StateManager:
                     page = response.json()["data"]["messages"]
                     messages.extend(
                         {"role": m["role"], "content": m["content"]}
+                        | ({"turn_id": m["turnId"]} if m.get("turnId") else {})
                         for m in page["data"]
                     )
                 except KeyError as exc:
