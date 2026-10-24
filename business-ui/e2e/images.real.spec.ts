@@ -1,0 +1,208 @@
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
+
+/**
+ * Image generation and editing end to end against the deterministic stack
+ * (smoke-test-images-ui.sh): an administrator picks the organization image
+ * models in Admin UI, a member asks for an image and an edit, and both images
+ * come back through the owner-only content route, also after a reload.
+ * Organization capabilities, model grants and image models are restored.
+ */
+const ENABLED = process.env.E2E_IMAGES_UI === "true";
+const BUSINESS_URL = process.env.E2E_BUSINESS_UI_URL || "http://localhost:3000";
+const ADMIN_UI_URL = process.env.E2E_ADMIN_UI_URL || "http://localhost:3100";
+const BUSINESS_API = process.env.E2E_BUSINESS_BACKEND_URL || "http://localhost:8000";
+const ADMIN_API = process.env.E2E_ADMIN_BACKEND_URL || "http://localhost:8001";
+const KEYCLOAK_URL = process.env.E2E_KEYCLOAK_URL || "http://localhost:8080";
+const CHAT_MODEL = process.env.E2E_IMAGES_CHAT_MODEL || "gpt-4o-mini";
+const IMAGE_MODEL = process.env.E2E_IMAGES_MODEL || "test-image";
+
+type Grant = { principalType: string; principalId: string; permission: string };
+type ImageModels = { generationModel: string | null; editModel: string | null };
+
+async function loginAt(page: Page, appUrl: string, landing: RegExp, username: string): Promise<void> {
+  await page.goto(`${appUrl}/login`);
+  await page.getByRole("button", { name: /sign in with keycloak/i }).click();
+  await page.waitForURL(/\/realms\/.+\/protocol\/openid-connect\/auth/);
+  await page.locator("#username").fill(username);
+  await page.locator("#password").fill(username);
+  await page.locator("#kc-login").click();
+  await page.waitForURL(landing, { timeout: 30_000 });
+}
+
+async function adminToken(request: APIRequestContext): Promise<string> {
+  const response = await request.post(`${KEYCLOAK_URL}/realms/aurum-ai/protocol/openid-connect/token`, {
+    form: { grant_type: "password", client_id: "admin-ui", username: "admin", password: "admin" },
+  });
+  expect(response.ok()).toBeTruthy();
+  return ((await response.json()) as { access_token: string }).access_token;
+}
+
+async function adminApi<T>(
+  request: APIRequestContext,
+  token: string,
+  method: "GET" | "PUT",
+  path: string,
+  data?: unknown
+): Promise<T> {
+  const response = await request.fetch(`${ADMIN_API}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+    data,
+  });
+  expect(response.status(), `${method} ${path}`).toBe(200);
+  return ((await response.json()) as { data: T }).data;
+}
+
+/** A browser-session API call, so it carries the member's own token. */
+async function userApi(page: Page, path: string): Promise<{ status: number; body: unknown }> {
+  return page.evaluate(async (url) => {
+    const keycloak = (window as Window & { keycloak?: { token?: string } }).keycloak;
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${keycloak?.token}` } });
+    const type = response.headers.get("content-type") ?? "";
+    return {
+      status: response.status,
+      body: type.includes("json") ? await response.json() : type,
+    };
+  }, `${BUSINESS_API}${path}`);
+}
+
+async function expectLoadedImages(page: Page, count: number): Promise<void> {
+  const images = page.getByAltText(/^Generated image \d+$/);
+  await expect(images).toHaveCount(count, { timeout: 30_000 });
+  for (let index = 0; index < count; index += 1) {
+    await expect
+      .poll(() => images.nth(index).evaluate((node) => (node as HTMLImageElement).naturalWidth))
+      .toBeGreaterThan(0);
+  }
+}
+
+// Playwright traces persist request headers, including Keycloak bearer tokens.
+test.use({ trace: "off" });
+
+test.describe("Images: admin models to chat generation and editing", () => {
+  test.skip(!ENABLED, "E2E_IMAGES_UI is not enabled");
+
+  test("generate, edit and reload images with separately chosen models", async ({ browser, request }) => {
+    test.setTimeout(240_000);
+    const token = await adminToken(request);
+    const subjects = await adminApi<{ principalType: string; principalId: string }[]>(
+      request, token, "GET", "/v1/admin/authorization/subjects"
+    );
+    const organization = subjects.find((subject) => subject.principalType === "organization");
+    expect(organization).toBeDefined();
+    const originalCapabilities = (
+      await adminApi<{ capabilities: string[] }>(request, token, "GET", "/v1/admin/authorization/capabilities/organization")
+    ).capabilities;
+    const originalGrants = (
+      await adminApi<Grant[]>(
+        request, token, "GET",
+        `/v1/admin/authorization/grants?resourceType=model&resourceId=${encodeURIComponent(CHAT_MODEL)}`
+      )
+    ).map(({ principalType, principalId, permission }) => ({ principalType, principalId, permission }));
+    const originalImages = await adminApi<ImageModels>(request, token, "GET", "/v1/admin/settings/images");
+    const contexts: BrowserContext[] = [];
+
+    try {
+      // Start from no image models so the Admin UI choice is a real change.
+      await adminApi(request, token, "PUT", "/v1/admin/settings/images", {
+        generationModel: null,
+        editModel: null,
+      });
+      await adminApi(request, token, "PUT", "/v1/admin/authorization/capabilities/organization", {
+        capabilities: [...new Set([...originalCapabilities, "images.generate"])],
+      });
+      await adminApi(request, token, "PUT", "/v1/admin/authorization/grants/reconcile", {
+        resourceType: "model",
+        resourceId: CHAT_MODEL,
+        grants: [
+          ...originalGrants.filter((grant) => grant.principalType !== "organization"),
+          { principalType: "organization", principalId: organization!.principalId, permission: "read" },
+        ],
+      });
+
+      const adminContext = await browser.newContext();
+      contexts.push(adminContext);
+      const adminPage = await adminContext.newPage();
+      await loginAt(adminPage, ADMIN_UI_URL, /\/admin\/users$/, "admin");
+      await adminPage.goto(`${ADMIN_UI_URL}/admin/models`);
+      const images = adminPage.getByRole("heading", { name: "Images" }).locator("xpath=ancestor::section[1]");
+      await images.getByLabel("Image generation model").selectOption(IMAGE_MODEL);
+      await images.getByLabel("Image editing model").selectOption(IMAGE_MODEL);
+      const saved = adminPage.waitForResponse(
+        (response) =>
+          response.url().endsWith("/v1/admin/settings/images") &&
+          response.request().method() === "PUT" &&
+          response.status() === 200
+      );
+      await images.getByRole("button", { name: "Save image models" }).click();
+      await saved;
+
+      const memberContext = await browser.newContext();
+      contexts.push(memberContext);
+      const member = await memberContext.newPage();
+      await loginAt(member, BUSINESS_URL, /\/chat$/, "user");
+      await member.getByRole("button", { name: "Choose model" }).click();
+      await member.getByRole("option", { name: new RegExp(`^${CHAT_MODEL}`) }).click();
+      await member.getByLabel("Message").fill("IMAGE_E2E_EDIT");
+      await member.getByLabel("Send").click();
+
+      await expect(member.getByTestId("assistant-content").last()).toContainText(
+        "IMAGE_E2E_DONE edited",
+        { timeout: 120_000 }
+      );
+      await expectLoadedImages(member, 2);
+
+      const conversations = await userApi(member, "/v1/conversations?limit=1");
+      expect(conversations.status).toBe(200);
+      const conversationId = (conversations.body as { data: { id: string }[] }).data[0].id;
+      const history = await userApi(member, `/v1/conversations/${conversationId}`);
+      const messages = (history.body as { data: { messages: { data: { role: string; imageIds?: string[] }[] } } })
+        .data.messages.data;
+      const imageIds = messages.filter((message) => message.role === "assistant").flatMap((m) => m.imageIds ?? []);
+      expect(imageIds).toHaveLength(2);
+      const content = await userApi(member, `/v1/conversations/${conversationId}/images/${imageIds[0]}/content`);
+      expect(content).toEqual({ status: 200, body: "image/png" });
+
+      // A later turn edits an image of an earlier one: its id reaches the
+      // model only through the conversation image list.
+      await member.getByLabel("Message").fill("IMAGE_E2E_EDIT_PREVIOUS");
+      await member.getByLabel("Send").click();
+      await expect(member.getByTestId("assistant-content").last()).toContainText(
+        "IMAGE_E2E_DONE edited",
+        { timeout: 120_000 }
+      );
+      await expectLoadedImages(member, 3);
+
+      // History rendering: all three images after a full reload.
+      await member.reload();
+      await member.getByRole("button", { name: new RegExp("IMAGE_E2E_EDIT") }).first().click();
+      await expectLoadedImages(member, 3);
+    } finally {
+      await Promise.allSettled(contexts.map((context) => context.close()));
+      // Restore every setting even if one restore fails, and never let a
+      // restore failure hide the primary test failure.
+      const restored = await Promise.allSettled([
+        adminApi(request, token, "PUT", "/v1/admin/settings/images", {
+          generationModel: originalImages.generationModel,
+          editModel: originalImages.editModel,
+        }),
+        adminApi(request, token, "PUT", "/v1/admin/authorization/grants/reconcile", {
+          resourceType: "model",
+          resourceId: CHAT_MODEL,
+          grants: originalGrants,
+        }),
+        adminApi(request, token, "PUT", "/v1/admin/authorization/capabilities/organization", {
+          capabilities: originalCapabilities,
+        }),
+      ]);
+      const failures = restored.filter((result) => result.status === "rejected");
+      if (failures.length) console.error(`image e2e restore failed for ${failures.length} setting(s)`);
+    }
+  });
+});

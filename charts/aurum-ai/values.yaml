@@ -155,6 +155,15 @@ backend:
   # the isolated boundary; enable this only after those workloads and their
   # policies have passed operator enforcement checks.
   webEnabled: false
+  # Image generation/editing kill switch. Organization image models are set in
+  # Admin UI; users need the images.generate capability. apiUrl empty means the
+  # chat gateway; apiKeySecret names a Secret key holding a separate API key.
+  images:
+    enabled: false
+    apiUrl: ""
+    apiKeySecret: ""
+    apiKeySecretKey: IMAGES_API_KEY
+    timeoutSeconds: 120
   evaluator:
     enabled: false
     model: ""

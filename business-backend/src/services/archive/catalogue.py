@@ -86,6 +86,7 @@ COLUMNS: dict[str, list[tuple[str, str, bool]]] = {
         ("question_count", "int", False),
         ("search_count", "int", False),
         ("read_count", "int", False),
+        ("image_count", "int", False),
         ("terminal_at", "utc", True),
         ("org_id", "uuid", False),
         ("id", "uuid", False),

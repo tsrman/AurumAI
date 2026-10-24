@@ -7,6 +7,7 @@ class Capability(StrEnum):
     ADMIN_USERS_READ = "admin.users.read"
     ADMIN_USERS_WRITE = "admin.users.write"
     CHAT_SEND = "chat.send"
+    IMAGES_GENERATE = "images.generate"
     SHARING_MANAGE = "sharing.manage"
     WEB_ACCESS = "web.access"
     WORKSPACE_AGENTS_CREATE = "workspace.agents.create"
@@ -15,9 +16,9 @@ class Capability(StrEnum):
 
 
 CAPABILITY_VALUES_SQL = (
-    "'admin.users.read', 'admin.users.write', 'chat.send', 'sharing.manage', 'web.access', "
-    "'workspace.agents.create', 'workspace.knowledge.create', "
-    "'workspace.skills.create'"
+    "'admin.users.read', 'admin.users.write', 'chat.send', 'images.generate', "
+    "'sharing.manage', 'web.access', 'workspace.agents.create', "
+    "'workspace.knowledge.create', 'workspace.skills.create'"
 )
 
 
@@ -73,6 +74,11 @@ CAPABILITY_CATALOG = CapabilityCatalog(
             Capability.CHAT_SEND,
             "Send chat messages",
             "Start and continue AI conversations.",
+        ),
+        CapabilityDefinition(
+            Capability.IMAGES_GENERATE,
+            "Generate images",
+            "Create and edit images in chat with the organization's image models.",
         ),
         CapabilityDefinition(
             Capability.SHARING_MANAGE,

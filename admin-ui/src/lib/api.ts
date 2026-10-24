@@ -605,6 +605,29 @@ export async function putOrganizationModelSettings(settings: {
   ).json<ApiResponse<OrganizationModelSetting>>();
 }
 
+export interface OrganizationImageModels {
+  enabled: boolean;
+  gatewayStatus: GatewayStatus;
+  generationModel: string | null;
+  editModel: string | null;
+  models: string[];
+}
+
+export async function getOrganizationImageModels() {
+  return (await api.get("admin/settings/images")).json<
+    ApiResponse<OrganizationImageModels>
+  >();
+}
+
+export async function putOrganizationImageModels(settings: {
+  generationModel: string | null;
+  editModel: string | null;
+}) {
+  return (await api.put("admin/settings/images", { json: settings })).json<
+    ApiResponse<OrganizationImageModels>
+  >();
+}
+
 function explicitSearchParams<T extends object>(
   values: T
 ): Record<string, string | number> {

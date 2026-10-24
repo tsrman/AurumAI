@@ -235,6 +235,15 @@ class Settings(BaseSettings):
     WEB_TOOLS_URL: str = "http://web-tools:8120"
     WEB_TOOLS_SERVICE_SECRET: SecretStr = SecretStr("")
 
+    # Operator kill switch for image generation and editing. Each turn also
+    # needs the images.generate capability and an organization image model.
+    IMAGES_ENABLED: bool = False
+    # OpenAI-compatible Images API; empty means the chat gateway and its key.
+    IMAGES_API_URL: str = ""
+    IMAGES_API_KEY: SecretStr = SecretStr("")
+    IMAGES_TIMEOUT_SECONDS: float = Field(default=120, gt=0, le=600)
+    IMAGES_MAX_BYTES: int = Field(default=20 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
+
     @field_validator("WEB_TOOLS_URL")
     @classmethod
     def _web_tools_origin_only(cls, value: str) -> str:

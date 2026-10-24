@@ -26,6 +26,7 @@ class TurnLimits(InteractionSchema):
     question_open: int = Field(default=4, ge=1, strict=True)
     web_search_total: int = Field(default=10, ge=0, strict=True)
     web_read_total: int = Field(default=20, ge=0, strict=True)
+    image_total: int = Field(default=4, ge=0, strict=True)
 
 
 class QuestionOption(InteractionSchema):

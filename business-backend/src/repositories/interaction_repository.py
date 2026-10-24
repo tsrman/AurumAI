@@ -167,7 +167,13 @@ class InteractionRepository:
         *,
         allow_new: bool = True,
     ) -> ToolOperation:
-        if kind not in {"ask_user", "web_search", "web_read"} or not re.fullmatch(
+        if kind not in {
+            "ask_user",
+            "web_search",
+            "web_read",
+            "image_generate",
+            "image_edit",
+        } or not re.fullmatch(
             r"[0-9a-f]{64}", arguments_hash
         ):
             raise InteractionError("invalid_operation")
@@ -203,6 +209,9 @@ class InteractionRepository:
             "ask_user": ("question_count", limits.question_total),
             "web_search": ("search_count", limits.web_search_total),
             "web_read": ("read_count", limits.web_read_total),
+            # Generation and editing share one per-turn image budget.
+            "image_generate": ("image_count", limits.image_total),
+            "image_edit": ("image_count", limits.image_total),
         }
         counter, maximum = budget[kind]
         if getattr(turn, counter) >= maximum:

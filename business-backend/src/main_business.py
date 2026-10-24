@@ -38,6 +38,8 @@ from src.routers import (
     turns,
     web_tools_internal,
     web_sources,
+    image_tools_internal,
+    conversation_images,
     workflow_runs_internal,
     workflows,
 )
@@ -121,6 +123,8 @@ app = create_app(
         (questions_internal.router, "/v1/internal", "internal-questions"),
         (web_tools_internal.router, "/v1/internal", "internal-web-tools"),
         (web_sources.router, "/v1", "web-sources"),
+        (image_tools_internal.router, "/v1/internal", "internal-image-tools"),
+        (conversation_images.router, "/v1", "conversation-images"),
         (turns.router, "/v1", "turns"),
     ],
 )

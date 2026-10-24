@@ -12,9 +12,12 @@ from src.core.dependencies import get_current_org_id, get_org_db_session
 from src.schemas.admin_models import (
     AdminModelCatalogResponse,
     AdminModelEntryResponse,
+    OrganizationImageModelsResponse,
+    OrganizationImageModelsUpdate,
     OrganizationModelSettingResponse,
     OrganizationModelSettingsUpdate,
 )
+from src.core.config import settings
 from src.schemas.common import ApiResponse, Meta
 from src.services.model_catalog import (
     GatewayCatalogSnapshot,
@@ -124,6 +127,69 @@ async def update_organization_model_settings(
         data=OrganizationModelSettingResponse(
             default_model=data.default_model,
             default_temperature=data.default_temperature,
+        ),
+        meta=_meta(),
+    )
+
+
+@router.get("/settings/images", response_model=ApiResponse[OrganizationImageModelsResponse])
+async def organization_image_models(
+    user: UserInfo = Depends(require_org_admin),
+    org_id: UUID = Depends(get_current_org_id),
+    session: AsyncSession = Depends(get_org_db_session),
+    load_catalog: GatewayCatalogLoader = Depends(get_gateway_catalog_loader),
+    service: OrganizationModelSettingsService = Depends(
+        get_organization_model_settings_service
+    ),
+) -> ApiResponse[OrganizationImageModelsResponse]:
+    snapshot = await load_catalog()
+    generation_model, edit_model = await service.image_models(session, org_id)
+    return ApiResponse(
+        data=OrganizationImageModelsResponse(
+            enabled=settings.IMAGES_ENABLED,
+            gateway_status=snapshot.status,
+            generation_model=generation_model,
+            edit_model=edit_model,
+            models=list(service.catalog_model_ids(snapshot)),
+        ),
+        meta=_meta(),
+    )
+
+
+@router.put("/settings/images", response_model=ApiResponse[OrganizationImageModelsResponse])
+async def update_organization_image_models(
+    data: OrganizationImageModelsUpdate,
+    user: UserInfo = Depends(require_org_admin),
+    org_id: UUID = Depends(get_current_org_id),
+    session: AsyncSession = Depends(get_org_db_session),
+    load_catalog: GatewayCatalogLoader = Depends(get_gateway_catalog_loader),
+    service: OrganizationModelSettingsService = Depends(
+        get_organization_model_settings_service
+    ),
+) -> ApiResponse[OrganizationImageModelsResponse]:
+    snapshot = await load_catalog()
+    try:
+        await service.set_image_models(
+            session, org_id, data.generation_model, data.edit_model, snapshot
+        )
+    except GatewayUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model gateway unavailable",
+        ) from exc
+    except ModelNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Model is not published by the gateway",
+        ) from exc
+    await session.commit()
+    return ApiResponse(
+        data=OrganizationImageModelsResponse(
+            enabled=settings.IMAGES_ENABLED,
+            gateway_status=snapshot.status,
+            generation_model=data.generation_model,
+            edit_model=data.edit_model,
+            models=list(service.catalog_model_ids(snapshot)),
         ),
         meta=_meta(),
     )

@@ -14,6 +14,10 @@ class OrganizationSettings(Base):
     )
     default_model: Mapped[str | None] = mapped_column(String(255))
     default_temperature: Mapped[float | None] = mapped_column(Float)
+    # Image tools use their own models, chosen independently for creating
+    # and for editing images.
+    image_generation_model: Mapped[str | None] = mapped_column(String(255))
+    image_edit_model: Mapped[str | None] = mapped_column(String(255))
     allowed_models: Mapped[list[str] | None] = mapped_column(
         ARRAY(String), default=lambda: ["gpt-4o", "claude-3-5-sonnet"]
     )

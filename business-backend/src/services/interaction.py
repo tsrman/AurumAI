@@ -481,6 +481,32 @@ class InteractionService:
         execution_id: UUID,
     ) -> None:
         """Authorize the exact live runtime target before any web reservation/I/O."""
+        await self._authorize_tool_operation(
+            session, subject, conversation_id, turn_id, execution_id, Capability.WEB_ACCESS
+        )
+
+    async def authorize_image_operation(
+        self,
+        session: AsyncSession,
+        subject: AuthorizationSubject,
+        conversation_id: UUID,
+        turn_id: UUID,
+        execution_id: UUID,
+    ) -> None:
+        """Authorize the exact live runtime target before any image reservation/I/O."""
+        await self._authorize_tool_operation(
+            session, subject, conversation_id, turn_id, execution_id, Capability.IMAGES_GENERATE
+        )
+
+    async def _authorize_tool_operation(
+        self,
+        session: AsyncSession,
+        subject: AuthorizationSubject,
+        conversation_id: UUID,
+        turn_id: UUID,
+        execution_id: UUID,
+        capability: Capability,
+    ) -> None:
         turn, execution, _ = await self._context(
             session,
             subject,
@@ -499,11 +525,7 @@ class InteractionService:
             )
         await self._require_live(session, subject, turn, execution)
         try:
-            await self._authorization.require_capability(
-                session,
-                subject,
-                Capability.WEB_ACCESS,
-            )
+            await self._authorization.require_capability(session, subject, capability)
         except CapabilityAccessDenied as exc:
             raise InteractionAccessDenied() from exc
 

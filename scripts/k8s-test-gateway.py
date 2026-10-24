@@ -8,18 +8,23 @@ It never performs an outbound request and never stores prompts in barrier state.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
 import re
+import struct
+import zlib
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 MODEL_ID = os.getenv("TEST_GATEWAY_MODEL_ID", "k8s-test")
+# Published only when set, so scenarios without images keep a one-model catalog.
+IMAGE_MODEL_ID = os.getenv("TEST_GATEWAY_IMAGE_MODEL_ID", "")
 WEB_FIXTURE_ORIGIN = "http://" + os.getenv(
     "WEB_ACCEPTANCE_FIXTURE_IPV4", "93.184.216.2"
 )
@@ -631,7 +636,63 @@ def _web_response(messages: list[Message]) -> str | None:
     return None
 
 
+def _png(red: int, green: int, blue: int) -> bytes:
+    """A tiny valid 2x2 RGB PNG of one colour."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    row = b"\x00" + bytes((red, green, blue)) * 2
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(row * 2))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _image_response(messages: list[Message]) -> str | None:
+    # Exact operator-authored markers only: IMAGE_E2E_GENERATE creates one
+    # image, IMAGE_E2E_EDIT creates one and then edits it by its returned id.
+    start = next((i for i in range(len(messages) - 1, -1, -1)
+                  if messages[i].role == "user" and not messages[i].content.startswith("Tool result for ")), None)
+    if start is None or not messages[start].content.startswith("IMAGE_E2E_"):
+        return None
+    prompt = messages[start].content
+    results: list[tuple[str, dict[str, Any]]] = []
+    for message in messages[start + 1:]:
+        match = re.match(r"^Tool result for (generate_image|edit_image): (.*)$", message.content, re.S)
+        if match:
+            try:
+                results.append((match[1], json.loads(json.loads(match[2])["text"])))
+            except (KeyError, ValueError, TypeError):
+                return "IMAGE_E2E_INVALID_TOOL_DATA"
+
+    def call(tool: str, args: dict[str, str]) -> str:
+        return "<tool_call>" + json.dumps({"tool": tool, "args": args}, separators=(",", ":")) + "</tool_call>"
+
+    if not results and prompt == "IMAGE_E2E_EDIT_PREVIOUS":
+        # A follow-up turn: the only source of an earlier id is the
+        # conversation image list the runner puts into the system message.
+        system = next((m.content for m in messages if m.role == "system"), "")
+        listed = re.search(r'"image_id":\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"', system)
+        if listed is None:
+            return "IMAGE_E2E_NO_PREVIOUS_IMAGE"
+        return call("edit_image", {"image_id": listed[1], "prompt": "IMAGE_E2E make it green"})
+    if not results:
+        return call("generate_image", {"prompt": "IMAGE_E2E red square", "size": "1024x1024"})
+    tool, row = results[-1]
+    if row.get("error"):
+        return "IMAGE_E2E_ERROR:" + str(row["error"])
+    if prompt == "IMAGE_E2E_EDIT" and tool == "generate_image":
+        return call("edit_image", {"image_id": row["imageId"], "prompt": "IMAGE_E2E make it blue"})
+    return "IMAGE_E2E_DONE " + ("edited" if tool == "edit_image" else "generated")
+
+
 def _content_for(request: CompletionRequest) -> str:
+    images = _image_response(request.messages)
+    if images is not None:
+        return images
     routing = _routing_response(request.messages)
     if routing is not None:
         return routing
@@ -681,8 +742,30 @@ async def health() -> dict[str, str]:
 async def models() -> dict[str, Any]:
     return {
         "object": "list",
-        "data": [{"id": MODEL_ID, "object": "model", "owned_by": "aurum-ai-tests"}],
+        "data": [
+            {"id": model_id, "object": "model", "owned_by": "aurum-ai-tests"}
+            for model_id in (MODEL_ID, IMAGE_MODEL_ID)
+            if model_id
+        ],
     }
+
+
+@app.post("/v1/images/generations")
+async def image_generations(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    if not IMAGE_MODEL_ID or body.get("model") != IMAGE_MODEL_ID or not str(body.get("prompt") or "").strip():
+        raise HTTPException(400, "invalid image request")
+    return {"created": 0, "data": [{"b64_json": base64.b64encode(_png(220, 30, 30)).decode()}]}
+
+
+@app.post("/v1/images/edits")
+async def image_edits(request: Request) -> dict[str, Any]:
+    # Multipart without a form parser: the deterministic check only needs the
+    # model name and a PNG source image to be present in the upload.
+    body = await request.body()
+    if not IMAGE_MODEL_ID or IMAGE_MODEL_ID.encode() not in body or b"\x89PNG\r\n\x1a\n" not in body:
+        raise HTTPException(400, "invalid image edit")
+    return {"created": 0, "data": [{"b64_json": base64.b64encode(_png(30, 30, 220)).decode()}]}
 
 
 @app.post("/v1/chat/completions")

@@ -32,6 +32,8 @@ spec:
           env:
             - name: APP_MODULE
               value: "src.main_admin:app"
+            - name: APP_IMAGES_ENABLED
+              value: {{ .Values.backend.images.enabled | quote }}
             - name: RUN_MIGRATIONS
               value: "false"
             - name: APP_IDENTITY_SYNC_ENABLED

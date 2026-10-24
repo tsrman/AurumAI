@@ -278,6 +278,12 @@ services:
       APP_WEB_ENABLED: "${WEB_ENABLED:-false}"
       APP_WEB_TOOLS_URL: "http://web-tools:8120"
       APP_WEB_TOOLS_SERVICE_SECRET: "${WEB_TOOLS_SERVICE_SECRET:-}"
+      # Default-off image tools; the OpenAI-compatible Images API defaults to
+      # the chat gateway (APP_LLM_GATEWAY_URL) and its key.
+      APP_IMAGES_ENABLED: "${IMAGES_ENABLED:-false}"
+      APP_IMAGES_API_URL: "${IMAGES_API_URL:-}"
+      APP_IMAGES_API_KEY: "${IMAGES_API_KEY:-}"
+      APP_IMAGES_TIMEOUT_SECONDS: "${IMAGES_TIMEOUT_SECONDS:-120}"
       # Warm pool of unbound runner containers for fast new-conversation
       # starts — 0 disables pooling (each new conversation pays the normal
       # ~3-4s container-create + Temporal-connect cold start). See
@@ -340,6 +346,9 @@ services:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:8001:8000"
     environment:
       APP_MODULE: "src.main_admin:app"
+      # Shown on the admin Models page so the image model choice explains
+      # whether the operator switch is on.
+      APP_IMAGES_ENABLED: "${IMAGES_ENABLED:-false}"
       RUN_MIGRATIONS: "false"
       # the security review — same fix and rationale as `backend` above.
       APP_DEBUG: "${APP_DEBUG:-true}"

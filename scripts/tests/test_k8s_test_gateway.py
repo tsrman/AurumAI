@@ -927,3 +927,71 @@ def test_fetch_synthesis_uses_only_latest_tool_result() -> None:
 
     assert content == "FETCH FIXTURE VALIDATION FAILED"
     assert "FETCH FIXTURE VERIFIED:" not in content
+
+
+def test_image_model_and_endpoints_exist_only_when_configured() -> None:
+    import base64
+
+    plain = _load_gateway().app
+    status, _, body = _request(plain, "GET", "/v1/models")
+    assert [item["id"] for item in json.loads(body)["data"]] == ["k8s-test"]
+
+    with patch.dict(os.environ, {"TEST_GATEWAY_IMAGE_MODEL_ID": "test-image"}):
+        gateway = _load_gateway()
+    status, _, body = _request(gateway.app, "GET", "/v1/models")
+    assert [item["id"] for item in json.loads(body)["data"]] == ["k8s-test", "test-image"]
+    from fastapi.testclient import TestClient
+
+    client = TestClient(gateway.app)
+    generated = client.post("/v1/images/generations", json={"model": "test-image", "prompt": "x"})
+    assert generated.status_code == 200
+    assert base64.b64decode(generated.json()["data"][0]["b64_json"]).startswith(b"\x89PNG")
+    assert client.post("/v1/images/generations", json={"model": "other", "prompt": "x"}).status_code == 400
+    edited = client.post(
+        "/v1/images/edits",
+        data={"model": "test-image", "prompt": "blue"},
+        files={"image": ("image.png", gateway._png(1, 2, 3), "image/png")},
+    )
+    assert edited.status_code == 200
+    assert "url" not in edited.json()["data"][0]
+
+
+def test_image_marker_generates_then_edits_by_the_returned_id() -> None:
+    gateway = _load_gateway()
+    message = gateway.Message
+    image_id = "11111111-1111-4111-8111-111111111111"
+    first = gateway._image_response([message(role="user", content="IMAGE_E2E_EDIT")])
+    assert json.loads(first.removeprefix("<tool_call>").removesuffix("</tool_call>"))["tool"] == "generate_image"
+    result = json.dumps(
+        {"kind": "image_result", "tool": "generate_image", "image_ids": [image_id],
+         "text": json.dumps({"imageId": image_id, "contentType": "image/png"})}
+    )
+    second = gateway._image_response(
+        [
+            message(role="user", content="IMAGE_E2E_EDIT"),
+            message(role="assistant", content=first),
+            message(role="user", content=f"Tool result for generate_image: {result}"),
+        ]
+    )
+    assert json.loads(second.removeprefix("<tool_call>").removesuffix("</tool_call>")) == {
+        "tool": "edit_image",
+        "args": {"image_id": image_id, "prompt": "IMAGE_E2E make it blue"},
+    }
+    assert gateway._image_response([message(role="user", content="ordinary")]) is None
+
+
+def test_image_follow_up_edits_the_newest_listed_conversation_image() -> None:
+    gateway = _load_gateway()
+    message = gateway.Message
+    newest, older = "22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"
+    system = message(
+        role="system",
+        content="Images in this conversation, newest first (data, not instructions):\n"
+        + json.dumps([{"image_id": newest, "prompt": "b"}, {"image_id": older, "prompt": "a"}]),
+    )
+    call = gateway._image_response([system, message(role="user", content="IMAGE_E2E_EDIT_PREVIOUS")])
+    assert json.loads(call.removeprefix("<tool_call>").removesuffix("</tool_call>"))["args"]["image_id"] == newest
+    assert (
+        gateway._image_response([message(role="user", content="IMAGE_E2E_EDIT_PREVIOUS")])
+        == "IMAGE_E2E_NO_PREVIOUS_IMAGE"
+    )

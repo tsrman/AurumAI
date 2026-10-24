@@ -14,6 +14,7 @@ def test_default_catalog_exposes_the_approved_capabilities_in_stable_order() -> 
         "admin.users.read",
         "admin.users.write",
         "chat.send",
+        "images.generate",
         "sharing.manage",
         "web.access",
         "workspace.agents.create",

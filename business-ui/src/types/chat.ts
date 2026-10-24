@@ -35,6 +35,7 @@ export interface MessageResponse {
   turnId?: string | null;
   sourceIds?: string[];
   unsupportedSourceIds?: string[];
+  imageIds?: string[];
 }
 
 export type QuestionStatus = "pending" | "answered" | "expired" | "cancelled";
@@ -130,7 +131,7 @@ export type SSEEvent =
         calls: Array<{
           call_id: string;
           skill_id?: string;
-          tool?: "web_search" | "web_read";
+          tool?: "web_search" | "web_read" | "generate_image" | "edit_image";
           label?: string;
           args?: Record<string, unknown>;
         }>;
@@ -142,7 +143,7 @@ export type SSEEvent =
       data: {
         call_id: string;
         skill_id?: string;
-        tool?: "web_search" | "web_read";
+        tool?: "web_search" | "web_read" | "generate_image" | "edit_image";
         label?: string;
         result: unknown;
         turn_id: string;

@@ -182,6 +182,8 @@ async def test_workflow_chat_ignores_composer_model_and_signals_exact_run_payloa
         "workflow_run_id": str(run_id),
         "user_questions_enabled": False,
         "web_tools_enabled": False,
+        "image_generation_enabled": False,
+        "image_editing_enabled": False,
     }
     assert order == ["snapshot", "quota", "turn", "commit", "commit", "signal", "commit"]
 
@@ -233,6 +235,70 @@ async def test_web_tools_are_advertised_only_with_operator_and_live_capability(
         capability_check.assert_awaited_once()
     else:
         capability_check.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operator_enabled", "has_capability", "models", "expected"),
+    [
+        (False, True, ("gen", "edit"), (False, False)),
+        (True, False, ("gen", "edit"), (False, False)),
+        (True, True, (None, None), (False, False)),
+        (True, True, ("gen", None), (True, False)),
+        (True, True, ("gen", "edit"), (True, True)),
+    ],
+)
+async def test_image_tools_need_operator_capability_and_organization_models(
+    monkeypatch,
+    operator_enabled: bool,
+    has_capability: bool,
+    models: tuple[str | None, str | None],
+    expected: tuple[bool, bool],
+) -> None:
+    conv, user, session, pubsub = _fixture()
+    stored_message = SimpleNamespace(turn_id=uuid.uuid4())
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+    monkeypatch.setattr(chat.settings, "IMAGES_ENABLED", operator_enabled)
+    with (
+        patch.object(chat.conversation_repository, "get", AsyncMock(return_value=conv)),
+        patch.object(chat, "_maybe_classify_workflow", AsyncMock(return_value=None)),
+        patch.object(chat, "ensure_model_allowed", AsyncMock()),
+        patch.object(chat.message_repository, "create", AsyncMock(return_value=stored_message)),
+        patch.object(chat.interaction_service, "begin_turn", AsyncMock()),
+        patch.object(chat.event_bus, "subscribe_channel", AsyncMock(return_value=pubsub)),
+        patch.object(chat.session_manager, "get_or_create", AsyncMock()),
+        patch.object(chat, "_signal_or_start_conversation_workflow", signal),
+        patch.object(chat, "get_temporal_client", return_value=MagicMock()),
+        patch.object(chat, "organization_image_models", AsyncMock(return_value=models)),
+        patch.object(
+            chat,
+            "recent_conversation_images",
+            AsyncMock(return_value=[{"id": "image-1", "prompt": "a fox"}]),
+        ),
+        patch.object(
+            chat.authorization_service,
+            "has_capability",
+            AsyncMock(return_value=has_capability),
+        ),
+    ):
+        await chat.chat_stream(
+            request=ChatRequest(
+                conversation_id=str(conv.id),
+                messages=[{"role": "user", "content": "draw"}],
+                model="test",
+            ),
+            user=user,
+            session=session,
+            quota=AllowQuota([]),
+        )
+
+    payload = signal.call_args.args[2]
+    assert (payload["image_generation_enabled"], payload["image_editing_enabled"]) == expected
+    # Only an editing turn needs earlier images, and only their id and prompt.
+    if expected[1]:
+        assert payload["recent_images"] == [{"id": "image-1", "prompt": "a fox"}]
+    else:
+        assert "recent_images" not in payload
 
 
 @pytest.mark.asyncio

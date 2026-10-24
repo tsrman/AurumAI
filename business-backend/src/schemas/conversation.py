@@ -56,3 +56,5 @@ class MessageResponse(BaseModel):
     turnId: Optional[str] = None
     sourceIds: List[str] = Field(default_factory=list)
     unsupportedSourceIds: List[str] = Field(default_factory=list)
+    # Images this assistant turn generated, verified against the turn.
+    imageIds: List[str] = Field(default_factory=list)

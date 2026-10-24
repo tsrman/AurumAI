@@ -9,6 +9,7 @@ import { useUpdateConversation } from "@/hooks/useUpdateConversation";
 import { useDeleteConversation } from "@/hooks/useDeleteConversation";
 import { getConversation, toolCallsFromHistory } from "@/lib/chat-api";
 import { loadSourcesForMessage } from "@/lib/web-sources-api";
+import { imageIdsFrom } from "@/lib/images-api";
 import { formatHistoryTime, historyBucket } from "@/lib/date";
 import { useLocale, useTranslations } from "next-intl";
 import type { Conversation, Message, Source } from "@/types/aurum";
@@ -58,6 +59,7 @@ function mapMessageToUIMessage(
     content: msg.content ?? "",
     widgets: [],
     sources,
+    images: imageIdsFrom(msg.imageIds),
     thinkingShown: "",
     contentShown: msg.content ?? "",
     phase: "done",

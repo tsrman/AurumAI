@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   getAdminModels,
+  getOrganizationImageModels,
+  putOrganizationImageModels,
   putOrganizationModelSettings,
 } from "@/lib/api";
 
@@ -27,5 +29,23 @@ export function useUpdateOrganizationModelSettings() {
         queryClient.invalidateQueries({ queryKey: ["models"] }),
       ]);
     },
+  });
+}
+
+
+export function useOrganizationImageModels() {
+  return useQuery({
+    queryKey: ["admin-image-models"],
+    queryFn: getOrganizationImageModels,
+  });
+}
+
+
+export function useUpdateOrganizationImageModels() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: { generationModel: string | null; editModel: string | null }) =>
+      putOrganizationImageModels(settings),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-image-models"] }),
   });
 }

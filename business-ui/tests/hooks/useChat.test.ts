@@ -594,6 +594,91 @@ test("real mode: correlates tool-result by call_id", async () => {
   window.keycloak = originalKeycloak;
 });
 
+test("real mode: image tool results attach their ids to the answer", async () => {
+  vi.useRealTimers();
+
+  const originalApiUrl = process.env.NEXT_PUBLIC_API_URL;
+  process.env.NEXT_PUBLIC_API_URL = "http://localhost:8000/v1";
+  const originalKeycloak = window.keycloak;
+  window.keycloak = { token: "token", updateToken: vi.fn().mockResolvedValue(true) };
+
+  const { createConversation, getConversation, streamChat } = await import("@/lib/chat-api");
+  vi.mocked(createConversation).mockResolvedValueOnce({
+    id: "conv-real",
+    title: "New conversation",
+    model: "pro", temperature: 0.7,
+    status: "active",
+    lastMessageAt: null,
+    createdAt: "2026-06-19T10:00:00Z",
+    messageCount: 0,
+    tokenCount: 0,
+    costUsd: 0,
+  });
+  vi.mocked(getConversation).mockResolvedValueOnce({
+    conversation: {
+      id: "conv-real",
+      title: "New conversation",
+      model: "pro", temperature: 0.7,
+      status: "active",
+      lastMessageAt: null,
+      createdAt: "2026-06-19T10:00:00Z",
+      messageCount: 0,
+      tokenCount: 0,
+      costUsd: 0,
+    },
+    messages: [],
+  });
+
+  let eventHandler: ((event: SSEEvent) => void) | null = null;
+  vi.mocked(streamChat).mockImplementationOnce(({ onEvent }) => {
+    eventHandler = onEvent;
+    return { cancel: vi.fn() };
+  });
+
+  const { result } = renderHook(() => useChat(), { wrapper: Wrapper });
+
+  act(() => {
+    result.current.send("Hello");
+  });
+
+  await waitFor(() =>
+    expect(result.current.messages.some((m) => m.role === "assistant")).toBe(true)
+  );
+
+  act(() => {
+    eventHandler?.({
+      type: "tool-calls",
+      data: {
+        calls: [{ call_id: "call-1", tool: "generate_image", label: "Generating image" }],
+        turn_id: "t1",
+      },
+    });
+    eventHandler?.({
+      type: "tool-result",
+      data: {
+        call_id: "call-1",
+        tool: "generate_image",
+        result: {
+          status: "completed",
+          imageIds: ["55555555-5555-4555-8555-555555555555", "not-an-id"],
+        },
+        turn_id: "t1",
+      },
+    });
+  });
+
+  const assistant = result.current.messages.find(
+    (m): m is AssistantMessageView => m.role === "assistant"
+  );
+  expect(assistant).toBeDefined();
+  expect(assistant?.tools[0].name).toBe("Generating image");
+  expect(assistant?.tools[0].state).toBe("done");
+  expect(assistant?.images).toEqual(["55555555-5555-4555-8555-555555555555"]);
+
+  process.env.NEXT_PUBLIC_API_URL = originalApiUrl;
+  window.keycloak = originalKeycloak;
+});
+
 test("real mode: run-command/run-result progress lands in the matching tool row", async () => {
   vi.useRealTimers();
 

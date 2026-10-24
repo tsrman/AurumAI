@@ -14,6 +14,7 @@ from src.workflows.activities import (
     consume_user_question,
     create_user_question,
     expire_user_question,
+    execute_image_tool,
     execute_web_tool,
     fail_interaction_turn,
     llm_call,
@@ -77,6 +78,7 @@ async def run(client: Client) -> None:
             consume_user_question,
             expire_user_question,
             fail_interaction_turn,
+            execute_image_tool,
             execute_web_tool,
         ],
     )

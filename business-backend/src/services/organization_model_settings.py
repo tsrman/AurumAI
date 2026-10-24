@@ -175,5 +175,55 @@ class OrganizationModelSettingsService:
         )
         await session.execute(statement)
 
+    @staticmethod
+    def catalog_model_ids(snapshot: GatewayCatalogSnapshot) -> tuple[str, ...]:
+        """Every model id the gateway publishes; image models are not chat models."""
+        seen: dict[str, None] = {}
+        for model in snapshot.models:
+            model_id = model.get("id")
+            if isinstance(model_id, str):
+                try:
+                    ResourceRef(ResourceType.MODEL, model_id)
+                except ValueError:
+                    continue
+                seen.setdefault(model_id, None)
+        return tuple(seen)
+
+    @staticmethod
+    async def image_models(
+        session: AsyncSession, org_id: UUID
+    ) -> tuple[str | None, str | None]:
+        row = (
+            await session.execute(
+                select(
+                    OrganizationSettings.image_generation_model,
+                    OrganizationSettings.image_edit_model,
+                ).where(OrganizationSettings.org_id == org_id)
+            )
+        ).one_or_none()
+        return (row[0], row[1]) if row is not None else (None, None)
+
+    async def set_image_models(
+        self,
+        session: AsyncSession,
+        org_id: UUID,
+        generation_model: str | None,
+        edit_model: str | None,
+        snapshot: GatewayCatalogSnapshot | None,
+    ) -> None:
+        chosen = [model for model in (generation_model, edit_model) if model is not None]
+        if chosen:
+            if snapshot is None or snapshot.status is GatewayCatalogStatus.UNAVAILABLE:
+                raise GatewayUnavailable
+            published = set(self.catalog_model_ids(snapshot))
+            if any(model not in published for model in chosen):
+                raise ModelNotFound
+        values = {"image_generation_model": generation_model, "image_edit_model": edit_model}
+        await session.execute(
+            insert(OrganizationSettings)
+            .values(org_id=org_id, **values)
+            .on_conflict_do_update(index_elements=[OrganizationSettings.org_id], set_=values)
+        )
+
 
 organization_model_settings_service = OrganizationModelSettingsService()

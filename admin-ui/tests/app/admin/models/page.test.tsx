@@ -28,7 +28,29 @@ vi.mock("@/hooks/useAdminAccess", () => ({
 vi.mock("@/components/authorization/GrantEditor", () => ({
   GrantEditor: () => null,
 }));
+let imageQuery: {
+  data?: {
+    data: {
+      enabled: boolean;
+      gatewayStatus: "available";
+      generationModel: string | null;
+      editModel: string | null;
+      models: string[];
+    };
+  };
+  isLoading: boolean;
+  error: unknown;
+} = { data: undefined, isLoading: false, error: null };
+const imageMutate = vi.fn();
+
 vi.mock("@/hooks/useAdminModels", () => ({
+  useOrganizationImageModels: () => imageQuery,
+  useUpdateOrganizationImageModels: () => ({
+    mutate: imageMutate,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
   useAdminModels: () => query,
   useUpdateOrganizationModelSettings: () => ({
     mutate,
@@ -53,6 +75,20 @@ beforeEach(() => {
   access = { allowed: true, canWrite: true, error: null, isLoading: false };
   query = { data: { data: available }, isLoading: false, error: null };
   mutate.mockClear();
+  imageMutate.mockClear();
+  imageQuery = {
+    data: {
+      data: {
+        enabled: true,
+        gatewayStatus: "available",
+        generationModel: null,
+        editModel: null,
+        models: ["provider/readable", "provider/image"],
+      },
+    },
+    isLoading: false,
+    error: null,
+  };
 });
 
 test("shows access loading, denial, and query errors", () => {
@@ -198,4 +234,30 @@ test("labels a catalogued default whose organization grant was revoked", () => {
   expect(
     screen.getByText("The saved model is no longer available to the organization.")
   ).toBeInTheDocument();
+});
+
+
+test("image generation and editing models are chosen separately", () => {
+  render(<AdminModelsPage />);
+  const images = screen.getByRole("heading", { name: "Images" }).closest("section")!;
+  const save = within(images).getByRole("button", { name: "Save image models" });
+  expect(save).toBeDisabled();
+  fireEvent.change(within(images).getByLabelText("Image generation model"), {
+    target: { value: "provider/image" },
+  });
+  fireEvent.click(save);
+  expect(imageMutate).toHaveBeenCalledWith(
+    { generationModel: "provider/image", editModel: null },
+    expect.anything()
+  );
+});
+
+test("explains when the operator switch keeps image tools off", () => {
+  imageQuery = {
+    ...imageQuery,
+    data: { data: { ...imageQuery.data!.data, enabled: false, generationModel: "gone/model" } },
+  };
+  render(<AdminModelsPage />);
+  expect(screen.getByText(/switched off on this deployment/)).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "gone/model — no longer published" })).toBeDisabled();
 });
