@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { login } from "./helpers/auth";
+import { expectSelectedModel } from "./helpers/chat";
 
 /**
  * Full real round trip for a skill call driven through the actual browser:
@@ -99,25 +100,28 @@ test.describe("Chat: real MCP skill call", () => {
     await composer.fill(
       "What is 17 plus 25? Use the available tool to compute it, then answer with just the number."
     );
+    await expectSelectedModel(page, MODEL);
     await page.getByLabel("Send").click();
 
     // aria-label lives on a plain <div> (see ToolCallRow.tsx) — getByLabel()
     // targets labelled form controls, so an attribute locator is used here.
     const toolCall = page.locator(`[aria-label="${skillId}: Done"]`);
-    await expect(toolCall).toBeVisible({ timeout: 90_000 });
+    await expect(toolCall.first()).toBeVisible({ timeout: 90_000 });
     // A completed status means a tool-result event arrived, not that MCP itself
     // succeeded. A failed activity can still be followed by an LLM answer
     // containing the expected number, so require the real MCP success flag
     // from the tool-result payload as well.
-    await expect(toolCall).toContainText('"isError":false');
     await expect(page.getByLabel("Send")).toBeVisible({ timeout: 90_000 });
+    for (const card of await toolCall.all()) {
+      await expect(card).toContainText('"isError":false');
+    }
     // Scoped to the final answer's own testid, not exact-matched — "42"
     // also appears as a substring of the tool-call detail line rendered by
     // ToolCallRow (also a <p>, so a bare page-wide getByText("42") would
     // hit strict-mode violations), and not every model phrases the answer
     // as the bare number.
     await expect(
-      page.getByTestId("assistant-content").last().getByText(/\b42\b/)
-    ).toBeVisible();
+      page.getByTestId("assistant-content").last()
+    ).toContainText(/\b42\b/);
   });
 });

@@ -24,6 +24,16 @@ function ActiveConversationProbe() {
   );
 }
 
+function ModelProbe() {
+  const { activeModelId, setActiveModelId } = useAppShell();
+  return (
+    <>
+      <output data-testid="selected-model">{activeModelId}</output>
+      <button onClick={() => setActiveModelId("deepseek-flash-free")}>select model</button>
+    </>
+  );
+}
+
 describe("AppShellProvider active conversation recovery", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -77,5 +87,86 @@ describe("AppShellProvider active conversation recovery", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "clear" }));
     expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe("AppShellProvider model recovery", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    vi.mocked(useAuth).mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { userId: "user-1", orgId: "org-1" },
+    } as ReturnType<typeof useAuth>);
+    vi.mocked(useModels).mockReturnValue({
+      data: { data: [{ id: "MiniMax-M3" }, { id: "deepseek-flash-free" }] },
+    } as ReturnType<typeof useModels>);
+    vi.mocked(useSettings).mockReturnValue({
+      data: { data: { default_model: "MiniMax-M3" } },
+      isPending: false,
+    } as ReturnType<typeof useSettings>);
+  });
+
+  it("keeps the manually selected model after a reload", async () => {
+    const first = render(<AppShellProvider><ModelProbe /></AppShellProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "select model" }));
+    first.unmount();
+
+    render(<AppShellProvider><ModelProbe /></AppShellProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("selected-model"))
+      .toHaveTextContent("deepseek-flash-free"));
+  });
+
+  it("does not expose the fallback while an authenticated selection is restoring", async () => {
+    const first = render(<AppShellProvider><ModelProbe /></AppShellProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "select model" }));
+    first.unmount();
+    const signedIn = vi.mocked(useAuth).mock.results.at(-1)!.value;
+    vi.mocked(useAuth).mockReturnValue({
+      isAuthenticated: false, isLoading: true,
+    } as ReturnType<typeof useAuth>);
+    vi.mocked(useModels).mockReturnValue({ data: undefined } as ReturnType<typeof useModels>);
+    const view = render(<AppShellProvider><ModelProbe /></AppShellProvider>);
+
+    vi.mocked(useAuth).mockReturnValue(signedIn);
+    view.rerender(<AppShellProvider><ModelProbe /></AppShellProvider>);
+    expect(screen.getByTestId("selected-model")).toBeEmptyDOMElement();
+    vi.mocked(useModels).mockReturnValue({
+      data: { data: [{ id: "MiniMax-M3" }, { id: "deepseek-flash-free" }] },
+    } as ReturnType<typeof useModels>);
+    view.rerender(<AppShellProvider><ModelProbe /></AppShellProvider>);
+    expect(screen.getByTestId("selected-model")).toBeEmptyDOMElement();
+    await waitFor(() => expect(screen.getByTestId("selected-model"))
+      .toHaveTextContent("deepseek-flash-free"));
+  });
+
+  it.each([
+    { userId: "user-2", orgId: "org-1" },
+    { userId: "user-1", orgId: "org-2" },
+  ])("does not carry a model choice into another identity: %j", async (user) => {
+    const view = render(<AppShellProvider><ModelProbe /></AppShellProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "select model" }));
+    vi.mocked(useAuth).mockReturnValue({
+      isAuthenticated: true, isLoading: false, user,
+    } as ReturnType<typeof useAuth>);
+
+    view.rerender(<AppShellProvider><ModelProbe /></AppShellProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("selected-model"))
+      .toHaveTextContent("MiniMax-M3"));
+  });
+
+  it("falls back when a selected model is no longer authorized", async () => {
+    const view = render(<AppShellProvider><ModelProbe /></AppShellProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "select model" }));
+    vi.mocked(useModels).mockReturnValue({
+      data: { data: [{ id: "MiniMax-M3" }] },
+    } as ReturnType<typeof useModels>);
+
+    view.rerender(<AppShellProvider><ModelProbe /></AppShellProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("selected-model"))
+      .toHaveTextContent("MiniMax-M3"));
   });
 });

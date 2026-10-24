@@ -48,6 +48,7 @@ export const AppShellContext = createContext<AppShellContextValue | undefined>(
 );
 
 const ACTIVE_CONVERSATION_STORAGE_PREFIX = "aurum-ai.active-conversation";
+const ACTIVE_MODEL_STORAGE_PREFIX = "aurum-ai.active-model";
 
 function activeConversationStorageKey(
   organizationId: string | undefined,
@@ -143,9 +144,31 @@ export function AppShellProvider({
     }));
   }, [isAuthenticated, modelsData]);
 
-  const [userSelectedModelId, setUserSelectedModelId] = useState<string | null>(
-    null
-  );
+  const modelStorageKey = isAuthenticated && user
+    ? `${ACTIVE_MODEL_STORAGE_PREFIX}:${user.orgId ?? "no-org"}:${user.userId}`
+    : null;
+  const [modelChoice, setModelChoice] = useState<{
+    identity: string | null;
+    id: string | null;
+  }>({ identity: null, id: null });
+  useEffect(() => {
+    if (!modelStorageKey) return;
+    const restore = window.setTimeout(() => {
+      let stored: string | null = null;
+      try {
+        stored = window.sessionStorage.getItem(modelStorageKey);
+      } catch {
+        // Selection remains usable when browser storage is unavailable.
+      }
+      setModelChoice((current) => current.identity === modelStorageKey
+        ? current
+        : { identity: modelStorageKey, id: stored });
+    }, 0);
+    return () => window.clearTimeout(restore);
+  }, [modelStorageKey]);
+  const userSelectedModelId = modelChoice.identity === modelStorageKey
+    ? modelChoice.id
+    : null;
   const automaticModelId = useMemo(() => {
     if (!isAuthenticated) return mockModels[0]?.id ?? "pro";
     if (modelsData === undefined || models.length === 0) return "";
@@ -164,11 +187,24 @@ export function AppShellProvider({
       ) ?? models[0].id
     );
   }, [isAuthenticated, models, modelsData, settingsData, settingsPending]);
-  const activeModelId = userSelectedModelId ?? automaticModelId;
+  const modelChoicePending = modelStorageKey && modelChoice.identity !== modelStorageKey;
+  const validSelection = userSelectedModelId && (
+    !isAuthenticated || models.some((model) => model.id === userSelectedModelId)
+  );
+  const activeModelId = modelChoicePending ? "" : validSelection
+    ? userSelectedModelId
+    : automaticModelId;
 
   const setActiveModelId = useCallback((id: string) => {
-    setUserSelectedModelId(id);
-  }, []);
+    setModelChoice({ identity: modelStorageKey, id });
+    if (modelStorageKey) {
+      try {
+        window.sessionStorage.setItem(modelStorageKey, id);
+      } catch {
+        // Keep the in-memory choice if session storage is disabled or full.
+      }
+    }
+  }, [modelStorageKey]);
 
   const toggleSide = useCallback(() => setSideMini((p) => !p), []);
 

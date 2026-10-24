@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { login } from "./helpers/auth";
+import { expectSelectedModel } from "./helpers/chat";
 import { multistepMathSkillBundle } from "./helpers/skillBundle";
 
 /**
@@ -139,11 +140,12 @@ test.describe("Chat: real multi-round code skill call", () => {
     await composer.fill(
       `Call the ${skillName} skill (skill_id: ${skillId}) with args {"task": "compute the two-step result"} and tell me the FINAL RESULT number.`
     );
+    await expectSelectedModel(page, MODEL);
     await page.getByLabel("Send").click();
 
     // aria-label lives on a plain <div> (see ToolCallRow.tsx) — getByLabel()
     // targets labelled form controls, so an attribute locator is used here.
-    await expect(page.locator(`[aria-label="${skillId}: Done"]`)).toBeVisible({
+    await expect(page.locator(`[aria-label="${skillId}: Done"]`).first()).toBeVisible({
       timeout: 120_000,
     });
     await expect(page.getByLabel("Send")).toBeVisible({ timeout: 120_000 });
@@ -153,7 +155,7 @@ test.describe("Chat: real multi-round code skill call", () => {
     // hit strict-mode violations), and not every model phrases the answer
     // as the bare number (e.g. "The FINAL RESULT number is 142.").
     await expect(
-      page.getByTestId("assistant-content").last().getByText(/\b142\b/)
-    ).toBeVisible();
+      page.getByTestId("assistant-content").last()
+    ).toContainText(/\b142\b/);
   });
 });

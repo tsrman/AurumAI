@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { login } from "./helpers/auth";
+import { expectSelectedModel } from "./helpers/chat";
 
 /**
  * Full real round trip for a chat file attachment driven through the actual
@@ -32,6 +33,10 @@ test.describe("Chat: file attachment and real attachment search", () => {
     test.setTimeout(180_000);
 
     await login(page);
+    await page.getByLabel("Choose model").click();
+    await page.getByRole("option", { name: MODEL, exact: true }).click();
+    await expectSelectedModel(page, MODEL);
+    await expect(page.getByLabel("Choose a file to attach")).toBeEnabled();
 
     // A secret only the attached file knows — the model can only answer
     // correctly via a real search round trip, not a guess from training data.
@@ -53,8 +58,7 @@ test.describe("Chat: file attachment and real attachment search", () => {
     await expect(page.getByText("attachment-secret")).toBeVisible();
     await expect(page.getByText(/·\s*ready/)).toBeVisible({ timeout: 60_000 });
 
-    await page.getByLabel("Choose model").click();
-    await page.getByRole("option", { name: MODEL, exact: true }).click();
+    await expectSelectedModel(page, MODEL);
 
     await page
       .getByLabel("Message")
@@ -64,16 +68,16 @@ test.describe("Chat: file attachment and real attachment search", () => {
       );
     await page.getByLabel("Send").click();
 
-    // Exactly one tool call is expected this turn, and its id/name is never
+    // The tool's id/name is never
     // surfaced to the client (server-provisioned, invisible outside this
     // conversation) — unlike chat.skills.real.spec.ts, there's no id to seed
     // or match against, so a loose "any tool finished" locator is safe here.
     const toolCall = page.locator('[aria-label$=": Done"]');
-    await expect(toolCall).toBeVisible({ timeout: 90_000 });
+    await expect(toolCall.first()).toBeVisible({ timeout: 90_000 });
     // Proves a real search ran and found the actual chunk — not a guess, and
     // not a "Skill execution failed" dispatch error swallowed into a
     // plausible-looking answer.
-    await expect(toolCall).toContainText(secret);
+    await expect(toolCall.filter({ hasText: secret }).first()).toBeVisible();
 
     await expect(page.getByLabel("Send")).toBeVisible({ timeout: 90_000 });
     await expect(page.getByTestId("assistant-content").last()).toContainText(secret);

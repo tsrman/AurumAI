@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { login } from "./helpers/auth";
-import { expectNewAssistantReply } from "./helpers/chat";
+import { expectNewAssistantReply, expectSelectedModel } from "./helpers/chat";
 
 /**
  * Real-provider long dialogue with26 turns, MCP and optional durable questions/web.
@@ -153,7 +153,7 @@ type Question = {
   text: string;
   status: "pending" | "answered" | "expired" | "cancelled";
 };
-type HistoryMessage = { id: string; role: string; turnId?: string };
+type HistoryMessage = { id: string; role: string; turnId?: string; model?: string; content?: string };
 type History = { messages: {
   data: HistoryMessage[];
   pagination: { hasMore: boolean; cursor: string | null };
@@ -186,6 +186,7 @@ async function sendTurn(
   previousReplyCount: number,
   timeoutMs: number
 ): Promise<{ text: string; replyCount: number }> {
+  await expectSelectedModel(page, MODEL);
   await page.getByLabel("Message").fill(prompt);
   await page.getByLabel("Send").click();
   await expectNewAssistantReply(page, previousReplyCount, timeoutMs);
@@ -194,6 +195,7 @@ async function sendTurn(
   await expect(page.getByLabel("Stop generating")).toHaveCount(0);
   await expect(page.getByText(/gateway unavailable/i)).toHaveCount(0);
   const text = (await page.getByTestId("assistant-content").nth(replyCount - 1).innerText()) ?? "";
+  expect(text).not.toMatch(/Could not get a model response/i);
   return { text, replyCount };
 }
 
@@ -263,6 +265,7 @@ test.describe("Long conversation with a real model: skills, web tools, questions
     let fillerDone = 0;
     const fillerBudget = totalTurns - specialSegments;
     let conversationId: string | null = null;
+    let midpointReloadDone = false;
 
     async function fillerTurn(phaseLabel: string): Promise<void> {
       await test.step(phaseLabel, async () => {
@@ -289,6 +292,12 @@ test.describe("Long conversation with a real model: skills, web tools, questions
         expect(text, `${a}+${b}`).toMatch(new RegExp(`\\b${a + b}\\b`));
         replyCount = nextCount;
         fillerDone += 1;
+        if (!midpointReloadDone && replyCount >= Math.floor(totalTurns / 2)) {
+          await page.reload();
+          await expect(page.getByTestId("assistant-content")).toHaveCount(replyCount);
+          await expectSelectedModel(page, MODEL);
+          midpointReloadDone = true;
+        }
       });
     }
 
@@ -303,12 +312,15 @@ test.describe("Long conversation with a real model: skills, web tools, questions
           replyCount,
           SKILL_TIMEOUT_MS
         );
-        const toolCall = page.locator(`[aria-label="${skillId}: Done"]`);
-        await expect(toolCall).toBeVisible({ timeout: SKILL_TIMEOUT_MS });
-        await expect(toolCall).toContainText('"isError":false');
+        const toolCall = page.getByTestId("assistant-message").nth(nextCount - 1)
+          .locator(`[aria-label="${skillId}: Done"]`);
+        await expect(toolCall.first()).toBeVisible({ timeout: SKILL_TIMEOUT_MS });
+        for (const card of await toolCall.all()) {
+          await expect(card).toContainText('"isError":false');
+        }
         await expect(
-          page.getByTestId("assistant-content").nth(nextCount - 1).getByText(new RegExp(`\\b${a + b}\\b`))
-        ).toBeVisible();
+          page.getByTestId("assistant-content").nth(nextCount - 1)
+        ).toContainText(new RegExp(`\\b${a + b}\\b`));
         replyCount = nextCount;
       });
     }
@@ -458,11 +470,16 @@ test.describe("Long conversation with a real model: skills, web tools, questions
       expect(new Set(turnIds).size, "every reply has a distinct durable turn").toBe(
         assistantMessages.length
       );
+      for (const message of assistantMessages) {
+        expect(message.model, "the requested model handled every turn").toBe(MODEL);
+        expect(message.content, "every durable answer is nonempty").toMatch(/\S/u);
+      }
       expect(await page.getByTestId("assistant-content").count()).toBe(replyCount);
       // Reload through the production UI loader too: a correct API-only
       // traversal must not hide a frontend that still takes just page one.
       await page.reload();
       await expect(page.getByTestId("assistant-content")).toHaveCount(replyCount);
+      await expectSelectedModel(page, MODEL);
 
     });
   });

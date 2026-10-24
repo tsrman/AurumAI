@@ -257,6 +257,83 @@ async def _run_llm_call(chunks: list[str], **kwargs) -> tuple[str, list]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("chunks", [
+    [],
+    ["[DONE]"],
+    ["not-json", '{"choices": []}'],
+    ['{"choices": [{"delta": {"content": "  \\n"}}]}', "[DONE]"],
+    ['{"choices": [{"delta": {"reasoning_content": "internal analysis"}}]}', "[DONE]"],
+    ['{"choices": [{"delta": {}, "finish_reason": "length"}]}', "[DONE]"],
+])
+async def test_llm_call_rejects_streams_without_answer_content(chunks):
+    with pytest.raises(_LLMGatewayError, match="no answer content"):
+        await _run_llm_call(chunks, publish_events=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marker", ["<\uff5cDSML\uff5c", "<\uff5c\uff5cDSML\uff5c\uff5c"])
+async def test_llm_call_rejects_dsml_without_streaming_its_tool_payload(marker):
+    deltas = ["Let me search. <", "\uff5c", marker[2:] + " calls>",
+              '<invoke>{"skill_id":"private-skill","args":{"query":"private-query"}}</invoke>']
+
+    attempts = 0
+
+    async def stream_chat(request):
+        nonlocal attempts
+        attempts += 1
+        for delta in deltas:
+            yield json.dumps({"choices": [{"delta": {"content": delta}}]})
+
+    client = MagicMock()
+    client.stream_chat = stream_chat
+    publish = AsyncMock()
+    with patch("src.workflows.activities.llm_client", client), patch(
+        "src.workflows.activities.event_publisher.publish", publish
+    ):
+        with pytest.raises(_LLMGatewayError, match="unsupported tool-call format"):
+            await llm_call({"model": "test", "messages": []}, hide_tool_call_tag=True)
+
+    visible = "".join(c.args[1]["delta"] for c in publish.await_args_list
+                      if c.args[0] == "content-delta")
+    assert visible == "Let me search. "
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_llm_call_repairs_dsml_through_the_same_text_protocol():
+    dsml = '<\uff5c\uff5cDSML\uff5c\uff5c calls><invoke>{"skill_id":"search","args":{}}</invoke>'
+    canonical = '<tool_call>{"skill_id":"search","args":{}}</tool_call>'
+    requests = []
+
+    async def stream_chat(request):
+        requests.append(request)
+        text = dsml if len(requests) == 1 else canonical
+        yield json.dumps({"choices": [{"delta": {"content": text}}]})
+
+    client = MagicMock()
+    client.stream_chat = stream_chat
+    publish = AsyncMock()
+    original = {"model": "test", "stream": True, "messages": [
+        {"role": "system", "content": "Use the search skill"},
+        {"role": "user", "content": "Search the attachment"},
+    ]}
+    with patch("src.workflows.activities.llm_client", client), patch(
+        "src.workflows.activities.event_publisher.publish", publish
+    ):
+        result = await llm_call(original, hide_tool_call_tag=True)
+
+    assert result == canonical
+    assert len(requests) == 2
+    assert requests[1]["stream"] is True
+    assert requests[1]["model"] == "test"
+    assert requests[1]["messages"][-2] == {"role": "assistant", "content": dsml}
+    assert requests[1]["messages"][-1]["role"] == "user"
+    assert "<tool_call>" in requests[1]["messages"][-1]["content"]
+    assert len(original["messages"]) == 2
+    publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_llm_call_publish_events_false_suppresses_everything():
     # publish_events=False is for internal, non-chat-facing calls
     # (EvaluationWorkflow's judge call, CodeSkillSessionWorkflow's
@@ -313,14 +390,18 @@ async def test_llm_call_hide_tool_call_tag_still_streams_reasoning():
     # so they should still stream live.
     chunks = [
         json.dumps({"choices": [{"delta": {"reasoning": "thinking...", "content": ""}}]}),
+        json.dumps({"choices": [{"delta": {"content": "answer"}}]}),
     ]
 
     result, calls = await _run_llm_call(
         chunks, turn_id=None, publish_events=True, hide_tool_call_tag=True
     )
 
-    assert result == ""
-    assert calls == [("thinking-delta", {"delta": "thinking...", "turn_id": None})]
+    assert result == "answer"
+    assert calls == [
+        ("thinking-delta", {"delta": "thinking...", "turn_id": None}),
+        ("content-delta", {"delta": "answer", "turn_id": None}),
+    ]
 
 
 @pytest.mark.asyncio

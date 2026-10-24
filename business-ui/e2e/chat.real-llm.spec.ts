@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { login } from "./helpers/auth";
-import { expectNewAssistantReply } from "./helpers/chat";
+import { expectNewAssistantReply, expectSelectedModel } from "./helpers/chat";
 
 /**
  * Runs the chat flow against a real LLM gateway (e.g. a free OpenRouter model)
@@ -28,6 +28,7 @@ test.describe("Chat with a real LLM", () => {
 
     await page.getByRole("button", { name: "Choose model" }).click();
     await page.getByRole("option", { name: MODEL, exact: true }).click();
+    await expectSelectedModel(page, MODEL);
 
     const composer = page.getByLabel("Message");
     await composer.fill("Answer with one word: OK");
@@ -46,5 +47,7 @@ test.describe("Chat with a real LLM", () => {
     await expect(page.getByLabel("Send")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByLabel("Stop generating")).toHaveCount(0);
     await expect(page.getByText(/gateway unavailable/i)).toHaveCount(0);
+    await page.reload();
+    await expectSelectedModel(page, MODEL);
   });
 });
