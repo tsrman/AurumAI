@@ -36,6 +36,14 @@ Agents can now be listed, edited and deleted, not only created. `/admin/access`
 and `/agents/constructor` redirect to their new places. The admin API adds a
 `memberCount` to groups and a `groupId` filter to `GET /v1/admin/users`.
 
+Chat can create and edit images through an OpenAI-compatible Images API with the
+built-in `generate_image` and `edit_image` tools. Organizations choose separate
+generation and editing models in Admin UI (Models → Images); users need the new
+`images.generate` capability, and the operator switch `IMAGES_ENABLED` is off by
+default. Results are validated PNG/JPEG/WebP bytes stored per conversation and shown
+under the answer. Editing works on images created earlier in the same conversation;
+uploading your own images comes next.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

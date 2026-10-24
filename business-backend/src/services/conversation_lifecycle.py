@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import exists, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.models.conversation_image import ConversationImage
 from src.models.archive_control import ConversationExecution, ConversationOperation
 from src.models.conversation import Conversation
 from src.models.data_identity import ConversationIdentity
@@ -232,6 +233,16 @@ async def eligibility_blocker(
             select(ToolOperation.id)
             .join(InteractionTurn, ToolOperation.turn_id == InteractionTurn.id)
             .where(*owner, ToolOperation.status.in_(["reserved", "running"])),
+        ),
+        (
+            # The archive format does not carry image bytes yet; keeping such
+            # conversations live avoids purging images that a restore could
+            # not bring back.
+            "conversation_images",
+            select(ConversationImage.id).where(
+                ConversationImage.org_id == identity.org_id,
+                ConversationImage.conversation_id == identity.id,
+            ),
         ),
         (
             "execution_not_closed",

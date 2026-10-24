@@ -132,6 +132,36 @@ async def test_later_closed_root_never_erases_legacy_provenance_gap(db, test_org
     )
 
 @pytest.mark.asyncio
+async def test_conversations_with_images_are_not_archive_eligible(db, test_org, test_user):
+    from src.models.conversation_image import ConversationImage
+    from src.services.conversation_lifecycle import eligibility_blocker
+
+    old = datetime(2020, 2, 29, tzinfo=timezone.utc)
+    conv = Conversation(
+        org_id=test_org.id, user_id=test_user.id, model="test", created_at=old, updated_at=old
+    )
+    db.add(conv)
+    await db.flush()
+    db.add(
+        ConversationImage(
+            org_id=test_org.id,
+            conversation_id=conv.id,
+            origin="uploaded",
+            storage_key=f"conversation-images/{test_org.id}/{conv.id}/{uuid.uuid4()}.png",
+            content_type="image/png",
+            size_bytes=1,
+        )
+    )
+    await db.flush()
+    identity = await db.scalar(
+        select(ConversationIdentity).where(ConversationIdentity.id == conv.id)
+    )
+    assert await eligibility_blocker(db, identity, conv, datetime.now(timezone.utc)) == (
+        "conversation_images"
+    )
+
+
+@pytest.mark.asyncio
 async def test_attachment_admission_updates_activity_only_for_new_operation(db,test_org,test_user):
     from src.models.knowledge_base import KnowledgeBase
     from src.services.conversation_lifecycle import begin_attachment_operation

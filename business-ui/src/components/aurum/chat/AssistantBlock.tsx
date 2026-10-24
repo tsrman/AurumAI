@@ -11,6 +11,7 @@ import { PendingPulse } from "./PendingPulse";
 import { Markdown } from "./Markdown";
 import { ToolCallRow } from "./ToolCallRow";
 import { SourceCitations } from "./SourceCitations";
+import { ConversationImages } from "./ConversationImages";
 import { WorkflowProgress } from "./WorkflowProgress";
 import { MetricsWidget } from "./widgets/MetricsWidget";
 import { BarsWidget } from "./widgets/BarsWidget";
@@ -134,6 +135,10 @@ export function AssistantBlock({ message, onRegenerate }: AssistantBlockProps) {
               streaming={message.phase === "answer"}
             />
           </div>
+        )}
+
+        {message.images && message.images.length > 0 && (
+          <ConversationImages imageIds={message.images} />
         )}
 
         {message.widgets.length > 0 && (

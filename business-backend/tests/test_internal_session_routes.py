@@ -37,6 +37,11 @@ EXPECTED_INTERNAL_ROUTES = {
         "POST",
     ),
     (
+        "image_tools_internal",
+        "/turns/{turn_id}/executions/{execution_id}/image-operations/{invocation_id}",
+        "POST",
+    ),
+    (
         "workflow_runs_internal",
         "/workflow-runs/{run_id}/nodes/{phase_key}",
         "PUT",

@@ -13,6 +13,7 @@ from src.workflows.lifecycle import register_lifecycle_execution
 with workflow.unsafe.imports_passed_through():
     from src.workflows.activities import (
         create_user_question,
+        execute_image_tool,
         execute_web_tool,
         fail_interaction_turn,
         get_conversation_temperature,
@@ -25,11 +26,13 @@ with workflow.unsafe.imports_passed_through():
         register_interaction_execution,
     )
     from src.workflows.builtin_tools import (
+        IMAGE_TOOLS,
         ExecutionContext,
         builtin_instructions,
         enabled_builtin_tools,
         parse_builtin,
         prepare_builtin_invocation,
+        image_tool_error_context,
         select_source_citations,
         web_tool_error_context,
     )
@@ -81,6 +84,9 @@ def _build_skills_system_message(
     *,
     user_questions_enabled: bool = True,
     web_tools_enabled: bool = False,
+    image_generation_enabled: bool = False,
+    image_editing_enabled: bool = False,
+    recent_images: list[dict[str, str]] | None = None,
 ) -> str:
     tools = []
     for skill in skills:
@@ -112,6 +118,9 @@ def _build_skills_system_message(
         "ordinary",
         user_questions_enabled=user_questions_enabled,
         web_tools_enabled=web_tools_enabled,
+        image_generation_enabled=image_generation_enabled,
+        image_editing_enabled=image_editing_enabled,
+        recent_images=recent_images,
     )
     if builtin_prompt:
         sections.insert(0, builtin_prompt)
@@ -307,6 +316,8 @@ class ConversationWorkflow:
         has_skills = bool(skills)
         user_questions_enabled = message.get("user_questions_enabled") is True
         web_tools_requested = message.get("web_tools_enabled") is True
+        image_generation_requested = message.get("image_generation_enabled") is True
+        image_editing_requested = message.get("image_editing_enabled") is True
         llm_messages = [
             {
                 "role": "system",
@@ -314,6 +325,9 @@ class ConversationWorkflow:
                     skills,
                     user_questions_enabled=user_questions_enabled,
                     web_tools_enabled=web_tools_requested,
+                    image_generation_enabled=image_generation_requested,
+                    image_editing_enabled=image_editing_requested,
+                    recent_images=message.get("recent_images"),
                 ),
             }
         ] + self.messages
@@ -363,10 +377,18 @@ class ConversationWorkflow:
         question_protocol_enabled = user_questions_enabled and workflow.patched(
             "user-questions-v1"
         )
+        # Evaluated only when a turn asks for images, so histories without
+        # image turns record no marker and replay unchanged.
+        image_tools_enabled = (
+            image_generation_requested or image_editing_requested
+        ) and workflow.patched("image-tools-v1")
         enabled_tools = enabled_builtin_tools(
             question_protocol_enabled,
             web_tools_enabled,
+            image_generation_enabled=image_tools_enabled and image_generation_requested,
+            image_editing_enabled=image_tools_enabled and image_editing_requested,
         )
+        image_tools = enabled_tools & IMAGE_TOOLS
         # Scoped deliberately: this guard covers exactly the branches that go
         # on to parse and dispatch tool calls. With neither questions nor
         # skills the else-branch below treats a <tool_call> tag as ordinary
@@ -380,11 +402,20 @@ class ConversationWorkflow:
             ):
                 raise ValueError("unknown built-in tool")
         has_builtin = any(
-            (parsed := parse_builtin(call)) is not None and parsed[0] in enabled_tools
+            (parsed := parse_builtin(call, image_tools=image_tools)) is not None
+            and parsed[0] in enabled_tools
             for call in tool_calls
         )
+        image_ids: list[str] = []
         if has_builtin or (has_skills and tool_calls):
-            result, tool_calls, persisted_tool_results, context_used_raw, source_ids = (
+            (
+                result,
+                tool_calls,
+                persisted_tool_results,
+                context_used_raw,
+                source_ids,
+                image_ids,
+            ) = (
                 await self._run_tool_rounds(
                     raw_result,
                     tool_calls,
@@ -433,6 +464,10 @@ class ConversationWorkflow:
                 "sourceIds": list(citation_selection.source_ids),
                 "unsupportedSourceIds": list(citation_selection.unsupported_source_ids),
             }
+        if image_ids:
+            # Every image the turn produced is shown with the answer; the
+            # backend keeps only ids this turn really generated.
+            tool_results_by_call["__images__"] = {"imageIds": list(image_ids)}
         await workflow.execute_activity(
             persist_assistant_message,
             args=(
@@ -494,8 +529,10 @@ class ConversationWorkflow:
         list[dict[str, Any]],
         list[dict[str, Any]],
         list[str],
+        list[str],
     ]:
         messages = list(base_messages)
+        image_ids: list[str] = []
         persisted_calls: list[dict[str, Any]] = []
         persisted_results: list[dict[str, Any]] = []
         context_used: list[dict[str, Any]] = []
@@ -579,6 +616,7 @@ class ConversationWorkflow:
                                 persisted_results,
                                 context_used,
                                 source_ids,
+                                image_ids,
                             )
                         safe_result = {
                             "tool": invocation.name,
@@ -592,6 +630,83 @@ class ConversationWorkflow:
                         for source_id in result.get("source_ids", []):
                             if isinstance(source_id, str) and source_id not in source_ids:
                                 source_ids.append(source_id)
+                        context_used.append(result)
+                        round_results.append((invocation.name, result))
+                        await workflow.execute_activity(
+                            publish_event,
+                            args=(
+                                "tool-result",
+                                {
+                                    "call_id": invocation.invocation_id,
+                                    "tool": invocation.name,
+                                    "label": label,
+                                    "result": safe_result,
+                                    "turn_id": turn_id,
+                                },
+                            ),
+                            start_to_close_timeout=timedelta(seconds=30),
+                            retry_policy=_ACTIVITY_RETRY_POLICY,
+                        )
+                        continue
+
+                    if invocation.name in IMAGE_TOOLS:
+                        label = (
+                            "Generating image"
+                            if invocation.name == "generate_image"
+                            else "Editing image"
+                        )
+                        safe_call = {
+                            "call_id": invocation.invocation_id,
+                            "tool": invocation.name,
+                            "label": label,
+                        }
+                        await workflow.execute_activity(
+                            publish_event,
+                            args=("tool-calls", {"calls": [safe_call], "turn_id": turn_id}),
+                            start_to_close_timeout=timedelta(seconds=30),
+                            retry_policy=_ACTIVITY_RETRY_POLICY,
+                        )
+                        try:
+                            result = await workflow.execute_activity(
+                                execute_image_tool,
+                                args=(
+                                    execution_context,
+                                    invocation.invocation_id,
+                                    invocation.name,
+                                    invocation.arguments,
+                                ),
+                                start_to_close_timeout=timedelta(minutes=6),
+                                retry_policy=_ACTIVITY_RETRY_POLICY,
+                            )
+                        except ActivityError as exc:
+                            error_type = application_error_type(exc)
+                            if error_type is None or not error_type.startswith("image_"):
+                                raise
+                            result = image_tool_error_context(invocation.name, error_type)
+                        if self._cancelled:
+                            return (
+                                raw,
+                                persisted_calls,
+                                persisted_results,
+                                context_used,
+                                source_ids,
+                                image_ids,
+                            )
+                        produced = [
+                            image_id
+                            for image_id in result.get("image_ids", [])
+                            if isinstance(image_id, str)
+                        ]
+                        safe_result = {
+                            "tool": invocation.name,
+                            "status": "completed" if produced else "failed",
+                            "imageIds": produced,
+                        }
+                        persisted_calls.append(safe_call)
+                        persisted_results.append(safe_result)
+                        for image_id in produced:
+                            if image_id not in image_ids:
+                                image_ids.append(image_id)
                         context_used.append(result)
                         round_results.append((invocation.name, result))
                         await workflow.execute_activity(
@@ -673,7 +788,7 @@ class ConversationWorkflow:
                 round_results.append((skill_id, result))
 
             if self._cancelled:
-                return raw, persisted_calls, persisted_results, context_used, source_ids
+                return raw, persisted_calls, persisted_results, context_used, source_ids, image_ids
             messages.extend(
                 {
                     "role": "user",
@@ -696,15 +811,17 @@ class ConversationWorkflow:
             )
             calls = extract_tool_calls(raw, id_factory=workflow.uuid4)
             if not calls:
-                return raw, persisted_calls, persisted_results, context_used, source_ids
+                return raw, persisted_calls, persisted_results, context_used, source_ids, image_ids
             next_has_builtin = any(
-                (parsed := parse_builtin(call)) is not None and parsed[0] in enabled_tools
+                (parsed := parse_builtin(call, image_tools=enabled_tools & IMAGE_TOOLS))
+                is not None
+                and parsed[0] in enabled_tools
                 for call in calls
             )
             if not builtin_mode and not next_has_builtin:
                 # Preserve the old single skill batch: a second skill-only
                 # selection is not silently granted a larger loop budget.
-                return raw, persisted_calls, persisted_results, context_used, source_ids
+                return raw, persisted_calls, persisted_results, context_used, source_ids, image_ids
             builtin_mode = builtin_mode or next_has_builtin
 
         raise ValueError("builtin_round_limit_exceeded")

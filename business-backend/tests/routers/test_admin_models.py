@@ -273,3 +273,103 @@ async def test_admin_model_payload_rejects_noncanonical_and_extra_fields(
 
     assert noncanonical.status_code == 422
     assert extra.status_code == 422
+
+
+IMAGE_MODEL_ID = "provider/image-model"
+
+
+def _image_snapshot(
+    status: GatewayCatalogStatus = GatewayCatalogStatus.AVAILABLE,
+) -> GatewayCatalogSnapshot:
+    models: tuple[dict[str, object], ...] = (
+        ({"id": MODEL_ID}, {"id": IMAGE_MODEL_ID}, {"id": "text-embedding-3-small"})
+        if status is not GatewayCatalogStatus.UNAVAILABLE
+        else ()
+    )
+    return GatewayCatalogSnapshot(status, models)
+
+
+@pytest.mark.asyncio
+async def test_image_models_are_set_separately_and_listed_from_the_whole_catalog(
+    db: AsyncSession, test_org: Organization, test_user: User, monkeypatch
+) -> None:
+    monkeypatch.setattr(admin_models.settings, "IMAGES_ENABLED", True)
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=_app(db, test_org, test_user, snapshot=_image_snapshot())),
+        base_url="http://test",
+    ) as client:
+        empty = await client.get("/v1/admin/settings/images")
+        saved = await client.put(
+            "/v1/admin/settings/images",
+            json={"generationModel": IMAGE_MODEL_ID, "editModel": MODEL_ID},
+        )
+        read_back = await client.get("/v1/admin/settings/images")
+
+    assert empty.status_code == 200
+    assert empty.json()["data"] == {
+        "enabled": True,
+        "gatewayStatus": "available",
+        "generationModel": None,
+        "editModel": None,
+        "models": [MODEL_ID, IMAGE_MODEL_ID, "text-embedding-3-small"],
+    }
+    assert saved.status_code == 200
+    assert read_back.json()["data"]["generationModel"] == IMAGE_MODEL_ID
+    assert read_back.json()["data"]["editModel"] == MODEL_ID
+    stored = await db.get(OrganizationSettings, test_org.id)
+    assert stored is not None
+    await db.refresh(stored)
+    assert (stored.image_generation_model, stored.image_edit_model) == (IMAGE_MODEL_ID, MODEL_ID)
+
+
+@pytest.mark.asyncio
+async def test_image_models_must_be_published_by_the_gateway(
+    db: AsyncSession, test_org: Organization, test_user: User
+) -> None:
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=_app(db, test_org, test_user, snapshot=_image_snapshot())),
+        base_url="http://test",
+    ) as client:
+        unknown = await client.put(
+            "/v1/admin/settings/images",
+            json={"generationModel": "provider/missing", "editModel": None},
+        )
+    async with httpx.AsyncClient(
+        transport=ASGITransport(
+            app=_app(
+                db,
+                test_org,
+                test_user,
+                snapshot=_image_snapshot(GatewayCatalogStatus.UNAVAILABLE),
+            )
+        ),
+        base_url="http://test",
+    ) as client:
+        outage = await client.put(
+            "/v1/admin/settings/images",
+            json={"generationModel": IMAGE_MODEL_ID, "editModel": None},
+        )
+        cleared = await client.put(
+            "/v1/admin/settings/images",
+            json={"generationModel": None, "editModel": None},
+        )
+    assert unknown.status_code == 422
+    assert outage.status_code == 503
+    assert cleared.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_image_model_settings_require_org_admin(
+    db: AsyncSession, test_org: Organization, test_user: User
+) -> None:
+    async with httpx.AsyncClient(
+        transport=ASGITransport(
+            app=_app(db, test_org, test_user, role="member", snapshot=_image_snapshot())
+        ),
+        base_url="http://test",
+    ) as client:
+        read = await client.get("/v1/admin/settings/images")
+        write = await client.put(
+            "/v1/admin/settings/images", json={"generationModel": None, "editModel": None}
+        )
+    assert read.status_code == 403 and write.status_code == 403

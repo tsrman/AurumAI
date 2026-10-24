@@ -17,6 +17,7 @@ from src.workflows.builtin_tools import (
     ExecutionContext,
     ExecutionPhase,
     QuestionRequest,
+    image_tool_context,
     web_tool_context,
 )
 
@@ -486,6 +487,62 @@ async def execute_web_tool(
     except (ValueError, AttributeError) as exc:
         raise ApplicationError(
             "web_unavailable", type="web_unavailable", non_retryable=True
+        ) from exc
+
+
+_IMAGE_ERROR_CODES = {
+    "image_disabled",
+    "image_access_denied",
+    "image_limit",
+    "image_timeout",
+    "image_unavailable",
+    "image_rejected",
+    "image_not_found",
+    "image_cancelled",
+}
+
+
+def _raise_image_api_error(response: httpx.Response) -> None:
+    if not response.is_error:
+        return
+    code = "image_unavailable"
+    try:
+        payload = response.json()
+        detail = payload.get("detail")
+        candidate = detail.get("code") if isinstance(detail, dict) else None
+        if isinstance(candidate, str) and candidate in _IMAGE_ERROR_CODES:
+            code = candidate
+    except (ValueError, AttributeError):
+        pass
+    raise ApplicationError(code, type=code, non_retryable=True)
+
+
+@activity.defn
+@tracer.start_as_current_span("execute_image_tool")
+async def execute_image_tool(
+    context: ExecutionContext,
+    invocation_id: str,
+    tool: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute one durable image operation and return only its id and size."""
+    async with httpx.AsyncClient(timeout=330.0, trust_env=False) as client:
+        response = await client.request(
+            "POST",
+            f"{settings.llm_gateway_url}/v1/internal/turns/{context.turn_id}/"
+            f"executions/{context.execution_id}/image-operations/{invocation_id}",
+            headers={"Authorization": f"Bearer {settings.session_token}"},
+            json={"tool": tool, "args": arguments},
+        )
+    _raise_image_api_error(response)
+    try:
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("invalid image response")
+        return image_tool_context(tool, payload)
+    except (ValueError, AttributeError) as exc:
+        raise ApplicationError(
+            "image_unavailable", type="image_unavailable", non_retryable=True
         ) from exc
 
 

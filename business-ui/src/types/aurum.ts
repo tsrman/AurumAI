@@ -80,6 +80,8 @@ export interface AssistantMessage {
   content: string;
   widgets: Widget[];
   sources: Source[];
+  // Ids of images this answer produced; shown under the answer.
+  images?: string[];
   sql?: string;
   createdAt?: string;
 }

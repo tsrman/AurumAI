@@ -107,6 +107,26 @@ is separate from deploying the web boundary. `WEB_EGRESS_FORBIDDEN_CIDRS` adds
 operator deny ranges to application, guard and Helm policies. Do not weaken the
 required ranges or treat an unavailable positive control as a passed deny test.
 
+## Images
+
+`IMAGES_ENABLED=false` (`APP_IMAGES_ENABLED`) is the operator switch for the
+`generate_image` and `edit_image` chat tools. A turn offers them only when the
+switch is on, the user has the `images.generate` capability (Admin UI → Groups)
+and the organization has chosen a model in Admin UI → Models → Images. The
+generation and editing models are separate settings; either can stay off.
+
+The backend calls an OpenAI-compatible Images API (`/v1/images/generations` and
+`/v1/images/edits`). `IMAGES_API_URL` and `IMAGES_API_KEY` default to the chat
+gateway and its key; `IMAGES_TIMEOUT_SECONDS` bounds one provider call. Only inline
+`b64_json` results are accepted, never provider URLs, and the bytes must be PNG,
+JPEG or WebP. Images are stored in the platform bucket under
+`conversation-images/<org>/<conversation>/` and served only to the conversation
+owner. Each turn may create at most four images; image-enabled turns list the
+conversation's eight newest images to the model so a later turn can edit them.
+Conversations with images are not archived until the archive format carries image
+bytes. Image calls are not yet counted in token quotas, usage events or Admin UI
+analytics; the per-turn limit and the request rate limit are the only bounds.
+
 ## Identity and data lifecycle
 
 Groups synchronized from Keycloak are managed in Keycloak. Admin UI disables local

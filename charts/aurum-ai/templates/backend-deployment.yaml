@@ -162,6 +162,19 @@ spec:
               value: {{ .Values.backend.userQuestionsEnabled | quote }}
             - name: APP_WEB_ENABLED
               value: {{ .Values.backend.webEnabled | quote }}
+            - name: APP_IMAGES_ENABLED
+              value: {{ .Values.backend.images.enabled | quote }}
+            - name: APP_IMAGES_API_URL
+              value: {{ .Values.backend.images.apiUrl | quote }}
+            - name: APP_IMAGES_TIMEOUT_SECONDS
+              value: {{ .Values.backend.images.timeoutSeconds | quote }}
+            {{- if .Values.backend.images.apiKeySecret }}
+            - name: APP_IMAGES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.images.apiKeySecret | quote }}
+                  key: {{ .Values.backend.images.apiKeySecretKey | quote }}
+            {{- end }}
             {{- if .Values.web.enabled }}
             - name: APP_WEB_TOOLS_URL
               value: {{ printf "http://%s-web-tools.%s.svc:8120" .Release.Name .Values.web.namespace | quote }}

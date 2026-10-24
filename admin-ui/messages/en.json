@@ -443,6 +443,10 @@
       "workspace_skills_create": {
         "label": "Create skills",
         "description": "Add their own skills to the organization workspace."
+      },
+      "images_generate": {
+        "label": "Generate images",
+        "description": "Create and edit images in chat with the organization's image models."
       }
     }
   },
@@ -488,7 +492,22 @@
     "orgReadable": "Whole organization",
     "restricted": "Restricted",
     "access": "Access",
-    "accessAria": "Access to {model}"
+    "accessAria": "Access to {model}",
+    "images": {
+      "title": "Images",
+      "description": "Models used when people ask the chat to create or change a picture.",
+      "generation": "Image generation model",
+      "generationHint": "Creates new images from a text description.",
+      "edit": "Image editing model",
+      "editHint": "Changes an image created earlier in the conversation.",
+      "off": "Off",
+      "unavailable": "{model} — no longer published",
+      "operatorOff": "Image tools are switched off on this deployment (APP_IMAGES_ENABLED). The choice below takes effect once they are on.",
+      "capabilityHint": "People also need the “Generate images” capability, given on the Groups page.",
+      "loadFailed": "Could not load image settings",
+      "saving": "Saving...",
+      "save": "Save image models"
+    }
   },
   "skills": {
     "table": {

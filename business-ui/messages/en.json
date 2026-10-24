@@ -257,6 +257,14 @@
       "timedOut": "⏱ the command timed out",
       "exitCode": "→ exit code {code}",
       "conversationFallback": "Conversation"
+    },
+    "images": {
+      "label": "Generated images",
+      "alt": "Generated image {index}",
+      "loading": "Loading image…",
+      "unavailable": "The image is unavailable.",
+      "open": "Open image {index} in a new tab",
+      "download": "Download image {index}"
     }
   },
   "settings": {

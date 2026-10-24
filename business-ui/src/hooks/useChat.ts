@@ -13,6 +13,7 @@ import {
 } from "@/lib/chat-api";
 import { cancelWorkflowRun } from "@/lib/workflows-api";
 import { loadSourcesForMessage } from "@/lib/web-sources-api";
+import { imageIdsFrom } from "@/lib/images-api";
 import { questionKeys, useQuestions } from "@/hooks/useQuestions";
 import {
   generalResp,
@@ -106,6 +107,7 @@ function resetAssistantView(msg: AssistantMessageView): AssistantMessageView {
     thinkingSeconds: 0,
     startedAt: Date.now(),
     sources: [],
+    images: [],
     tools: msg.tools.map((tool) => ({ ...tool, state: "wait" })),
   };
 }
@@ -142,6 +144,7 @@ function backendMessageToUIMessage(
     contentShown: msg.content ?? "",
     widgets: [],
     sources,
+    images: imageIdsFrom(msg.imageIds),
     phase: "done",
     thinkingOpen: false,
     thinkingSeconds: 0,
@@ -410,9 +413,12 @@ export function useChat(): UseChatReturn {
         if (!persisted) return;
         const sources = await loadSourcesForMessage(conversationId, persisted);
         if (generationRef.current !== generation) return;
+        // The persisted list is the backend-verified one: it replaces ids
+        // collected from the live stream.
+        const images = imageIdsFrom(persisted.imageIds);
         updateAssistantMessage(conversationId, assistantId, (message) =>
           generationRef.current === generation
-            ? { ...message, sources }
+            ? { ...message, sources, images }
             : message
         );
       } catch {
@@ -615,9 +621,18 @@ export function useChat(): UseChatReturn {
             return { ...msg, phase: "tools", tools };
           });
           break;
-        case "tool-result":
+        case "tool-result": {
+          const result = event.data.result;
+          const produced = imageIdsFrom(
+            typeof result === "object" && result !== null
+              ? (result as { imageIds?: unknown }).imageIds
+              : undefined
+          );
           updateAssistantMessage(conversationId, assistantId, (msg) => ({
             ...msg,
+            images: produced.length
+              ? [...new Set([...(msg.images ?? []), ...produced])]
+              : msg.images,
             tools: msg.tools.map((tool) =>
               tool.callId === event.data.call_id
                 ? {
@@ -629,6 +644,7 @@ export function useChat(): UseChatReturn {
             ),
           }));
           break;
+        }
         // Show each code-sandbox command and its result during a multi-round
         // session, so a long tools phase has visible execution progress
         // rather than appearing stalled.

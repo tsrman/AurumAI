@@ -75,6 +75,12 @@ class PersistConversationMessageRequest(BaseModel):
     tool_results: Optional[dict[str, Any]] = None
 
 
+class PersistedImageClaims(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    image_ids: list[UUID] = Field(default_factory=list, alias="imageIds", max_length=20)
+
+
 class PersistedWebSourceClaims(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

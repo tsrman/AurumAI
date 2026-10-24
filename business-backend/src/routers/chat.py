@@ -29,6 +29,7 @@ from src.schemas.chat import (
     ChatRequest,
     MessageScoreRequest,
     PersistConversationMessageRequest,
+    PersistedImageClaims,
     PersistedWebSourceClaims,
 )
 from src.schemas.conversation import (
@@ -43,6 +44,7 @@ from src.core.temporal import get_temporal_client
 from src.services.streaming import sse_event, create_streaming_response
 from src.services.chat_service import chat_service
 from src.services.conversation_attachments import attach_file
+from src.services.image_tools import organization_image_models, recent_conversation_images
 from src.services.model_access import ensure_model_allowed
 from src.services.authorization import authorization_service
 from src.services.session_manager import session_manager
@@ -61,6 +63,7 @@ from src.models.workflow_run import WorkflowRun, WorkflowRunStatus
 from src.repositories.conversation_repository import conversation_repository
 from src.repositories.message_repository import message_repository
 from src.repositories.workflow_definition_repository import workflow_definition_repository
+from src.repositories.image_repository import ImageRepository, ImageRepositoryError
 from src.repositories.web_source_repository import (
     WebSourceRepository,
     WebSourceRepositoryError,
@@ -120,6 +123,7 @@ def _msg_response(msg: Message) -> MessageResponse:
         ),
         sourceIds=extra.get("web_source_ids", []),
         unsupportedSourceIds=extra.get("unsupported_web_source_ids", []),
+        imageIds=extra.get("image_ids", []),
     )
 
 
@@ -693,13 +697,33 @@ async def chat_stream(
             authorization_subject(user),
             Capability.WEB_ACCESS,
         )
+        image_generation_enabled = image_editing_enabled = False
+        if settings.IMAGES_ENABLED and await authorization_service.has_capability(
+            session,
+            authorization_subject(user),
+            Capability.IMAGES_GENERATE,
+        ):
+            generation_model, edit_model = await organization_image_models(
+                session, uuid.UUID(user.org_id or "")
+            )
+            image_generation_enabled = bool(generation_model)
+            image_editing_enabled = bool(edit_model)
+        recent_images: list[dict[str, str]] = []
+        if image_editing_enabled:
+            recent_images = await recent_conversation_images(
+                session, uuid.UUID(user.org_id or ""), conv.id
+            )
         signal_payload: dict[str, Any] = {
             "role": "user",
             "content": user_message.content,
             "turn_id": str(turn_id),
             "user_questions_enabled": settings.USER_QUESTIONS_ENABLED,
             "web_tools_enabled": web_tools_enabled,
+            "image_generation_enabled": image_generation_enabled,
+            "image_editing_enabled": image_editing_enabled,
         }
+        if recent_images:
+            signal_payload["recent_images"] = recent_images
         if workflow_run is None:
             signal_payload["model"] = request.model
         else:
@@ -841,6 +865,30 @@ async def persist_conversation_message(
         message_extra = {
             "web_source_ids": accepted,
             "unsupported_web_source_ids": unsupported,
+        }
+
+    raw_image_claims = clean_tool_results.pop("__images__", None)
+    if raw_image_claims is not None:
+        try:
+            image_claims = PersistedImageClaims.model_validate(raw_image_claims)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid image claims",
+            ) from exc
+        claimed_images = tuple(dict.fromkeys(str(image_id) for image_id in image_claims.image_ids))
+        try:
+            owned_images = await ImageRepository(session_org_id).owned_image_ids(
+                session, conv.id, session_user_id, data.turn_id, claimed_images
+            )
+        except ImageRepositoryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Images not found",
+            ) from exc
+        message_extra = {
+            **(message_extra or {}),
+            "image_ids": [image_id for image_id in claimed_images if image_id in owned_images],
         }
 
     now = datetime.now(timezone.utc)

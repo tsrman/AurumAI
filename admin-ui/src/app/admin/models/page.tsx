@@ -21,7 +21,12 @@ import {
   Tr,
   controlClass,
 } from "@/components/ui";
-import { useAdminModels, useUpdateOrganizationModelSettings } from "@/hooks/useAdminModels";
+import {
+  useAdminModels,
+  useOrganizationImageModels,
+  useUpdateOrganizationImageModels,
+  useUpdateOrganizationModelSettings,
+} from "@/hooks/useAdminModels";
 import { useErrorMessage } from "@/lib/errors";
 import type { AdminModelSettings } from "@/lib/api";
 
@@ -58,6 +63,7 @@ function ModelsContent({ canWrite }: { canWrite: boolean }) {
     <PageBody>
       <GatewayNotice settings={settings} />
       <DefaultsSection settings={settings} canWrite={canWrite} onGrantAccess={openAccess} />
+      <ImageModelsSection canWrite={canWrite} />
       <CatalogSection settings={settings} canWrite={canWrite} onAccess={openAccess} />
       <AccessDialog target={access} onClose={() => setAccess(null)} />
     </PageBody>
@@ -200,6 +206,86 @@ function DefaultsSection({
                     setTemperatureDraft(null);
                   },
                 }
+              )
+            }
+          >
+            {update.isPending ? t("saving") : t("save")}
+          </Button>
+        </div>
+      ) : null}
+    </Section>
+  );
+}
+
+function ImageModelsSection({ canWrite }: { canWrite: boolean }) {
+  const t = useTranslations("models.images");
+  const errorMessage = useErrorMessage();
+  const query = useOrganizationImageModels();
+  const update = useUpdateOrganizationImageModels();
+  const saved = query.data?.data;
+  const baseline = `${saved?.generationModel ?? ""}\u0000${saved?.editModel ?? ""}`;
+  const [draft, setDraft] = useState<{ baseline: string; generation: string; edit: string } | null>(null);
+  const generation = draft?.baseline === baseline ? draft.generation : (saved?.generationModel ?? "");
+  const edit = draft?.baseline === baseline ? draft.edit : (saved?.editModel ?? "");
+  const change = (next: { generation?: string; edit?: string }) =>
+    setDraft({ baseline, generation: next.generation ?? generation, edit: next.edit ?? edit });
+
+  if (query.isLoading) return null;
+  if (query.error || !saved) {
+    return (
+      <Section title={t("title")}>
+        <Notice tone="error">{query.error ? errorMessage(query.error) : t("loadFailed")}</Notice>
+      </Section>
+    );
+  }
+  const changed = generation !== (saved.generationModel ?? "") || edit !== (saved.editModel ?? "");
+  const options = (current: string) => (
+    <>
+      <option value="">{t("off")}</option>
+      {current && !saved.models.includes(current) ? (
+        <option value={current} disabled>{t("unavailable", { model: current })}</option>
+      ) : null}
+      {saved.models.map((model) => (
+        <option key={model} value={model}>{model}</option>
+      ))}
+    </>
+  );
+
+  return (
+    <Section title={t("title")} description={t("description")}>
+      {!saved.enabled ? <Notice tone="warning" className="mb-4">{t("operatorOff")}</Notice> : null}
+      <SettingRow label={t("generation")} description={t("generationHint")} htmlFor="image-generation-model">
+        <select
+          id="image-generation-model"
+          value={generation}
+          disabled={!canWrite}
+          onChange={(event) => change({ generation: event.target.value })}
+          className={controlClass}
+        >
+          {options(generation)}
+        </select>
+      </SettingRow>
+      <SettingRow label={t("edit")} description={t("editHint")} htmlFor="image-edit-model">
+        <select
+          id="image-edit-model"
+          value={edit}
+          disabled={!canWrite}
+          onChange={(event) => change({ edit: event.target.value })}
+          className={controlClass}
+        >
+          {options(edit)}
+        </select>
+      </SettingRow>
+      <p className="mt-4 text-xs leading-5 text-aurum-text-3">{t("capabilityHint")}</p>
+      {update.isError ? <Notice tone="error" className="mt-4">{errorMessage(update.error)}</Notice> : null}
+      {canWrite ? (
+        <div className="mt-5 flex justify-end">
+          <Button
+            disabled={!changed || update.isPending}
+            onClick={() =>
+              update.mutate(
+                { generationModel: generation || null, editModel: edit || null },
+                { onSuccess: () => setDraft(null) }
               )
             }
           >

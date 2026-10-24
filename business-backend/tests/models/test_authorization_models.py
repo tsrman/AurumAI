@@ -26,7 +26,7 @@ def test_capability_tables_use_composite_keys_and_closed_capability_values() -> 
 
     expected_check = {
         "capability IN ('admin.users.read', 'admin.users.write', 'chat.send', "
-        "'sharing.manage', 'web.access', 'workspace.agents.create', 'workspace.knowledge.create', "
+        "'images.generate', 'sharing.manage', 'web.access', 'workspace.agents.create', 'workspace.knowledge.create', "
         "'workspace.skills.create')"
     }
     assert _check_sql(organization_table) == expected_check

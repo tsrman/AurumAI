@@ -69,6 +69,7 @@ class InteractionTurn(OrgScopedModel):
     question_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     search_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     read_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    image_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -132,7 +133,8 @@ class ToolOperation(OrgScopedModel):
             ondelete="CASCADE",
         ),
         CheckConstraint(
-            "kind IN ('ask_user','web_search','web_read')", name="ck_tool_operation_kind"
+            "kind IN ('ask_user','web_search','web_read','image_generate','image_edit')",
+            name="ck_tool_operation_kind",
         ),
         CheckConstraint(
             "status IN ('reserved','running','completed','failed','cancelled')",

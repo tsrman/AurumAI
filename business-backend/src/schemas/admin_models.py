@@ -42,3 +42,24 @@ class OrganizationModelSettingsUpdate(AdminModelSchema):
 class OrganizationModelSettingResponse(AdminModelSchema):
     default_model: str | None
     default_temperature: float | None
+
+
+class OrganizationImageModelsResponse(AdminModelSchema):
+    # The operator switch (APP_IMAGES_ENABLED); models only take effect with it on.
+    enabled: bool
+    gateway_status: GatewayCatalogStatus
+    generation_model: str | None
+    edit_model: str | None
+    models: list[str]
+
+
+class OrganizationImageModelsUpdate(AdminModelSchema):
+    generation_model: str | None = Field(max_length=255)
+    edit_model: str | None = Field(max_length=255)
+
+    @field_validator("generation_model", "edit_model")
+    @classmethod
+    def canonical_model_id(cls, value: str | None) -> str | None:
+        if value is not None:
+            ResourceRef(ResourceType.MODEL, value)
+        return value

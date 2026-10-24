@@ -12,6 +12,8 @@ services:
     environment:
       TEST_GATEWAY_FETCH_TITLE: "${MCP_FETCH_EXPECTED_TITLE:-AurumAI Backend}"
       TEST_GATEWAY_MODEL_ID: "${TEST_GATEWAY_MODEL_ID:-gpt-4o-mini}"
+      # Set only by smoke-test-images-ui.sh; empty keeps a one-model catalog.
+      TEST_GATEWAY_IMAGE_MODEL_ID: "${TEST_GATEWAY_IMAGE_MODEL_ID:-}"
       TEST_GATEWAY_BARRIER_SECONDS: "${TEST_GATEWAY_BARRIER_SECONDS:-3}"
     healthcheck:
       test:

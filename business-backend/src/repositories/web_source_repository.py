@@ -1,8 +1,8 @@
 """Durable web-operation leases, normalized results and immutable provenance."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
@@ -10,26 +10,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.interaction import InteractionTurn, ToolOperation
 from src.models.web_source import WebSource
+from src.repositories.tool_operation_leases import (
+    MAX_PLATFORM_ATTEMPTS,
+    OperationClaim,
+    ToolOperationLeaseError,
+    ToolOperationLeases,
+)
 
+__all__ = [
+    "MAX_PLATFORM_ATTEMPTS",
+    "OperationClaim",
+    "WEB_OPERATION_DEADLINE_SECONDS",
+    "ListedWebSource",
+    "WebSourceRepository",
+    "WebSourceRepositoryError",
+]
 
-MAX_PLATFORM_ATTEMPTS = 2
 WEB_OPERATION_DEADLINE_SECONDS = 30.0
 
 
-class WebSourceRepositoryError(ValueError):
-    def __init__(self, code: str) -> None:
-        self.code = code
-        super().__init__(code)
-
-
-@dataclass(frozen=True, slots=True)
-class OperationClaim:
-    operation_id: UUID
-    lease_id: UUID
-    attempt: int
-    turn_id: UUID
-    execution_id: UUID
-    remaining_seconds: float
+class WebSourceRepositoryError(ToolOperationLeaseError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,116 +39,11 @@ class ListedWebSource:
     content: str | None
 
 
-class WebSourceRepository:
-    def __init__(self, org_id: UUID) -> None:
-        self.org_id = org_id
-
-    async def _locked_operation(
-        self, session: AsyncSession, operation_id: UUID
-    ) -> tuple[InteractionTurn, ToolOperation]:
-        identity = (
-            await session.execute(
-                select(ToolOperation.turn_id).where(
-                    ToolOperation.org_id == self.org_id,
-                    ToolOperation.id == operation_id,
-                )
-            )
-        ).one_or_none()
-        if identity is None:
-            raise WebSourceRepositoryError("interaction_not_found")
-        turn = await session.scalar(
-            select(InteractionTurn)
-            .where(
-                InteractionTurn.org_id == self.org_id,
-                InteractionTurn.id == identity[0],
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if turn is None:
-            raise WebSourceRepositoryError("interaction_not_found")
-        operation = await session.scalar(
-            select(ToolOperation)
-            .where(
-                ToolOperation.org_id == self.org_id,
-                ToolOperation.turn_id == turn.id,
-                ToolOperation.id == operation_id,
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if operation is None:
-            raise WebSourceRepositoryError("interaction_not_found")
-        return turn, operation
-
-    async def claim_operation(
-        self,
-        session: AsyncSession,
-        operation_id: UUID,
-        *,
-        lease_seconds: int = 35,
-    ) -> OperationClaim:
-        if not 1 <= lease_seconds <= 300:
-            raise ValueError("lease_seconds out of range")
-        turn, operation = await self._locked_operation(session, operation_id)
-        now = await self._clock(session)
-        if turn.status != "active":
-            raise WebSourceRepositoryError("interaction_conflict")
-        if operation.status == "completed":
-            raise WebSourceRepositoryError("operation_completed")
-        if operation.status in {"failed", "cancelled"}:
-            raise WebSourceRepositoryError(operation.error_code or "web_unavailable")
-        remaining_seconds = self._remaining_seconds(operation, now)
-        if remaining_seconds <= 0:
-            self._mark_failed(operation, "web_timeout")
-            await session.flush()
-            raise WebSourceRepositoryError("web_timeout")
-        if (
-            operation.status == "running"
-            and operation.lease_until is not None
-            and operation.lease_until > now
-        ):
-            raise WebSourceRepositoryError("operation_in_progress")
-        if operation.attempts >= MAX_PLATFORM_ATTEMPTS:
-            operation.status = "failed"
-            operation.error_code = "web_unavailable"
-            operation.lease_id = None
-            operation.lease_until = None
-            await session.flush()
-            raise WebSourceRepositoryError("web_unavailable")
-        lease_id = uuid4()
-        operation.status = "running"
-        operation.attempts += 1
-        operation.lease_id = lease_id
-        operation.lease_until = now + timedelta(seconds=lease_seconds)
-        await session.flush()
-        return OperationClaim(
-            operation.id,
-            lease_id,
-            operation.attempts,
-            operation.turn_id,
-            operation.execution_id,
-            remaining_seconds,
-        )
-
-    @staticmethod
-    async def _clock(session: AsyncSession) -> datetime:
-        from sqlalchemy import func
-
-        return cast(datetime, await session.scalar(select(func.clock_timestamp())))
-
-    async def operation_result(
-        self, session: AsyncSession, operation_id: UUID
-    ) -> tuple[str, dict[str, Any] | None, str | None]:
-        operation = await session.scalar(
-            select(ToolOperation).where(
-                ToolOperation.org_id == self.org_id,
-                ToolOperation.id == operation_id,
-            )
-        )
-        if operation is None:
-            raise WebSourceRepositoryError("interaction_not_found")
-        return operation.status, operation.result, operation.error_code
+class WebSourceRepository(ToolOperationLeases):
+    deadline_seconds = WEB_OPERATION_DEADLINE_SECONDS
+    timeout_code = "web_timeout"
+    unavailable_code = "web_unavailable"
+    error = WebSourceRepositoryError
 
     async def complete_operation(
         self,
@@ -338,49 +234,6 @@ class WebSourceRepository:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
-
-    @staticmethod
-    def _remaining_seconds(operation: ToolOperation, now: datetime) -> float:
-        return WEB_OPERATION_DEADLINE_SECONDS - (now - operation.created_at).total_seconds()
-
-    @staticmethod
-    def _mark_failed(operation: ToolOperation, code: str) -> None:
-        operation.status = "failed"
-        operation.error_code = code
-        operation.result = None
-        operation.lease_id = None
-        operation.lease_until = None
-
-    async def fail_operation(
-        self,
-        session: AsyncSession,
-        operation_id: UUID,
-        lease_id: UUID,
-        code: str,
-    ) -> None:
-        _, operation = await self._locked_operation(session, operation_id)
-        if operation.status == "completed":
-            return
-        if operation.status != "running" or operation.lease_id != lease_id:
-            raise WebSourceRepositoryError("operation_in_progress")
-        self._mark_failed(operation, code)
-        await session.flush()
-
-    async def release_operation_for_retry(
-        self,
-        session: AsyncSession,
-        operation_id: UUID,
-        lease_id: UUID,
-    ) -> None:
-        _, operation = await self._locked_operation(session, operation_id)
-        if operation.status != "running" or operation.lease_id != lease_id:
-            raise WebSourceRepositoryError("operation_in_progress")
-        if operation.attempts >= MAX_PLATFORM_ATTEMPTS:
-            raise WebSourceRepositoryError("web_unavailable")
-        operation.status = "reserved"
-        operation.lease_id = None
-        operation.lease_until = None
-        await session.flush()
 
     async def list_sources(
         self, session: AsyncSession, turn_id: UUID
