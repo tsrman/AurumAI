@@ -89,6 +89,12 @@ export function useReconcileGrants() {
         authorizationKeys.grants(variables.resourceType, variables.resourceId),
         response
       );
+      if (variables.resourceType === "model") {
+        return Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["admin-models"] }),
+          queryClient.invalidateQueries({ queryKey: ["models"] }),
+        ]).then(() => undefined);
+      }
     },
   });
 }

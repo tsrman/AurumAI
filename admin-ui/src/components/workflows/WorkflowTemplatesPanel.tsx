@@ -165,10 +165,10 @@ export function WorkflowTemplatesPanel({
   };
 
   return (
-    <section className="space-y-4 rounded-md border p-4">
+    <section className="space-y-4 rounded-card border border-aurum-border bg-aurum-surface p-5">
       <div>
         <h2 className="text-lg font-semibold">{t("title")}</h2>
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-aurum-text-2">
           {t("subtitle")}
         </p>
       </div>

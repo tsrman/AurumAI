@@ -25,6 +25,9 @@ const mutate = vi.fn(
 vi.mock("@/hooks/useAdminAccess", () => ({
   useAdminAccess: () => access,
 }));
+vi.mock("@/components/authorization/GrantEditor", () => ({
+  GrantEditor: () => null,
+}));
 vi.mock("@/hooks/useAdminModels", () => ({
   useAdminModels: () => query,
   useUpdateOrganizationModelSettings: () => ({
@@ -72,11 +75,10 @@ test("shows access loading, denial, and query errors", () => {
   expect(screen.getByText("gateway broke")).toBeInTheDocument();
 });
 
-test("renders catalog, disables ungranted models and saves changed default", () => {
+test("renders catalog and saves a cleared default", () => {
   render(<AdminModelsPage />);
 
   expect(screen.getByText("Gateway available")).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: "provider/private" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(screen.getByRole("link", { name: /Configure model access/ })).toHaveAttribute(
     "href",
@@ -90,6 +92,31 @@ test("renders catalog, disables ungranted models and saves changed default", () 
   expect(mutate).toHaveBeenCalledWith(
     { defaultModel: null, defaultTemperature: null },
     expect.anything()
+  );
+});
+
+test("allows choosing an ungranted model and explains access before saving", () => {
+  const { rerender } = render(<AdminModelsPage />);
+  const picker = screen.getByLabelText("Default model");
+  const option = picker.querySelector('option[value="provider/private"]');
+  expect(option).not.toBeDisabled();
+  fireEvent.change(picker, { target: { value: "provider/private" } });
+
+  expect(picker).toHaveValue("provider/private");
+  expect(screen.getByText("Grant this model read access for the organization below, then save the default. Choosing a model does not grant access."))
+    .toBeVisible();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(mutate).not.toHaveBeenCalled();
+
+  query = { data: { data: { ...available, models: [
+    available.models[0], { ...available.models[1], organizationReadable: true },
+  ] } }, isLoading: false, error: null };
+  rerender(<AdminModelsPage />);
+  expect(screen.getByLabelText("Default model")).toHaveValue("provider/private");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(mutate).toHaveBeenCalledWith(
+    { defaultModel: "provider/private", defaultTemperature: null }, expect.anything()
   );
 });
 

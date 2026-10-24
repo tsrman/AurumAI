@@ -43,6 +43,11 @@ final `/v1`. `GATEWAY_API_KEY` is supplied by the operator. TLS verification is 
 corporate CA configuration uses the existing gateway CA/verification settings.
 The runner uses the API proxy, not direct provider credentials.
 
+In Admin UI, select a default model under Models. A model marked as requiring
+organization access can be selected for configuration; use the grant editor below
+to give the organization read access, apply the grants, then save the default.
+Selecting a default never grants permission by itself.
+
 The Bifrost wrapper preserves persistent app secrets. OpenRouter requires
 `OPENROUTER_API_KEY`; the shipped Bifrost configuration contains only an
 environment reference to that key.
@@ -103,6 +108,11 @@ operator deny ranges to application, guard and Helm policies. Do not weaken the
 required ranges or treat an unavailable positive control as a passed deny test.
 
 ## Identity and data lifecycle
+
+Groups synchronized from Keycloak are managed in Keycloak. Admin UI disables local
+deletion for these groups, and the API rejects it: deleting only the local copy
+would allow synchronization to recreate it with a new identity. Groups created
+locally and not yet synchronized can still be deleted in Admin UI.
 
 `APP_IDENTITY_SYNC_ENABLED=false` is the default. Install/verify the signed complete-
 groups mapper on both clients, apply migrations and start the maintenance worker/

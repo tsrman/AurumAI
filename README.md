@@ -18,13 +18,19 @@ and tests. Use Linux, macOS or WSL2 with a working Docker installation.
 
 ```bash
 ./scripts/bootstrap-dev-env.sh
-docker compose --profile build build runner
-docker compose up -d --build
+./install-platform.sh          # review the installation commands
+./install-platform.sh --apply  # start the platform and install starter tools
 ```
 
 Bootstrap writes persistent generated secrets into ignored `.env` with private
-permissions. Repeating it preserves configured values. Build the runner explicitly:
-its build-only profile is not started by an ordinary Compose `up`.
+permissions. Repeating it preserves configured values. The installer builds the
+runner and bounded code sandbox, starts the platform, then installs offline CSV
+and JSON skills plus SSE MCP calculator and text round-trip tools. It preserves
+existing tool definitions and revoked grants. See [starter tools](docs/STARTER_TOOLS.md)
+for explicit existing-organization targets and deployment configuration.
+
+For a minimal stack without starter tools, build the runner with
+`docker compose --profile build build runner`, then run `docker compose up -d --build`.
 
 Open the chat at `http://localhost:3000` and administration at
 `http://localhost:3100`. Development accounts are `user`/`user` and `admin`/`admin`;
@@ -105,11 +111,15 @@ Evaluation is disabled by default in deployment examples. To enable it, configur
 both `EVALUATOR_ENABLED=true` and an explicit `EVALUATOR_MODEL` available through
 the gateway. An empty model never launches a new evaluation child.
 
+Configure multi-agent task graphs with the [workflow guide](docs/WORKFLOWS.md),
+including three complete examples, agent mapping, validation, access and chat execution.
+
 ## Optional profiles and rollout gates
 
 | Feature | Setup |
 |---|---|
-| MCP reference servers | `docker compose --profile mcp up -d mcp-everything mcp-fetch` |
+| Starter MCP utilities | Included by `./install-platform.sh --apply`; uses only `mcp-everything` |
+| Unrestricted MCP fetch fixture | Opt-in test profile only; `docker compose --profile mcp up -d mcp-fetch` |
 | Code skills | Build `skill-sandbox` with profile `build`; start `skill-executor` with profile `skills-exec` |
 | RAG | `docker compose --profile rag up -d --build` |
 | Durable questions | Enable server-owned `USER_QUESTIONS_ENABLED`; deploy compatible backend, runner and UI |

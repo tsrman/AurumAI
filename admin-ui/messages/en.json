@@ -99,7 +99,7 @@
   "workflows": {
     "page": {
       "title": "Workflows",
-      "subtitle": "Deterministic agent graphs",
+      "subtitle": "Build a repeatable process from a real task. Configure here, run it in chat.",
       "loading": "Loading workflows..."
     },
     "diagnostics": {
@@ -118,7 +118,9 @@
       "edit": "Edit",
       "access": "Access",
       "saveTemplate": "Save as template",
-      "archive": "Archive"
+      "archive": "Archive",
+      "active": "Active",
+      "archived": "Archived"
     },
     "form": {
       "validateFailed": "Workflow validation failed",
@@ -198,7 +200,160 @@
       "iterations": "Iterations",
       "loopIterations": "Loop iterations {source} → {target}",
       "iterationsHint": "From 2 to 20 iterations.",
-      "close": "Close"
+      "close": "Close",
+      "keyPlaceholder": "node_key",
+      "keyLabel": "Step key",
+      "nameLabel": "Step name",
+      "agentLabel": "Agent",
+      "instructionLabel": "Task instruction",
+      "advanced": "Advanced step settings"
+    },
+    "workspace": {
+      "overview": "My workflows",
+      "examples": "Examples",
+      "templates": "Saved templates",
+      "diagnostics": "Run diagnostics",
+      "create": "Create workflow",
+      "emptyTitle": "Start with a task, not a blank graph",
+      "emptyHint": "Choose an example to see the inputs, agent instructions and expected result, or create your own workflow.",
+      "howTitle": "How a workflow runs",
+      "howText": "A supervisor prepares the tasks. Agents execute connected steps. The supervisor combines their results into one reply in chat.",
+      "agentsMissing": "Create at least one agent before assigning workflow roles. One agent can serve several roles.",
+      "agentsLink": "Configure agents",
+      "loadFailed": "Could not load the data. Check your connection and access.",
+      "retry": "Try again",
+      "loadingDetail": "Loading the saved workflow…",
+      "discardTitle": "Discard unsaved changes?",
+      "discardHint": "Your current draft will be lost. Keep editing to preserve it.",
+      "discard": "Discard changes",
+      "keep": "Keep editing",
+      "cancel": "Back to workflows",
+      "saved": "Workflow saved",
+      "accessHint": "Grant users access to the workflow, agents, models and any referenced resources. Selecting a default model does not grant access.",
+      "chat": "Open chat",
+      "runId": "Run ID",
+      "runHint": "Paste the workflow run UUID from chat progress. This area contains administrative execution diagnostics.",
+      "runFailed": "Could not load this run. Check its ID and your access.",
+      "runLoading": "Loading run diagnostics…",
+      "archiveTitle": "Archive this workflow?",
+      "archiveHint": "It will no longer be available for new runs. Existing execution history is preserved.",
+      "archiveConfirm": "Archive workflow",
+      "browseExamples": "Browse examples",
+      "refreshFailed": "Could not refresh the data. Your draft is retained; check the connection before validating and saving."
+    },
+    "guide": {
+      "stepLabel": "{number}. {name}",
+      "task": "Task",
+      "agents": "Agents",
+      "steps": "Steps",
+      "check": "Check",
+      "launch": "Launch",
+      "next": "Next",
+      "back": "Back",
+      "supervisor": "Supervisor",
+      "supervisorHint": "Prepares instructions for each step and combines the results into the final chat reply.",
+      "agentsHint": "Assign an agent to each role. You can reuse the same agent for several steps.",
+      "allAgents": "Use supervisor for all steps",
+      "noAgents": "No agents available. Configure an agent first.",
+      "graphHint": "Add steps, select a card to edit it, and connect its right output to the next step’s left input.",
+      "edgeHint": "On success and on failure refer to execution status. A text answer saying “needs revision” does not trigger a failure branch. All incoming dependencies must match.",
+      "confirmationHint": "Confirmation pauses before this step runs. It does not send messages or perform an external action by itself.",
+      "advanced": "Advanced settings",
+      "missingName": "Enter a workflow name.",
+      "missingSupervisor": "Choose a supervisor.",
+      "missingNodes": "Give every step a name, an agent and an instruction.",
+      "missingGraph": "Check unique step keys, connections and loop limits.",
+      "ready": "Ready for server validation",
+      "validated": "Validated — ready to save",
+      "checkHint": "Changes invalidate the previous check. Validate the current configuration before saving.",
+      "launchHint": "Saving a workflow does not start it. Open chat, select this workflow and send your task.",
+      "saveFirst": "Validate and save on the Check step before launching.",
+      "nodeCount": "{count} steps",
+      "nodeAgent": "Agent for {name}",
+      "sampleInput": "Example request for chat",
+      "copy": "Copy request",
+      "copied": "Copied",
+      "copyFailed": "Could not copy. Select and copy the request manually."
+    },
+    "examples": {
+      "title": "Examples for real work",
+      "intro": "Explore a complete task before building. Each example includes the input, instructions, dependencies and expected result.",
+      "preview": "Preview {name}",
+      "view": "View example",
+      "walkthrough": "Example walkthrough",
+      "use": "Use this example",
+      "input": "Sample task",
+      "output": "Expected result",
+      "prerequisites": "Requires an available model and at least one configured agent. Assign the roles and grant the intended users access before running. No external accounts or tools are needed.",
+      "previewOnly": "Previewing creates nothing. Using this example opens an unsaved draft; it does not create agents or grant access.",
+      "copy": "Copy sample request",
+      "support": {
+        "title": "Customer support reply",
+        "description": "Prepare a policy-compliant response to a delayed delivery, ready for an operator to send.",
+        "pattern": "3 sequential steps · no external tools",
+        "prompt": "Draft an English reply to Maya about order A-1042. Delivery was promised on October 20; today is October 24. Carrier update: delayed at sorting center, estimated delivery October 26. Our supplied policy allows a shipping-fee refund after more than two days of delay. The fee was EUR 8. Product refunds require a carrier investigation. Apologize, explain the available option and ask for consent. Do not claim a refund was already issued.",
+        "output": "A customer reply citing order A-1042, the carrier’s October 26 estimate and the EUR 8 shipping-fee refund option, plus an operator note about uncertainties. No email is sent and no refund is issued.",
+        "connections": "Check facts → Draft reply → Review reply. Each step waits for its predecessor. Optional confirmation on the review step pauses before review starts.",
+        "nodes": {
+          "0": {
+            "name": "Check facts and policy",
+            "instruction": "Extract the order ID, promised and estimated delivery dates, delay duration, supplied policy and allowed remedy. List prohibited claims. Use only the user request."
+          },
+          "1": {
+            "name": "Draft the customer reply",
+            "instruction": "Use the predecessor facts to write a concise, empathetic reply. Present the carrier date as an estimate, offer the supplied remedy and ask for consent. Do not invent refunds or investigation outcomes."
+          },
+          "2": {
+            "name": "Review the reply",
+            "instruction": "Check the draft against the supplied facts and policy. Return a corrected customer reply and a short operator note on uncertainty. Do not send anything or issue a refund."
+          }
+        }
+      },
+      "campaign": {
+        "title": "Workshop campaign plan",
+        "description": "Combine two parallel specialists into a practical campaign with content, a budget and metrics.",
+        "pattern": "2 parallel steps → combined plan",
+        "prompt": "Prepare a campaign for a free 45-minute online workshop, “Automate your weekly reports”, on November 12 at 14:00 UTC. Audience: operations leads in teams of 10–50. Available channels: 800 opted-in email contacts and the company LinkedIn page. Target: 40 registrations. Budget: EUR 300. Deliver a seven-day schedule, three LinkedIn post drafts, one email draft and success metrics. Do not access accounts or promise registrations.",
+        "output": "A seven-day campaign schedule, three post drafts, one email draft, budget allocation of at most EUR 300 and measurable registration metrics. Nothing is published or sent.",
+        "connections": "Audience analysis and Content angles run independently, up to two at once. Both connect to Campaign plan, which waits for both successful results.",
+        "nodes": {
+          "0": {
+            "name": "Analyze the audience",
+            "instruction": "Analyze the supplied audience, reporting pain points, constraints and registration target. Separate assumptions from supplied facts. Do not invent market statistics."
+          },
+          "1": {
+            "name": "Develop content angles",
+            "instruction": "Propose three content angles for the supplied workshop, each with a value proposition, likely objection and call to action. Preserve the event details. Do not publish."
+          },
+          "2": {
+            "name": "Build the campaign plan",
+            "instruction": "Combine both predecessor results into a seven-day schedule with three LinkedIn drafts, one email draft, budget totaling at most EUR 300 and measurable registration metrics. Clearly label proposals."
+          }
+        }
+      },
+      "incident": {
+        "title": "Technical incident assessment",
+        "description": "Turn supplied logs into an evidence-based diagnosis and a reversible recovery plan.",
+        "pattern": "3 sequential steps · read-only assessment",
+        "prompt": "Deployment app-v42 completed at 09:12 UTC, followed by proxy 502 errors. Proxy log: connect() failed (111: Connection refused) to upstream http://app:8000/health. New application log: Server listening on 0.0.0.0:8080. The previous deployment listened on port 8000. No database errors appear in the supplied excerpt. Assess the incident and propose a reversible recovery plan. You have no cluster access. Do not execute commands or claim recovery.",
+        "output": "A diagnosis grounded in the observed 8000/8080 port mismatch, a verification checklist and a reversible recovery proposal. No infrastructure checks or changes are executed.",
+        "connections": "Extract evidence → Rank hypotheses → Draft runbook. The supervisor combines the completed work into the final assessment.",
+        "nodes": {
+          "0": {
+            "name": "Extract incident evidence",
+            "instruction": "Build a timeline and list observed facts, unknowns and the relevant port mismatch. Treat the absence of a database error in this excerpt as limited evidence, not proof."
+          },
+          "1": {
+            "name": "Rank likely causes",
+            "instruction": "Use the predecessor evidence to rank plausible causes. Explain supporting facts and read-only checks that would distinguish the causes. Separate confidence from fact."
+          },
+          "2": {
+            "name": "Draft a recovery runbook",
+            "instruction": "Use the ranked causes to propose reversible recovery: verify listener/upstream configuration, align routing or roll back to the known previous deployment, verify health and traffic. Include prerequisites and rollback conditions. Claim no executed checks or recovery."
+          }
+        }
+      },
+      "templateCopyNotice": "The copy has independent agents; access rights were not copied; auto-routing is off. Grant access separately before running it."
     }
   },
   "authorization": {
@@ -257,7 +412,8 @@
     "delete": "Delete",
     "empty": "No groups yet",
     "deleteTitle": "Delete the group?",
-    "deleteDescription": "“{group}” will be deleted and member access will change immediately."
+    "deleteDescription": "“{group}” will be deleted and member access will change immediately.",
+    "managedInKeycloak": "Manage this group in Keycloak. Local deletion would be undone by synchronization."
   },
   "agents": {
     "page": {
@@ -290,7 +446,9 @@
     "temperatureUnset": "Not set — the system default (0.7) is used.",
     "saving": "Saving...",
     "save": "Save",
-    "configureAccess": "Configure model access"
+    "configureAccess": "Configure model access",
+    "requiresAccess": "{model} — requires organization access",
+    "grantAccessHint": "Grant this model read access for the organization below, then save the default. Choosing a model does not grant access."
   },
   "nav": {
     "backToChat": "← To chat",

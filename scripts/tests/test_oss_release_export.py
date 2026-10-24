@@ -170,3 +170,16 @@ def test_broad_include_still_excludes_prohibited_artifacts(tmp_path: Path):
         source, manifest(source, include=["**"], exclude=[])
     )
     assert selected == (".env.example", "README.md", "app/main.py")
+
+
+def test_public_candidate_ships_executable_platform_installer(tmp_path: Path):
+    root = Path(__file__).resolve().parents[2]
+    exporter = implementation()
+    candidate = tmp_path / "candidate"
+    exporter.export_candidate(root, candidate, exporter.load_manifest(root / "release/oss-manifest.json"))
+
+    installer = candidate / "install-platform.sh"
+    assert installer.is_file(), "The documented installation entry point is missing from the release"
+    result = subprocess.run([str(installer), "--help"], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0
+    assert "Usage: ./install-platform.sh" in result.stdout

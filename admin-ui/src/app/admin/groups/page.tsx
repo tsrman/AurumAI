@@ -129,12 +129,15 @@ export default function AdminGroupsPage() {
                       <button
                         type="button"
                         onClick={() => setDeletingGroup(group)}
-                        disabled={remove.isPending}
+                        disabled={remove.isPending || !canWrite || Boolean(group.lastSyncedAt || group.keycloakId)}
                         className="rounded-md bg-red-600 px-3 py-1 text-white hover:bg-red-700 disabled:opacity-50"
                       >
                         {t("delete")}
                       </button>
                     </div>
+                    {group.lastSyncedAt || group.keycloakId ? (
+                      <p className="mt-2 text-xs text-gray-600">{t("managedInKeycloak")}</p>
+                    ) : null}
                   </td>
                 </tr>
               ))}
@@ -163,7 +166,9 @@ export default function AdminGroupsPage() {
         open={deletingGroup != null}
         title={t("deleteTitle")}
         description={
-          deletingGroup
+          remove.isError
+            ? errorMessage(remove.error)
+            : deletingGroup
             ? t("deleteDescription", { group: deletingGroup.name })
             : undefined
         }

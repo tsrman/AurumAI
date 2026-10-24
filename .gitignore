@@ -31,3 +31,6 @@ design/
 
 # Local poetry config (in-project venv preference) — machine-specific
 poetry.toml
+
+# Local UI design context and canvas state
+.superdesign/

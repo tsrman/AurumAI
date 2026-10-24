@@ -62,7 +62,11 @@ type EdgeData = {
   onOpenLoop: () => void;
 };
 
-const toFlowNodes = (nodes: WorkflowNodeDraft[], agents: AgentDefinition[], selectedNodeKey: string | null): Node<NodeCardData>[] =>
+const toFlowNodes = (
+  nodes: WorkflowNodeDraft[],
+  agents: AgentDefinition[],
+  selectedNodeKey: string | null,
+): Node<NodeCardData>[] =>
   nodes.map((node) => ({
     id: node.nodeKey,
     type: "workflowNode",
@@ -70,7 +74,8 @@ const toFlowNodes = (nodes: WorkflowNodeDraft[], agents: AgentDefinition[], sele
     data: {
       displayName: node.displayName || node.nodeKey,
       nodeKey: node.nodeKey,
-      agentName: agents.find((agent) => agent.id === node.agentDefinitionId)?.name ?? "",
+      agentName:
+        agents.find((agent) => agent.id === node.agentDefinitionId)?.name ?? "",
       requiresConfirmation: node.requiresConfirmation ?? false,
       selected: node.nodeKey === selectedNodeKey,
     },
@@ -80,7 +85,7 @@ const toFlowEdges = (
   edges: WorkflowEdgeDraft[],
   onChange: (nodes: WorkflowNodeDraft[], edges: WorkflowEdgeDraft[]) => void,
   nodes: WorkflowNodeDraft[],
-  onOpenLoop: (edgeId: string) => void
+  onOpenLoop: (edgeId: string) => void,
 ): Edge<EdgeData>[] =>
   edges.map((edge) => ({
     id: `${edge.sourceNodeKey}->${edge.targetNodeKey}`,
@@ -91,10 +96,28 @@ const toFlowEdges = (
       condition: edge.condition ?? "on_success",
       isLoopBack: edge.isLoopBack ?? false,
       onSetCondition: (condition) =>
-        onChange(nodes, setEdgeCondition(edges, edge.sourceNodeKey, edge.targetNodeKey, condition)),
+        onChange(
+          nodes,
+          setEdgeCondition(
+            edges,
+            edge.sourceNodeKey,
+            edge.targetNodeKey,
+            condition,
+          ),
+        ),
       onRemove: () =>
-        onChange(nodes, toggleEdge(edges, edge.sourceNodeKey, edge.targetNodeKey, false, "on_success")),
-      onOpenLoop: () => onOpenLoop(`${edge.sourceNodeKey}->${edge.targetNodeKey}`),
+        onChange(
+          nodes,
+          toggleEdge(
+            edges,
+            edge.sourceNodeKey,
+            edge.targetNodeKey,
+            false,
+            "on_success",
+          ),
+        ),
+      onOpenLoop: () =>
+        onOpenLoop(`${edge.sourceNodeKey}->${edge.targetNodeKey}`),
     },
   }));
 
@@ -104,25 +127,33 @@ function WorkflowNodeCard({ data }: NodeProps<Node<NodeCardData>>) {
     <div
       role="group"
       aria-label={t("node", { name: data.displayName || data.nodeKey })}
-      className={`w-[160px] rounded-md border bg-white px-3 py-2 text-sm shadow-sm ${
-        data.selected ? "border-primary-600 ring-2 ring-primary-200" : "border-gray-300"
+      className={`w-[180px] rounded-card border bg-aurum-surface px-3 py-3 text-sm text-aurum-text shadow-sm ${
+        data.selected
+          ? "border-primary-600 ring-2 ring-primary-200"
+          : "border-aurum-border"
       }`}
     >
       <Handle
         type="target"
         position={Position.Left}
-        aria-label={t("inputHandle", { name: data.displayName || data.nodeKey })}
+        aria-label={t("inputHandle", {
+          name: data.displayName || data.nodeKey,
+        })}
       />
       <p className="truncate font-medium">{data.displayName || data.nodeKey}</p>
-      <p className="truncate text-xs text-gray-500">{data.nodeKey}</p>
-      {data.agentName ? <p className="truncate text-xs text-gray-500">{data.agentName}</p> : null}
+      <p className="truncate text-xs text-aurum-text-2">{data.nodeKey}</p>
+      {data.agentName ? (
+        <p className="truncate text-xs text-aurum-text-2">{data.agentName}</p>
+      ) : null}
       {data.requiresConfirmation ? (
         <p className="text-xs text-amber-700">{t("requiresConfirmation")}</p>
       ) : null}
       <Handle
         type="source"
         position={Position.Right}
-        aria-label={t("outputHandle", { name: data.displayName || data.nodeKey })}
+        aria-label={t("outputHandle", {
+          name: data.displayName || data.nodeKey,
+        })}
       />
     </div>
   );
@@ -184,13 +215,15 @@ function WorkflowEdgeCard({
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             pointerEvents: "all",
           }}
-          className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-1 py-0.5 text-xs shadow-sm"
+          className="flex items-center gap-1 rounded-md border border-aurum-border bg-aurum-surface px-1 py-0.5 text-xs shadow-sm"
         >
           <select
             aria-label={t("edgeCondition", { source, target })}
             className="rounded border-0 bg-transparent text-xs"
             value={condition}
-            onChange={(event) => data?.onSetCondition(event.target.value as WorkflowEdgeCondition)}
+            onChange={(event) =>
+              data?.onSetCondition(event.target.value as WorkflowEdgeCondition)
+            }
           >
             <option value="on_success">{t("onSuccess")}</option>
             <option value="on_failure">{t("onFailure")}</option>
@@ -225,7 +258,7 @@ const edgeTypes = { workflowEdge: WorkflowEdgeCard };
 export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
   const t = useTranslations("workflows.canvas");
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(
-    nodes[0]?.nodeKey ?? null
+    nodes[0]?.nodeKey ?? null,
   );
   // Which loop edge's parameters panel is open, by its "${source}->${target}"
   // id. Deliberately not remapped on rename/delete — every render re-derives
@@ -239,29 +272,39 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
   // updated draft. No local mirror/effect-sync needed.
   const flowNodes = useMemo(
     () => toFlowNodes(nodes, agents, selectedNodeKey),
-    [nodes, agents, selectedNodeKey]
+    [nodes, agents, selectedNodeKey],
   );
   const flowEdges = useMemo(
     () => toFlowEdges(edges, onChange, nodes, setLoopEdgeId),
-    [edges, onChange, nodes]
+    [edges, onChange, nodes],
   );
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<Node<NodeCardData>>[]) => {
       const positionChanges = changes.filter(
-        (change): change is Extract<NodeChange<Node<NodeCardData>>, { type: "position" }> =>
-          change.type === "position" && change.position !== undefined
+        (
+          change,
+        ): change is Extract<
+          NodeChange<Node<NodeCardData>>,
+          { type: "position" }
+        > => change.type === "position" && change.position !== undefined,
       );
       if (positionChanges.length === 0) return;
       const nextNodes = nodes.map((node) => {
-        const change = positionChanges.find((candidate) => candidate.id === node.nodeKey);
+        const change = positionChanges.find(
+          (candidate) => candidate.id === node.nodeKey,
+        );
         return change?.position
-          ? { ...node, positionX: change.position.x, positionY: change.position.y }
+          ? {
+              ...node,
+              positionX: change.position.x,
+              positionY: change.position.y,
+            }
           : node;
       });
       onChange(nextNodes, edges);
     },
-    [nodes, edges, onChange]
+    [nodes, edges, onChange],
   );
 
   const handleConnect = useCallback(
@@ -271,10 +314,19 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
       // is unreliable; use the node inspector loop-creation button.
       // instead. A backward drag (target already an ancestor of source) is
       // auto-detected inside connectNodes and becomes a loop-back edge.
-      if (isSelfLoop({ sourceNodeKey: connection.source, targetNodeKey: connection.target })) return;
-      onChange(nodes, connectNodes(edges, connection.source, connection.target));
+      if (
+        isSelfLoop({
+          sourceNodeKey: connection.source,
+          targetNodeKey: connection.target,
+        })
+      )
+        return;
+      onChange(
+        nodes,
+        connectNodes(edges, connection.source, connection.target),
+      );
     },
-    [nodes, edges, onChange]
+    [nodes, edges, onChange],
   );
 
   const addWorkflowNode = () => {
@@ -283,7 +335,9 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
     setSelectedNodeKey(nextNodes[nextNodes.length - 1].nodeKey);
   };
 
-  const selectedIndex = nodes.findIndex((node) => node.nodeKey === selectedNodeKey);
+  const selectedIndex = nodes.findIndex(
+    (node) => node.nodeKey === selectedNodeKey,
+  );
   const selectedNode = selectedIndex >= 0 ? nodes[selectedIndex] : null;
 
   const patchSelected = (patch: Partial<WorkflowNodeDraft>) => {
@@ -306,7 +360,8 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
   // in sync.
   const selectedLoopEdge = edges.find(
     (edge) =>
-      edge.isLoopBack && `${edge.sourceNodeKey}->${edge.targetNodeKey}` === loopEdgeId
+      edge.isLoopBack &&
+      `${edge.sourceNodeKey}->${edge.targetNodeKey}` === loopEdgeId,
   );
 
   return (
@@ -320,11 +375,11 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
           {t("addNode")}
         </button>
       </div>
-      <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div
           aria-label={t("graph")}
-          style={{ height: 420 }}
-          className="rounded-md border"
+          style={{ height: 460 }}
+          className="workflow-editor-canvas min-w-0 rounded-card border border-aurum-border bg-aurum-surface-2"
         >
           <ReactFlowProvider>
             <ReactFlow
@@ -345,72 +400,112 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
         <div className="space-y-3">
           {selectedNode ? (
             <fieldset
-              key={selectedNode.nodeKey}
-              className="space-y-3 rounded-md border p-3"
+              key={selectedIndex}
+              className="min-w-0 space-y-3 rounded-card border border-aurum-border bg-aurum-surface p-4"
               aria-label={t("inspector", { index: selectedIndex + 1 })}
             >
-              <legend className="px-1 font-medium">{t("nodeLegend", { index: selectedIndex + 1 })}</legend>
-              <input
-                aria-label={t("nodeKey", { index: selectedIndex + 1 })}
-                placeholder="node_key"
-                className="w-full rounded-md border px-3 py-2"
-                value={selectedNode.nodeKey}
-                onChange={(event) => patchSelected({ nodeKey: event.target.value })}
-              />
-              {hasReservedKey(selectedNode.nodeKey) ? (
-                <p className="text-sm text-red-600">
-                  {t("reservedKey")}
-                </p>
-              ) : null}
-              <input
-                aria-label={t("nodeName", { index: selectedIndex + 1 })}
-                placeholder={t("namePlaceholder")}
-                className="w-full rounded-md border px-3 py-2"
-                value={selectedNode.displayName}
-                onChange={(event) => patchSelected({ displayName: event.target.value })}
-              />
-              <select
-                aria-label={t("nodeAgent", { index: selectedIndex + 1 })}
-                className="w-full rounded-md border px-3 py-2"
-                value={selectedNode.agentDefinitionId}
-                onChange={(event) => patchSelected({ agentDefinitionId: event.target.value })}
-              >
-                <option value="">{t("chooseAgent")}</option>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
-              </select>
-              <textarea
-                aria-label={t("nodeInstruction", { index: selectedIndex + 1 })}
-                className="w-full rounded-md border px-3 py-2"
-                value={selectedNode.instruction}
-                onChange={(event) => patchSelected({ instruction: event.target.value })}
-              />
+              <legend className="px-1 font-medium">
+                {t("nodeLegend", { index: selectedIndex + 1 })}
+              </legend>
+              <label className="block space-y-1 text-sm">
+                <span className="font-medium">{t("nameLabel")}</span>
+                <input
+                  aria-label={t("nodeName", { index: selectedIndex + 1 })}
+                  placeholder={t("namePlaceholder")}
+                  className="w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
+                  value={selectedNode.displayName}
+                  onChange={(event) =>
+                    patchSelected({ displayName: event.target.value })
+                  }
+                />
+              </label>
+              <label className="block space-y-1 text-sm">
+                <span className="font-medium">{t("agentLabel")}</span>
+                <select
+                  aria-label={t("nodeAgent", { index: selectedIndex + 1 })}
+                  className="w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
+                  value={selectedNode.agentDefinitionId}
+                  onChange={(event) =>
+                    patchSelected({ agentDefinitionId: event.target.value })
+                  }
+                >
+                  <option value="">{t("chooseAgent")}</option>
+                  {agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1 text-sm">
+                <span className="font-medium">{t("instructionLabel")}</span>
+                <textarea
+                  aria-label={t("nodeInstruction", {
+                    index: selectedIndex + 1,
+                  })}
+                  className="w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
+                  value={selectedNode.instruction}
+                  onChange={(event) =>
+                    patchSelected({ instruction: event.target.value })
+                  }
+                />
+              </label>
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
-                  aria-label={t("requiresConfirmationFor", { index: selectedIndex + 1 })}
+                  aria-label={t("requiresConfirmationFor", {
+                    index: selectedIndex + 1,
+                  })}
                   checked={selectedNode.requiresConfirmation ?? false}
-                  onChange={(event) => patchSelected({ requiresConfirmation: event.target.checked })}
+                  onChange={(event) =>
+                    patchSelected({
+                      requiresConfirmation: event.target.checked,
+                    })
+                  }
                 />
                 {t("requiresConfirmation")}
               </label>
-              {edges.some(
-                (edge) =>
-                  edge.sourceNodeKey === selectedNode.nodeKey &&
-                  edge.targetNodeKey === selectedNode.nodeKey
-              ) ? null : (
-                <button
-                  type="button"
-                  aria-label={t("addLoopFor", { index: selectedIndex + 1 })}
-                  onClick={() => onChange(nodes, addSelfLoop(edges, selectedNode.nodeKey))}
-                  className="text-sm text-primary-700"
-                >
-                  {t("addLoop")}
-                </button>
-              )}
+              <details className="rounded-input border border-aurum-border p-3">
+                <summary className="cursor-pointer text-sm">
+                  {t("advanced")}
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <label className="block space-y-1 text-sm">
+                    <span className="font-medium">{t("keyLabel")}</span>
+                    <input
+                      aria-label={t("nodeKey", { index: selectedIndex + 1 })}
+                      placeholder={t("keyPlaceholder")}
+                      className="w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text"
+                      value={selectedNode.nodeKey}
+                      onChange={(event) =>
+                        patchSelected({ nodeKey: event.target.value })
+                      }
+                    />
+                  </label>
+                  {hasReservedKey(selectedNode.nodeKey) ? (
+                    <p className="text-sm text-red-600">{t("reservedKey")}</p>
+                  ) : null}
+                  {edges.some(
+                    (edge) =>
+                      edge.sourceNodeKey === selectedNode.nodeKey &&
+                      edge.targetNodeKey === selectedNode.nodeKey,
+                  ) ? null : (
+                    <button
+                      type="button"
+                      aria-label={t("addLoopFor", { index: selectedIndex + 1 })}
+                      onClick={() =>
+                        onChange(
+                          nodes,
+                          addSelfLoop(edges, selectedNode.nodeKey),
+                        )
+                      }
+                      className="text-sm text-primary-700"
+                    >
+                      {t("addLoop")}
+                    </button>
+                  )}
+                </div>
+              </details>
               {nodes.length > 1 ? (
                 <button
                   type="button"
@@ -422,12 +517,18 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
               ) : null}
             </fieldset>
           ) : (
-            <p className="text-sm text-gray-500">{t("emptyInspector")}</p>
+            <p className="text-sm text-aurum-text-2">{t("emptyInspector")}</p>
           )}
           {selectedLoopEdge ? (
-            <fieldset className="space-y-3 rounded-md border p-3" aria-label={t("loopParams")}>
+            <fieldset
+              className="min-w-0 space-y-3 rounded-card border border-aurum-border bg-aurum-surface p-4"
+              aria-label={t("loopParams")}
+            >
               <legend className="px-1 font-medium">
-                {t("loopTitle", { source: selectedLoopEdge.sourceNodeKey, target: selectedLoopEdge.targetNodeKey })}
+                {t("loopTitle", {
+                  source: selectedLoopEdge.sourceNodeKey,
+                  target: selectedLoopEdge.targetNodeKey,
+                })}
               </legend>
               <label className="block text-sm">
                 {t("iterations")}
@@ -435,7 +536,10 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
                   type="number"
                   min={2}
                   max={20}
-                  aria-label={t("loopIterations", { source: selectedLoopEdge.sourceNodeKey, target: selectedLoopEdge.targetNodeKey })}
+                  aria-label={t("loopIterations", {
+                    source: selectedLoopEdge.sourceNodeKey,
+                    target: selectedLoopEdge.targetNodeKey,
+                  })}
                   className="mt-1 w-full rounded-md border px-3 py-2"
                   value={selectedLoopEdge.maxIterations ?? ""}
                   onChange={(event) =>
@@ -445,14 +549,20 @@ export function WorkflowCanvas({ agents, nodes, edges, onChange }: Props) {
                         edges,
                         selectedLoopEdge.sourceNodeKey,
                         selectedLoopEdge.targetNodeKey,
-                        event.target.value === "" ? null : Number(event.target.value)
-                      )
+                        event.target.value === ""
+                          ? null
+                          : Number(event.target.value),
+                      ),
                     )
                   }
                 />
               </label>
-              <p className="text-xs text-gray-500">{t("iterationsHint")}</p>
-              <button type="button" onClick={() => setLoopEdgeId(null)} className="text-sm text-gray-600">
+              <p className="text-xs text-aurum-text-2">{t("iterationsHint")}</p>
+              <button
+                type="button"
+                onClick={() => setLoopEdgeId(null)}
+                className="text-sm text-aurum-text-2"
+              >
                 {t("close")}
               </button>
             </fieldset>
