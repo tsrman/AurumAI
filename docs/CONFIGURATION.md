@@ -138,8 +138,18 @@ short text note. Attached images also appear in the image list a later turn can 
 attachment before sending deletes it; an upload left unsent (for example when the tab
 closes) stays with the conversation, unused, and like any conversation image keeps
 it from being archived.
-Workflows cannot receive images yet, so a message with images is never routed to one. Image calls are not yet counted in token quotas, usage events or Admin UI
-analytics; the per-turn limit and the request rate limit are the only bounds.
+Workflows cannot receive images yet, so a message with images is never routed to one.
+
+Image tools share the organization's monthly quota with chat. Each Images API attempt
+reserves one request before the call (an exhausted quota fails the tool with
+`image_quota_exceeded`, which the model is told about), is counted once the provider
+answers, and adds the tokens the provider reports in its `usage` block to the token
+quota; an attempt the provider never answered (a timeout, a refusal, an outage) gives
+its reservation back. A provider that reports no usage leaves the call counted as a
+request without token data. Usage events record the call as `image_generate` or
+`image_edit`, and Admin UI → Analytics shows the number of images per model and per
+user next to requests and tokens. Image tokens of attachments sent to vision models are
+part of the chat completion's own prompt tokens.
 
 ## Identity and data lifecycle
 

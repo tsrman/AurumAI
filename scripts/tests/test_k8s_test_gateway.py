@@ -946,6 +946,7 @@ def test_image_model_and_endpoints_exist_only_when_configured() -> None:
     generated = client.post("/v1/images/generations", json={"model": "test-image", "prompt": "x"})
     assert generated.status_code == 200
     assert base64.b64decode(generated.json()["data"][0]["b64_json"]).startswith(b"\x89PNG")
+    assert generated.json()["usage"] == {"input_tokens": 10, "output_tokens": 100, "total_tokens": 110}
     assert client.post("/v1/images/generations", json={"model": "other", "prompt": "x"}).status_code == 400
     edited = client.post(
         "/v1/images/edits",

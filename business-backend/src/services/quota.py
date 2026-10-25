@@ -12,7 +12,12 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import async_session
-from src.models.llm_usage import LLMUsageEvent, OrganizationUsageMonthly, UsageEventStatus
+from src.models.llm_usage import (
+    LLMUsageEvent,
+    OrganizationUsageMonthly,
+    UsageEventKind,
+    UsageEventStatus,
+)
 from src.models.organization import Organization
 
 logger = logging.getLogger(__name__)
@@ -233,6 +238,7 @@ class QuotaService:
         workflow_run_id: uuid.UUID | None = None,
         workflow_phase: str | None = None,
         workflow_node_key: str | None = None,
+        kind: UsageEventKind = UsageEventKind.CHAT,
         now: datetime | None = None,
     ) -> UsageReservation:
         if workflow_run_id is None:
@@ -283,6 +289,7 @@ class QuotaService:
                         workflow_run_id,
                         workflow_phase,
                         workflow_node_key,
+                        kind.value,
                     )
                     actual = (
                         existing.org_id,
@@ -293,6 +300,7 @@ class QuotaService:
                         existing.workflow_run_id,
                         existing.workflow_phase,
                         existing.workflow_node_key,
+                        existing.kind,
                     )
                     if actual != expected:
                         raise QuotaInvariantError(
@@ -325,6 +333,7 @@ class QuotaService:
                         workflow_run_id=workflow_run_id,
                         workflow_phase=workflow_phase,
                         workflow_node_key=workflow_node_key,
+                        kind=kind.value,
                         status=UsageEventStatus.RESERVED.value,
                     )
                 )

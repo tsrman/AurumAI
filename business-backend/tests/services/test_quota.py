@@ -21,6 +21,7 @@ from src.models.organization import Organization
 from src.models.user import User
 from src.models.workflow_definition import WorkflowDefinition
 from src.models.workflow_run import WorkflowRun
+from src.models.llm_usage import UsageEventKind
 from src.services.quota import QuotaExceededError, QuotaInvariantError, QuotaService
 
 
@@ -326,6 +327,17 @@ async def test_reserve_is_idempotent_but_rejects_conflicting_attribution() -> No
                 conversation_id,
                 "different-model",
                 request_id,
+                now=now,
+            )
+        # An image call never reuses a chat completion's attribution.
+        with pytest.raises(QuotaInvariantError):
+            await identity.service.reserve(
+                identity.org_id,
+                identity.user_id,
+                conversation_id,
+                "gpt-test",
+                request_id,
+                kind=UsageEventKind.IMAGE_GENERATE,
                 now=now,
             )
         snapshot = await identity.service.snapshot(

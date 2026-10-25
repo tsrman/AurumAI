@@ -48,6 +48,11 @@ model is one the organization marked in Admin UI (Models → Images) as acceptin
 images. The backend inlines them for the model at request time, keeps them in the
 conversation history after a reload, and lists them as sources for `edit_image`.
 
+Image generation and editing now count against the organization's monthly quota:
+each Images API call is one request, plus the tokens the provider reports, and an
+exhausted quota stops the tool with `image_quota_exceeded`. Usage events record the
+kind of call, and Admin UI analytics shows images per model and per user.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

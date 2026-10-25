@@ -48,8 +48,10 @@ def test_llm_usage_event_schema_preserves_billable_attribution() -> None:
         if constraint.name == "fk_llm_usage_events_workflow_run"
     )
     assert workflow_fk.ondelete == "RESTRICT"
+    assert str(table.c.kind.server_default.arg) == "chat"
     assert _check_sql(table) == {
         "status IN ('reserved', 'accepted', 'completed')",
+        "kind IN ('chat', 'image_generate', 'image_edit')",
         "prompt_tokens >= 0",
         "completion_tokens >= 0",
         "total_tokens >= 0",

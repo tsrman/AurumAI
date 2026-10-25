@@ -12,9 +12,10 @@ from collections.abc import Awaitable, Callable
 import asyncio
 import hashlib
 import json
+import logging
 import time
 from typing import Any, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from prometheus_client import Counter, Histogram
 from sqlalchemy import select
@@ -24,6 +25,7 @@ from src.core.authorization_types import AuthorizationSubject
 from src.core.config import settings
 from src.models.conversation_image import ConversationImage
 from src.models.interaction import InteractionExecution, InteractionTurn
+from src.models.llm_usage import UsageEventKind
 from src.repositories.image_repository import ImageRepository, ImageRepositoryError, StoredImage
 from src.repositories.interaction_repository import InteractionError, InteractionRepository
 from src.repositories.tool_operation_leases import MAX_PLATFORM_ATTEMPTS
@@ -32,7 +34,12 @@ from src.schemas.image_tools import (
     EditImageRequest,
     ImageOperationRequest,
 )
-from src.services.image_api_client import ImageApiError, configured_image_api_client
+from src.services.image_api_client import (
+    ImageApiError,
+    ImageResult,
+    ImageUsage,
+    configured_image_api_client,
+)
 from src.services.image_content import ImageContentError, inspect_image
 from src.services.interaction import (
     InteractionAccessDenied,
@@ -42,6 +49,9 @@ from src.services.interaction import (
 )
 from src.services.object_storage import object_storage
 from src.services.organization_model_settings import organization_model_settings_service
+from src.services.quota import QuotaExceededError, QuotaService, get_quota_service
+
+logger = logging.getLogger(__name__)
 
 
 Authorize = Callable[
@@ -58,6 +68,7 @@ IMAGE_ERROR_CODES = {
     "image_rejected",
     "image_not_found",
     "image_cancelled",
+    "image_quota_exceeded",
 }
 _RETRYABLE_ERROR_CODES = {"image_unavailable"}
 _DURABLE_ERROR_CODES = {"user_input_cancelled": "image_cancelled"}
@@ -77,11 +88,11 @@ IMAGE_TOOL_ATTEMPT_DURATION_SECONDS = Histogram(
 
 
 class ImageClient(Protocol):
-    async def generate(self, *, model: str, prompt: str, size: str) -> bytes: ...
+    async def generate(self, *, model: str, prompt: str, size: str) -> ImageResult: ...
 
     async def edit(
         self, *, model: str, prompt: str, image: bytes, content_type: str, size: str
-    ) -> bytes: ...
+    ) -> ImageResult: ...
 
 
 class ImageStorage(Protocol):
@@ -167,10 +178,12 @@ class ImageToolsService:
         client: ImageClient | None = None,
         storage: ImageStorage | None = None,
         authorize: Authorize = _default_authorize,
+        quota: QuotaService | None = None,
     ) -> None:
         self._client = client
         self._storage = storage
         self._authorize = authorize
+        self._quota = quota
 
     async def execute(
         self,
@@ -270,34 +283,69 @@ class ImageToolsService:
                     session, repository, operation_id, claim.lease_id, "image_timeout"
                 )
                 raise ImageToolExecutionError("image_timeout")
+            # Every provider attempt is one request against the organization's
+            # quota, reserved before the call like a chat completion.
+            quota = self._quota or get_quota_service()
+            usage_request = uuid4()
+            try:
+                await quota.reserve(
+                    subject.org_id,
+                    subject.user_id,
+                    turn.conversation_id,
+                    model,
+                    usage_request,
+                    kind=UsageEventKind(kind),
+                )
+            except QuotaExceededError as exc:
+                await self._fail_claim(
+                    session, repository, operation_id, claim.lease_id, "image_quota_exceeded"
+                )
+                raise ImageToolExecutionError("image_quota_exceeded") from exc
+            except Exception as exc:
+                logger.warning("image quota reservation failed", exc_info=True)
+                await self._fail_claim(
+                    session, repository, operation_id, claim.lease_id, "image_unavailable"
+                )
+                raise ImageToolExecutionError("image_unavailable") from exc
             started = time.perf_counter()
             try:
                 async with asyncio.timeout(remaining_seconds):
                     if source is None:
-                        raw = await client.generate(
+                        provider_result = await client.generate(
                             model=model, prompt=request.args.prompt, size=request.args.size
                         )
                     else:
                         source_bytes = await storage.get_bytes(source.storage_key)
-                        raw = await client.edit(
+                        provider_result = await client.edit(
                             model=model,
                             prompt=request.args.prompt,
                             image=source_bytes,
                             content_type=source.content_type,
                             size=request.args.size,
                         )
+                # Outside the timeout: an answered, billed call must be counted
+                # even when the deadline is about to expire.
+                await self._settle_usage(
+                    quota, subject.org_id, usage_request, accepted=True, usage=provider_result.usage
+                )
+                raw = provider_result.data
                 info = inspect_image(raw, max_bytes=settings.IMAGES_MAX_BYTES)
                 key = image_storage_key(
                     subject.org_id, turn.conversation_id, operation_id, info.extension
                 )
                 await storage.put_bytes(key, raw)
             except TimeoutError as exc:
+                # Cancelling is a no-op once the provider's answer was counted.
+                await self._settle_usage(quota, subject.org_id, usage_request, accepted=False)
                 self._record_attempt(request.tool, "image_timeout", started)
                 await self._fail_claim(
                     session, repository, operation_id, claim.lease_id, "image_timeout"
                 )
                 raise ImageToolExecutionError("image_timeout") from exc
             except ImageApiError as exc:
+                await self._settle_usage(
+                    quota, subject.org_id, usage_request, accepted=exc.accepted, usage=exc.usage
+                )
                 self._record_attempt(request.tool, exc.code, started)
                 if exc.code in _RETRYABLE_ERROR_CODES and claim.attempt < MAX_PLATFORM_ATTEMPTS:
                     try:
@@ -316,12 +364,14 @@ class ImageToolsService:
                 await self._fail_claim(session, repository, operation_id, claim.lease_id, code)
                 raise ImageToolExecutionError(code) from exc
             except ImageContentError as exc:
+                await self._settle_usage(quota, subject.org_id, usage_request, accepted=False)
                 self._record_attempt(request.tool, "image_unavailable", started)
                 await self._fail_claim(
                     session, repository, operation_id, claim.lease_id, "image_unavailable"
                 )
                 raise ImageToolExecutionError("image_unavailable") from exc
             except Exception as exc:
+                await self._settle_usage(quota, subject.org_id, usage_request, accepted=False)
                 self._record_attempt(request.tool, "image_unavailable", started)
                 await self._fail_claim(
                     session, repository, operation_id, claim.lease_id, "image_unavailable"
@@ -411,6 +461,38 @@ class ImageToolsService:
             else "image_unavailable"
         )
         raise ImageToolExecutionError(code) from exc
+
+    @staticmethod
+    async def _settle_usage(
+        quota: QuotaService,
+        org_id: UUID,
+        request_id: UUID,
+        *,
+        accepted: bool,
+        usage: ImageUsage | None = None,
+    ) -> None:
+        """Count an answered call (with its tokens when reported) or give the
+        reservation back. Accounting never fails the image itself."""
+        try:
+            if not accepted:
+                await quota.cancel(org_id, request_id)
+                return
+            await quota.accept(org_id, request_id)
+            if usage is not None:
+                await quota.complete(
+                    org_id,
+                    request_id,
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
+                    usage.total_tokens,
+                )
+        except Exception:
+            logger.error(
+                "image usage accounting failed (request_id=%s org_id=%s)",
+                request_id,
+                org_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _record_attempt(tool: str, status: str, started: float) -> None:

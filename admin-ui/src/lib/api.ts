@@ -127,6 +127,8 @@ export interface UsageTotals {
   completionTokens: number;
   totalTokens: number;
   unaccountedRequests: number;
+  // Images API calls; each is also counted in requests.
+  images: number;
 }
 
 export interface DailyUsage extends UsageTotals {

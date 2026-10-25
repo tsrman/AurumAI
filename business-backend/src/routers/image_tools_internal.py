@@ -29,6 +29,7 @@ _STATUS = {
     "image_rejected": status.HTTP_422_UNPROCESSABLE_CONTENT,
     "image_not_found": status.HTTP_404_NOT_FOUND,
     "image_cancelled": status.HTTP_409_CONFLICT,
+    "image_quota_exceeded": status.HTTP_429_TOO_MANY_REQUESTS,
 }
 
 

@@ -24,12 +24,22 @@ class UsageEventStatus(StrEnum):
     COMPLETED = "completed"
 
 
+class UsageEventKind(StrEnum):
+    CHAT = "chat"
+    IMAGE_GENERATE = "image_generate"
+    IMAGE_EDIT = "image_edit"
+
+
 class LLMUsageEvent(Base):
     __tablename__ = "llm_usage_events"
     __table_args__ = (
         CheckConstraint(
             "status IN ('reserved', 'accepted', 'completed')",
             name="ck_llm_usage_events_status",
+        ),
+        CheckConstraint(
+            "kind IN ('chat', 'image_generate', 'image_edit')",
+            name="ck_llm_usage_events_kind",
         ),
         CheckConstraint("prompt_tokens >= 0", name="ck_llm_usage_events_prompt_tokens"),
         CheckConstraint(
@@ -82,6 +92,13 @@ class LLMUsageEvent(Base):
     workflow_node_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     period_start: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     model: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Chat completion, or an Images API call (one image each).
+    kind: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=UsageEventKind.CHAT.value,
+        server_default="chat",
+    )
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

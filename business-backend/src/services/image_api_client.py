@@ -6,6 +6,7 @@ outbound request to an arbitrary host outside the web egress boundary.
 Provider error bodies are never surfaced; callers get a short code.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -14,10 +15,52 @@ from src.core.config import settings
 from src.services.image_content import ImageContentError, decode_base64_image
 
 
+@dataclass(frozen=True, slots=True)
+class ImageUsage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class ImageResult:
+    data: bytes
+    # None when the provider reports no usage block.
+    usage: ImageUsage | None
+
+
 class ImageApiError(Exception):
-    def __init__(self, code: str) -> None:
+    """``accepted`` means the provider answered with success, so the call is
+    billable even though its result could not be used."""
+
+    def __init__(
+        self, code: str, *, accepted: bool = False, usage: ImageUsage | None = None
+    ) -> None:
         self.code = code
+        self.accepted = accepted
+        self.usage = usage
         super().__init__(code)
+
+
+def _usage(body: object) -> ImageUsage | None:
+    raw = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    # Images API names (input/output), with chat names as a fallback.
+    prompt = raw.get("input_tokens", raw.get("prompt_tokens"))
+    completion = raw.get("output_tokens", raw.get("completion_tokens"))
+    values = [value for value in (prompt, completion) if value is not None]
+    if not values or any(type(value) is not int or value < 0 for value in values):
+        return None
+    prompt_tokens = prompt if isinstance(prompt, int) else 0
+    completion_tokens = completion if isinstance(completion, int) else 0
+    total = raw.get("total_tokens")
+    total_tokens = (
+        total
+        if type(total) is int and total >= prompt_tokens + completion_tokens
+        else prompt_tokens + completion_tokens
+    )
+    return ImageUsage(prompt_tokens, completion_tokens, total_tokens)
 
 
 class ImageApiClient:
@@ -36,7 +79,7 @@ class ImageApiClient:
         self._verify = verify
         self._transport = transport
 
-    async def generate(self, *, model: str, prompt: str, size: str) -> bytes:
+    async def generate(self, *, model: str, prompt: str, size: str) -> ImageResult:
         payload = {"model": model, "prompt": prompt, "n": 1, "size": size}
         return await self._request("generations", json=payload)
 
@@ -48,7 +91,7 @@ class ImageApiClient:
         image: bytes,
         content_type: str,
         size: str,
-    ) -> bytes:
+    ) -> ImageResult:
         extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[content_type]
         return await self._request(
             "edits",
@@ -56,7 +99,7 @@ class ImageApiClient:
             files={"image": (f"image.{extension}", image, content_type)},
         )
 
-    async def _request(self, operation: str, **kwargs: Any) -> bytes:
+    async def _request(self, operation: str, **kwargs: Any) -> ImageResult:
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         try:
             async with httpx.AsyncClient(
@@ -81,16 +124,20 @@ class ImageApiClient:
             raise ImageApiError("image_unavailable")
         try:
             body = response.json()
-            item = body["data"][0]
-            encoded = item["b64_json"]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise ImageApiError("image_unavailable") from exc
-        if not isinstance(encoded, str) or not encoded:
-            raise ImageApiError("image_unavailable")
+        except ValueError as exc:
+            raise ImageApiError("image_unavailable", accepted=True) from exc
+        usage = _usage(body)
         try:
-            return decode_base64_image(encoded, max_bytes=settings.IMAGES_MAX_BYTES)
+            encoded = body["data"][0]["b64_json"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ImageApiError("image_unavailable", accepted=True, usage=usage) from exc
+        if not isinstance(encoded, str) or not encoded:
+            raise ImageApiError("image_unavailable", accepted=True, usage=usage)
+        try:
+            data = decode_base64_image(encoded, max_bytes=settings.IMAGES_MAX_BYTES)
         except ImageContentError as exc:
-            raise ImageApiError("image_unavailable") from exc
+            raise ImageApiError("image_unavailable", accepted=True, usage=usage) from exc
+        return ImageResult(data, usage)
 
 
 def configured_image_api_client() -> ImageApiClient:

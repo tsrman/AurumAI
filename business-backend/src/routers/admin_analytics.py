@@ -56,6 +56,7 @@ def _totals(value: UsageTotals) -> UsageTotalsResponse:
         completion_tokens=value.completion_tokens,
         total_tokens=value.total_tokens,
         unaccounted_requests=value.unaccounted_requests,
+        images=value.images,
     )
 
 

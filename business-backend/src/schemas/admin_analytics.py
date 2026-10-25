@@ -44,6 +44,7 @@ class UsageTotalsResponse(AnalyticsSchema):
     completion_tokens: NonNegativeInt64
     total_tokens: NonNegativeInt64
     unaccounted_requests: NonNegativeInt64
+    images: NonNegativeInt64
 
 
 class DailyUsageResponse(UsageTotalsResponse):

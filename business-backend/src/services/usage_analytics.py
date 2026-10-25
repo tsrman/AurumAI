@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Date, cast, func, literal, select, union_all
+from sqlalchemy import BigInteger, Date, case, cast, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
@@ -11,6 +11,7 @@ from sqlalchemy.sql.selectable import CTE
 from src.models.llm_usage import (
     LLMUsageEvent,
     OrganizationUsageMonthly,
+    UsageEventKind,
     UsageEventStatus,
 )
 from src.models.organization import Organization
@@ -24,10 +25,12 @@ class UsageTotals:
     completion_tokens: int
     total_tokens: int
     unaccounted_requests: int
+    # Images API calls the provider answered; each one is also a request.
+    images: int = 0
 
     @classmethod
     def zero(cls) -> "UsageTotals":
-        return cls(0, 0, 0, 0, 0)
+        return cls(0, 0, 0, 0, 0, 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +123,9 @@ class UsageAnalyticsService:
             return predicates
 
         zero = literal(0, type_=BigInteger)
+        image = case(
+            (LLMUsageEvent.kind == UsageEventKind.CHAT.value, 0), else_=1
+        ).label("images")
         accepted = select(
             LLMUsageEvent.user_id.label("user_id"),
             LLMUsageEvent.model.label("model"),
@@ -128,6 +134,7 @@ class UsageAnalyticsService:
             zero.label("completion_tokens"),
             zero.label("total_tokens"),
             literal(1, type_=BigInteger).label("unaccounted_requests"),
+            image,
         ).where(
             LLMUsageEvent.status == UsageEventStatus.ACCEPTED.value,
             LLMUsageEvent.accepted_at.is_not(None),
@@ -141,6 +148,7 @@ class UsageAnalyticsService:
             LLMUsageEvent.completion_tokens.label("completion_tokens"),
             LLMUsageEvent.total_tokens.label("total_tokens"),
             zero.label("unaccounted_requests"),
+            image,
         ).where(
             LLMUsageEvent.status == UsageEventStatus.COMPLETED.value,
             LLMUsageEvent.completed_at.is_not(None),
@@ -156,6 +164,7 @@ class UsageAnalyticsService:
             _sum(events.c.completion_tokens).label("completion_tokens"),
             _sum(events.c.total_tokens).label("total_tokens"),
             _sum(events.c.unaccounted_requests).label("unaccounted_requests"),
+            _sum(events.c.images).label("images"),
         )
 
     @staticmethod
@@ -167,6 +176,7 @@ class UsageAnalyticsService:
             completion_tokens=int(getattr(values, "completion_tokens")),
             total_tokens=int(getattr(values, "total_tokens")),
             unaccounted_requests=int(getattr(values, "unaccounted_requests")),
+            images=int(getattr(values, "images")),
         )
 
     @staticmethod
