@@ -23,6 +23,23 @@ archive corruption and size bounds. Discovery coverage includes recent restored
 activity, strict retention boundary, locks and blocked-candidate rechecks under
 sustained eligible arrivals.
 
+## Conversation images
+
+`./smoke-test-archive-images.sh` runs on the same disposable project
+(`scripts/fixtures/data-lifecycle-compose.yml`) without Keycloak or RAG, since a
+conversation without attachments never calls RAG. It builds the backend and RAG
+images from the checkout, checks bucket IAM including the image account (Get, Put
+and Delete under `conversation-images/*` only, no listing, no other prefix, no
+archive bucket), prepares an old conversation with a generated image, an edit of it
+and an upload (`prepare-data-lifecycle-images.py`), and drives the real data-worker
+image through archive and restore with its operator login, archive account and image
+account. `check-data-lifecycle-images.py` independently verifies rows and bytes
+before, after the purge (platform objects gone, archived copies with the original
+SHA-256) and after the restore (rows, edit reference and bytes back, newer
+generation). A run without image storage must leave the conversation unclaimed. The
+project lives in tmpfs and is always removed. The fixture has no egress guard; the
+Compose allowlist entry for image storage is covered by `scripts/tests` only.
+
 ## Fixture/recovery tooling
 
 The maintained `scripts/*data-lifecycle*` helpers use private journals and exact
