@@ -103,7 +103,15 @@ class WorkflowRunRepository:
         allowed = tuple(item.value for item in self._ALLOWED_FROM.get(status, ()))
         values: dict[str, object] = {
             "status": status.value,
-            "error_code": error_code,
+            # Repeating the current status without a code (the orchestrator
+            # confirming a cancellation the API already recorded) keeps the
+            # recorded reason instead of erasing it.
+            "error_code": error_code
+            if error_code is not None
+            else case(
+                (WorkflowRun.status == status.value, WorkflowRun.error_code),
+                else_=None,
+            ),
             "updated_at": func.now(),
         }
         if status is WorkflowRunStatus.RUNNING:

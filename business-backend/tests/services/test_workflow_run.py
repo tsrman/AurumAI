@@ -249,6 +249,28 @@ async def test_run_transitions_are_monotonic_and_idempotent(db, test_org, test_u
         await repository.transition(db, run.id, WorkflowRunStatus.RUNNING, None)
 
 
+async def test_a_repeated_terminal_status_keeps_its_recorded_reason(db, test_org, test_user) -> None:
+    definition, conversation, message, turn_id = await create_runtime_graph(db, test_org, test_user)
+    run = await run_service().create_authorized_run(
+        db,
+        AuthorizationSubject(test_user.id, test_org.id, "org_admin"),
+        definition.id,
+        conversation.id,
+        turn_id,
+        message.id,
+    )
+    repository = WorkflowRunRepository()
+
+    # The cancel API records the reason; the orchestrator later confirms the
+    # same status without one.
+    await repository.transition(db, run.id, WorkflowRunStatus.CANCELLED, "user_cancelled")
+    confirmed = await repository.transition(db, run.id, WorkflowRunStatus.CANCELLED, None)
+    assert (confirmed.status, confirmed.error_code) == ("cancelled", "user_cancelled")
+    # An explicit new code still replaces it.
+    replaced = await repository.transition(db, run.id, WorkflowRunStatus.CANCELLED, "other")
+    assert replaced.error_code == "other"
+
+
 async def test_terminal_workflow_transition_finishes_exact_interaction_turn(
     db, test_org, test_user
 ) -> None:

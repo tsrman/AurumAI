@@ -73,6 +73,15 @@ example a workflow run's orchestrator) could fail as "runner unavailable": the
 execution check saw the child start before Temporal recorded it. The chat stream
 now waits briefly for that start to settle and still blocks if it does not.
 
+A workflow agent that called a built-in tool it was not offered, or passed
+malformed arguments to one, no longer hangs: the failure used to be retried by
+Temporal indefinitely. The agent now receives `unknown_tool` or
+`invalid_arguments` as the tool result and can answer without it.
+
+A workflow run cancelled from the chat no longer loses its `user_cancelled`
+reason when the orchestrator later confirms the cancellation: repeating a run's
+current status without a code keeps the recorded one.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.
