@@ -113,6 +113,17 @@ The web-egress image gains a `hermes` guard mode; its web modes generate the sam
 rules as before. `./smoke-test-hermes-egress.sh` accepts it at runtime. The
 `web.access` capability now also covers Hermes's public internet.
 
+skill-executor can run long-lived Hermes Agent sandboxes on Docker from the new
+`hermes-sandbox` image (Hermes 0.19.0 from PyPI, pinned by hash). Each sandbox has
+no capabilities, a read-only root filesystem, a workspace volume and its own
+internal network in isolated gateway mode, joined only by hermes-egress, so
+sandboxes cannot reach each other or the host. The session token stays in the
+workspace, never in container metadata; skill-executor talks to Hermes through
+`docker exec`, re-adopts sandboxes after a restart and reaps idle or expired ones.
+The Hermes completion route now also answers unstreamed requests with one JSON
+completion, as Hermes's auxiliary calls need. `./smoke-test-hermes-sandbox.sh`
+accepts it end to end.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

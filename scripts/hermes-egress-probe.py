@@ -47,9 +47,9 @@ def raw(port: int, data: bytes) -> bytes:
         return b"".join(chunks)
 
 
-def completion_request(target: str = "/v1/hermes/chat/completions") -> bytes:
+def completion_request(target: str = "/v1/hermes/chat/completions", stream: bool = True) -> bytes:
     body = json.dumps(
-        {"model": "hermes-egress-test", "messages": [{"role": "user", "content": "hello"}]}
+        {"model": "hermes-egress-test", "messages": [{"role": "user", "content": "hello"}], "stream": stream}
     ).encode()
     return (
         f"POST {target} HTTP/1.1\r\nHost: {EGRESS}\r\nAuthorization: Bearer {TOKEN}\r\n"
@@ -109,6 +109,7 @@ def main(argv: list[str]) -> None:
         )
     elif command == "platform":
         allowed = raw(8080, completion_request())
+        unstreamed = raw(8080, completion_request(stream=False))
         internal = raw(8080, completion_request("/v1/internal/hermes/sessions"))
         smuggled = raw(
             8080,
@@ -118,6 +119,7 @@ def main(argv: list[str]) -> None:
         emit(
             completion_status=int(allowed.split(b" ")[1]),
             completion_streamed=b"data: " in allowed,
+            unstreamed_json=b'"object":"chat.completion"' in unstreamed.replace(b" ", b""),
             internal_status=int(internal.split(b" ")[1]),
             smuggled_responses=smuggled.count(b"HTTP/1.1 "),
             direct_backend_port=direct(EGRESS, 8000),

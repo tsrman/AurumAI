@@ -132,6 +132,8 @@ class HermesCompletionRequest(BaseModel):
     max_completion_tokens: int | None = Field(default=None, ge=1, le=200_000)
     stop: str | list[str] | None = None
     seed: int | None = None
+    # Hermes's auxiliary calls (titles, compression) are not streamed.
+    stream: bool = False
 
     @model_validator(mode="after")
     def bounded(self) -> "HermesCompletionRequest":

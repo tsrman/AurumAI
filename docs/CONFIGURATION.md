@@ -235,6 +235,27 @@ arrives with the sandboxes themselves.
 
 The Helm chart does not deploy hermes-egress yet.
 
+### Hermes sandboxes
+
+With the overlay, skill-executor runs Hermes sandboxes (Docker runtime only;
+Docker 28 or newer, for isolated-gateway internal networks). Each sandbox gets its
+own `/28` network from `HERMES_SANDBOX_POOL` (default `172.31.0.0/16`, the guard's
+sandbox CIDR), a workspace volume and the `aurum-ai-hermes-sandbox` image, built
+with `docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile
+build build hermes-sandbox`. skill-executor settings (`SKILL_EXECUTOR_` prefix):
+
+| Setting | Default |
+|---|---|
+| `HERMES_ENABLED` | `false` (the overlay passes `HERMES_ENABLED`) |
+| `HERMES_CPUS`, `HERMES_MEMORY_BYTES`, `HERMES_PIDS_LIMIT`, `HERMES_TMP_MB` | 2, 2 GiB, 512, 256 |
+| `HERMES_IDLE_TTL_SECONDS`, `HERMES_MAX_LIFETIME_SECONDS` | 1800, 86400 |
+| `HERMES_START_TIMEOUT_SECONDS` | 60 |
+
+A restarted skill-executor re-adopts live sandboxes from their Docker labels and
+reconnects a recreated guard; its reaper removes sandboxes past their idle or
+absolute lifetime and networks or volumes left without a sandbox. Workspace
+volumes have no size limit with Docker's local volume driver.
+
 ## Identity and data lifecycle
 
 Groups synchronized from Keycloak are managed in Keycloak. Admin UI disables local

@@ -1,0 +1,141 @@
+"""The hermes-sandbox image and its relay."""
+
+from __future__ import annotations
+
+import http.server
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+IMAGE = ROOT / "hermes-sandbox"
+
+
+def test_every_dependency_is_pinned_by_hash() -> None:
+    requirements = (IMAGE / "requirements.txt").read_text()
+    pins = re.findall(r"^([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)==([^ \\\n]+)", requirements, re.M)
+    blocks = [block for block in re.split(r"\n(?=[A-Za-z0-9_.-]+==)", requirements) if "==" in block]
+
+    assert ("hermes-agent", "0.19.0") in pins
+    assert len(pins) == len(blocks) > 50
+    assert all("--hash=sha256:" in block for block in blocks)
+
+
+def test_image_installs_by_hash_and_runs_unprivileged_without_compilers() -> None:
+    dockerfile = (IMAGE / "Dockerfile").read_text()
+
+    assert "pip install --no-cache-dir --require-hashes --no-deps -r" in dockerfile
+    assert "USER 10001:10001" in dockerfile
+    assert not re.search(r"build-essential|\bgcc\b|\bg\+\+|\bmake\b", dockerfile)
+    assert 'ENTRYPOINT ["/usr/local/bin/hermes-sandbox-start"]' in dockerfile
+
+
+def test_start_script_keeps_secrets_out_of_the_container_environment() -> None:
+    start = (IMAGE / "start.sh").read_text()
+
+    assert 'NO_PROXY="hermes-egress,localhost,127.0.0.1"' in start
+    assert "HTTP_PROXY=" not in start
+    assert "exec hermes gateway run" in start
+
+
+def test_image_is_built_and_published_with_the_others() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    publish = (ROOT / ".github" / "workflows" / "publish-images.yml").read_text()
+    manifest = json.loads((ROOT / "release" / "oss-manifest.json").read_text())
+
+    assert " hermes-sandbox " in ci
+    assert "{ name: aurum-ai-hermes-sandbox, context: hermes-sandbox }" in publish
+    assert "hermes-sandbox/**" in manifest["include"]
+
+
+class FakeHermes(http.server.BaseHTTPRequestHandler):
+    runs: list[dict] = []
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+    def _send(self, status: int, body: bytes, content_type: str = "application/json") -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:
+        if self.headers.get("Authorization") != "Bearer relay-key":
+            return self._send(401, b"{}")
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        FakeHermes.runs.append(body)
+        self._send(202, json.dumps({"run_id": "run_1", "status": "started"}).encode())
+
+    def do_GET(self) -> None:
+        if self.path.endswith("/events"):
+            events = [
+                ": keepalive",
+                'data: {"event": "tool.started", "tool": "terminal"}',
+                "data: not json",
+                'data: {"event": "run.completed", "output": "done"}',
+                'data: {"event": "after the end"}',
+            ]
+            return self._send(200, ("\n".join(events) + "\n").encode(), "text/event-stream")
+        self._send(200, json.dumps({"status": "completed", "output": "done", "usage": {"total_tokens": 3}}).encode())
+
+
+@pytest.fixture
+def relay(tmp_path: Path):  # noqa: ANN201
+    FakeHermes.runs = []
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeHermes)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "config.yaml").write_text(json.dumps({"platforms": {"api_server": {"extra": {"key": "relay-key"}}}}))
+    env = {
+        **os.environ,
+        "HERMES_HOME": str(home),
+        "HERMES_RELAY_STATE": str(tmp_path / ".aurum"),
+        "HERMES_RELAY_API": f"http://127.0.0.1:{server.server_address[1]}",
+    }
+
+    def run(*args: str) -> list[dict]:
+        result = subprocess.run(
+            [sys.executable, str(IMAGE / "hermes_relay.py"), *args], env=env, text=True, capture_output=True, timeout=30
+        )
+        return [json.loads(line) for line in result.stdout.splitlines()]
+
+    yield run, tmp_path
+    server.shutdown()
+
+
+def _request(tmp_path: Path, key: str) -> str:
+    path = tmp_path / f"request-{key}.json"
+    path.write_text(json.dumps({"key": key, "input": "hi", "session_id": "conv"}))
+    return str(path)
+
+
+def test_relay_streams_events_and_the_final_status(relay) -> None:
+    run, tmp_path = relay
+
+    lines = run("run", _request(tmp_path, "turn-1"))
+
+    assert [line["type"] for line in lines] == ["started", "event", "event", "result"]
+    assert lines[-1] == {"type": "result", "run_id": "run_1", "status": "completed", "output": "done", "usage": {"total_tokens": 3}}
+    assert FakeHermes.runs == [{"input": "hi", "session_id": "conv"}]
+
+
+def test_a_retried_run_attaches_instead_of_starting_again(relay) -> None:
+    run, tmp_path = relay
+
+    run("run", _request(tmp_path, "turn-1"))
+    again = run("run", _request(tmp_path, "turn-1"))
+    other = run("run", _request(tmp_path, "turn-2"))
+
+    assert again[0] == {"type": "started", "run_id": "run_1"}
+    assert len(FakeHermes.runs) == 2
+    assert other[-1]["status"] == "completed"
+    assert not (tmp_path / "request-turn-1.json").exists()

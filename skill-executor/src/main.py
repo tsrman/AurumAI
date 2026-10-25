@@ -11,6 +11,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from pydantic import BaseModel
 
 from src.config import settings
+from src.hermes_routes import router as hermes_router, sandboxes as hermes_sandboxes
 from src.metrics import MetricsMiddleware, metrics_endpoint
 from src.sandbox_runtime import (
     BundleExtractionError,
@@ -71,23 +72,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("sandbox runtime readiness failed", exc_info=True)
     reaper_task = asyncio.create_task(sandbox_runtime.run_reaper())
+    hermes_task: asyncio.Task[None] | None = None
+    if settings.hermes_enabled and settings.runtime == "docker":
+        # Re-adopt live Hermes sandboxes instead of reaping them: their
+        # sessions outlive this process.
+        try:
+            logger.info("adopted %s Hermes sandboxes", await hermes_sandboxes.adopt())
+        except Exception:
+            logger.warning("Hermes sandbox adoption failed", exc_info=True)
+        try:
+            await hermes_sandboxes.ready()
+        except Exception:
+            logger.warning("Hermes sandboxes are not ready", exc_info=True)
+        hermes_task = asyncio.create_task(
+            hermes_sandboxes.run_reaper(settings.reap_interval_seconds)
+        )
     logger.info(
         "skill-executor started (sandbox_image=%s, session_ttl=%ss)",
         settings.sandbox_image,
         settings.session_ttl_seconds,
     )
     yield
-    reaper_task.cancel()
-    try:
-        await reaper_task
-    except asyncio.CancelledError:
-        pass
+    for task in (reaper_task, hermes_task):
+        if task is None:
+            continue
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     await sandbox_runtime.shutdown()
+    await hermes_sandboxes.shutdown()
 
 
 app = FastAPI(title="skill-executor", lifespan=lifespan)
 app.add_middleware(MetricsMiddleware)
 app.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
+app.include_router(hermes_router)
 FastAPIInstrumentor.instrument_app(app)
 
 
@@ -117,7 +138,19 @@ async def ready(response: Response) -> dict[str, object]:
             "checks": {"sandbox_runtime": "fail"},
             "errors": {"sandbox_runtime": type(exc).__name__},
         }
-    return {"status": "ready", "checks": {"sandbox_runtime": "ok"}}
+    checks = {"sandbox_runtime": "ok"}
+    if settings.hermes_enabled and settings.runtime == "docker":
+        try:
+            await asyncio.wait_for(hermes_sandboxes.ready(), timeout=_READY_TIMEOUT_SECONDS)
+            checks["hermes_sandboxes"] = "ok"
+        except Exception as exc:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {
+                "status": "not ready",
+                "checks": {**checks, "hermes_sandboxes": "fail"},
+                "errors": {"hermes_sandboxes": getattr(exc, "code", type(exc).__name__)},
+            }
+    return {"status": "ready", "checks": checks}
 
 
 @app.post("/sessions", response_model=OpenSessionResponse, status_code=201)

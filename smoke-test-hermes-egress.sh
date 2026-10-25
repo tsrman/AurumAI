@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Hermes sandbox egress acceptance on a standalone, disposable project
 # (scripts/fixtures/hermes-egress-base.yml plus the real docker-compose.hermes.yml,
-# `-p hermes-egress-test`). A probe container joins the sandbox network exactly
-# as a Hermes sandbox does and checks, from inside: no DNS or routes of its own,
+# `-p hermes-egress-test`). A probe container joins a sandbox network created
+# exactly as skill-executor creates one (internal, isolated gateway, from the
+# pool, with only the guard connected) and checks, from inside: no DNS or routes of its own,
 # only the platform completion path, and internet egress in each mode as the
 # backend and the guard decide. Needs internet access for the package and
 # public-mode probes (pypi.org, example.com). Everything is torn down after.
 #
-# Prerequisites: Docker, uv, free 55436/58000, no aurum-ai-hermes-sandbox
-# network. Images are built from this checkout; aurum-ai-web-egress:latest is
+# Prerequisites: Docker 28+, uv, free 55436/58000, no other
+# aurum-ai-hermes-egress-guard container. Images are built from this checkout; aurum-ai-web-egress:latest is
 # rebuilt. Never point this at a shared or production stack.
 set -euo pipefail
 if (( $# )); then echo "This launcher takes no arguments" >&2; exit 2; fi
@@ -17,6 +18,7 @@ cd "$ROOT_DIR"
 PROJECT=hermes-egress-test
 JOURNAL=/tmp/hermes-egress-acceptance/fixture.json
 PROBE_IMAGE=python:3.12-slim
+SANDBOX_NET=hermes-egress-test-sandbox
 export HERMES_EGRESS_SERVICE_SECRET=hermes-egress-acceptance-service-secret
 export HERMES_EGRESS_MAX_MODE=public HERMES_ENABLED=true HERMES_EGRESS_RECHECK_SECONDS=3
 STACK=(docker compose -p "$PROJECT" --env-file /dev/null --project-directory "$ROOT_DIR" -f scripts/fixtures/hermes-egress-base.yml -f docker-compose.hermes.yml --profile hermes)
@@ -26,8 +28,11 @@ fail() { log "FAIL: $*"; exit 1; }
 if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ]]; then
   echo "A $PROJECT project already exists; finish or remove it first" >&2; exit 1
 fi
-if docker network inspect aurum-ai-hermes-sandbox >/dev/null 2>&1; then
-  echo "The aurum-ai-hermes-sandbox network already exists (another Hermes stack?)" >&2; exit 1
+if docker container inspect aurum-ai-hermes-egress-guard >/dev/null 2>&1; then
+  echo "An aurum-ai-hermes-egress-guard container already exists (another Hermes stack?)" >&2; exit 1
+fi
+if docker network inspect "$SANDBOX_NET" >/dev/null 2>&1; then
+  echo "The $SANDBOX_NET network already exists" >&2; exit 1
 fi
 for port in 55436 58000; do
   if ss -ltn | grep -q ":$port "; then echo "Port $port is in use" >&2; exit 1; fi
@@ -39,6 +44,7 @@ teardown() {
   log "removing the disposable project"
   docker rm -f "$PROJECT-hold" >/dev/null 2>&1 || true
   "${STACK[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  docker network rm "$SANDBOX_NET" >/dev/null 2>&1 || true
   if (( status == 0 )); then rm -f "$JOURNAL"; else log "journal kept for inspection: $JOURNAL"; fi
   exit "$status"
 }
@@ -46,7 +52,7 @@ trap teardown EXIT
 
 fixture() { (cd business-backend && uv run --frozen python ../scripts/hermes-egress-fixture.py "$@"); }
 probe() {
-  docker run --rm --network aurum-ai-hermes-sandbox -e HERMES_TOKEN="$TOKEN" \
+  docker run --rm --network "$SANDBOX_NET" -e HERMES_TOKEN="$TOKEN" \
     -v "$ROOT_DIR/scripts/hermes-egress-probe.py:/probe.py:ro" "$PROBE_IMAGE" python /probe.py "$@"
 }
 expect() {  # expect <json> <python expression over r>
@@ -64,6 +70,10 @@ log "starting the backend and hermes-egress"
 for _ in $(seq 60); do curl -fsS http://127.0.0.1:58000/health >/dev/null 2>&1 && break; sleep 2; done
 curl -fsS http://127.0.0.1:58000/health >/dev/null || fail "backend did not start"
 "${STACK[@]}" up -d --wait hermes-egress-guard hermes-egress >/dev/null
+# As skill-executor does for each sandbox (src/hermes_runtime.py).
+docker network create --internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated \
+  --subnet 172.31.255.0/28 "$SANDBOX_NET" >/dev/null
+docker network connect --alias hermes-egress "$SANDBOX_NET" aurum-ai-hermes-egress-guard
 TOKEN=$(fixture prepare)
 BACKEND_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$PROJECT-backend-1" | awk '{print $1}')
 POSTGRES_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$PROJECT-postgres-1")
@@ -74,7 +84,7 @@ expect "$r" 'r["egress_dns"] and not r["external_dns"] and not r["direct_public"
 
 log "platform path: completions only, one request per connection"
 r=$(probe platform)
-expect "$r" 'r["completion_status"] == 200 and r["completion_streamed"] and r["internal_status"] == 404 and r["smuggled_responses"] == 1 and not r["direct_backend_port"]'
+expect "$r" 'r["completion_status"] == 200 and r["completion_streamed"] and r["unstreamed_json"] and r["internal_status"] == 404 and r["smuggled_responses"] == 1 and not r["direct_backend_port"]'
 
 log "proxy refuses foreign tokens"
 expect "$(probe bad-token)" 'r["status"] == 403 and r["reason"] == "hermes_token_invalid"'
@@ -126,7 +136,7 @@ sleep 6
 expect "$(probe connect example.com:443)" 'r["status"] == 200'
 
 log "an open tunnel is cut when the session closes"
-docker run -d --name "$PROJECT-hold" --network aurum-ai-hermes-sandbox -e HERMES_TOKEN="$TOKEN" \
+docker run -d --name "$PROJECT-hold" --network "$SANDBOX_NET" -e HERMES_TOKEN="$TOKEN" \
   -v "$ROOT_DIR/scripts/hermes-egress-probe.py:/probe.py:ro" "$PROBE_IMAGE" \
   python -u /probe.py hold example.com:443 >/dev/null
 for _ in $(seq 30); do docker logs "$PROJECT-hold" 2>/dev/null | grep -q '"opened": true' && break; sleep 1; done
