@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
-from sqlalchemy import select, text, delete, insert, bindparam, JSON
+from sqlalchemy import select, text, delete, insert, update, bindparam, JSON
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from src.services.archive.collisions import unique_collision
@@ -37,16 +37,25 @@ from src.services.archive.schemas import (
     ArchiveFormatError,
     JSON_NULL,
 )
+from src.services.archive.catalogue import catalogue
 from src.services.archive.snapshot import (
     TABLES,
-    ORDER,
+    check_image_key,
+    conversation_tables,
     inventory,
+    inventory_version,
     pages,
     selection,
     row_json,
     decode_record,
 )
-from src.services.archive.storage import ArchiveStorage, digest
+from src.services.archive.storage import (
+    IMAGE_OBJECT_LIMIT,
+    ArchiveStorage,
+    PlatformImageStorage,
+    digest,
+)
+from src.models.conversation_image import ConversationImage
 
 Sessions = Callable[[], AsyncSession]
 
@@ -58,6 +67,7 @@ class ArchiveService:
         storage: ArchiveStorage,
         rag: RagArchiveClient | None = None,
         retention_days: int = 180,
+        images: PlatformImageStorage | None = None,
     ):
         if retention_days <= 0:
             raise ValueError("retention_must_be_positive")
@@ -67,6 +77,28 @@ class ArchiveService:
             rag,
             retention_days,
         )
+        # Platform-bucket access for conversation image bytes; without it,
+        # conversations that hold images are not archived.
+        self.images = images
+
+    @staticmethod
+    def _version(job: ArchiveJob) -> int:
+        return inventory_version(job.inventory)
+
+    def _tables(self, job: ArchiveJob) -> builtins.list[str]:
+        return conversation_tables(self._version(job)) if job.kind == "conversation" else [
+            "audit_logs"
+        ]
+
+    async def _images_blocker(self, session: AsyncSession, org: UUID, conversation: UUID) -> str | None:
+        if self.images is not None:
+            return None
+        present = await session.scalar(
+            select(ConversationImage.id)
+            .where(ConversationImage.org_id == org, ConversationImage.conversation_id == conversation)
+            .limit(1)
+        )
+        return "image_archive_not_configured" if present is not None else None
 
     @asynccontextmanager
     async def session(self, org: UUID) -> AsyncIterator[AsyncSession]:
@@ -180,7 +212,9 @@ class ArchiveService:
                     "blocked_reason": "not_active",
                     "archive_id": identity.archive_id,
                 }
-            blocker = await eligibility_blocker(session, identity, payload, cutoff)
+            blocker = await eligibility_blocker(
+                session, identity, payload, cutoff
+            ) or await self._images_blocker(session, org, conversation)
             if blocker:
                 return {"eligible": False, "blocked_reason": blocker}
             observed_generation = identity.generation
@@ -190,6 +224,11 @@ class ArchiveService:
                     KnowledgeBase.owning_conversation_id == conversation,
                 )
             )
+        # Like the RAG inspection, outside any lock: a missing or resized image
+        # object must stop the archive before the conversation is claimed.
+        blocker = await self._image_objects_blocker(org, conversation)
+        if blocker:
+            return {"eligible": False, "blocked_reason": blocker}
         archive, lease = archive_id or uuid4(), uuid4()
         rag_link = None
         if kb is not None:
@@ -219,7 +258,9 @@ class ArchiveService:
             )
             if current_kb != kb:
                 return {"eligible": False, "blocked_reason": "attachment_inventory_changed"}
-            blocker = await eligibility_blocker(session, identity, payload, cutoff)
+            blocker = await eligibility_blocker(
+                session, identity, payload, cutoff
+            ) or await self._images_blocker(session, org, conversation)
             if blocker:
                 return {"eligible": False, "blocked_reason": blocker}
             if not apply:
@@ -281,7 +322,8 @@ class ArchiveService:
                 ),
                 dict(a=archive, o=org, ids=ids),
             )
-            frozen = await inventory(session, org, None, ids)
+            # Audit rows never changed shape; their jobs stay version 1.
+            frozen = await inventory(session, org, None, ids, version=1)
             session.add(
                 ArchiveJob(
                     id=archive,
@@ -366,28 +408,36 @@ class ArchiveService:
                 job = await self._job(org, archive)
             if job.state == "verified":
                 with tempfile.TemporaryDirectory(prefix="platform-archive-") as temporary:
-                    await self._verified_files(org, job, Path(temporary))
+                    manifest = await self._verified_files(org, job, Path(temporary))
                 await self._rag(org, job, "purge")
+                # Like the RAG purge, platform image copies go only after the
+                # archive copies are verified and before the rows.
+                await self._purge_images(org, job, manifest)
                 await self._purge(org, job)
 
     async def _seal(self, org: UUID, job: ArchiveJob) -> None:
         parts = []
+        images: builtins.list[dict[str, Any]] = []
+        pending_images: builtins.list[dict[str, Any]] = []
+        version = self._version(job)
         prefix = f"archives/v1/{org}/{job.id}"
         with tempfile.TemporaryDirectory(prefix="platform-archive-") as temporary:
             directory = Path(temporary)
             async with self.session(org) as session:
                 if (
-                    await inventory(session, org, job.conversation_id, self._ids(job))
+                    await inventory(session, org, job.conversation_id, self._ids(job), version)
                     != job.inventory
                 ):
                     raise ArchiveBlocked("inventory_changed")
-                for table in ORDER if job.kind == "conversation" else ["audit_logs"]:
+                for table in self._tables(job):
                     index = 0
                     async for rows in pages(
-                        session, table, org, job.conversation_id, self._ids(job)
+                        session, table, org, job.conversation_id, self._ids(job), version
                     ):
+                        if table == "conversation_images":
+                            pending_images.extend(rows)
                         path = directory / f"{table}-{index}.parquet"
-                        encode_rows(table, rows, path)
+                        encode_rows(table, rows, path, version)
                         key = f"{prefix}/{table}/{index:06d}.parquet"
                         part = dict(
                             table=table,
@@ -396,14 +446,20 @@ class ArchiveService:
                             size=path.stat().st_size,
                             count=len(rows),
                         )
-                        await self._upload_verified(key, path, part, directory)
+                        await self._upload_verified(key, path, part, directory, version)
                         parts.append(part)
                         path.unlink()
                         index += 1
                         if len(parts) > 4096:
                             raise ArchiveBlocked("archive_too_many_parts")
+            # Image bytes are large: copy them only after the snapshot
+            # transaction ends. The rows were checked against the frozen
+            # inventory above, their keys are immutable and the conversation
+            # is fenced while it is archiving.
+            for row in pending_images:
+                images.append(await self._seal_image(prefix, row, directory, version))
             manifest = dict(
-                version=1,
+                version=version,
                 org_id=str(org),
                 archive_id=str(job.id),
                 conversation_id=str(job.conversation_id) if job.conversation_id else None,
@@ -419,6 +475,8 @@ class ArchiveService:
                     "expiring node output",
                 ],
             )
+            if version >= 2:
+                manifest["images"] = images
             path = directory / "manifest.json"
             path.write_text(canonical(manifest))
             path.chmod(0o600)
@@ -429,6 +487,7 @@ class ArchiveService:
                 path,
                 dict(sha256=digest(path), size=path.stat().st_size),
                 directory,
+                version,
             )
             async with self.session(org) as session:
                 stored = await session.get(ArchiveJob, job.id, with_for_update=True)
@@ -439,8 +498,52 @@ class ArchiveService:
                 stored.state = "verified"
                 await session.commit()
 
+    async def _image_objects_blocker(self, org: UUID, conversation: UUID) -> str | None:
+        if self.images is None:
+            return None
+        async with self.session(org) as session:
+            rows = (
+                await session.execute(
+                    select(
+                        ConversationImage.id,
+                        ConversationImage.operation_id,
+                        ConversationImage.storage_key,
+                        ConversationImage.size_bytes,
+                    ).where(
+                        ConversationImage.org_id == org,
+                        ConversationImage.conversation_id == conversation,
+                    )
+                )
+            ).mappings().all()
+        for row in rows:
+            # The same ownership check as the inventory, before any request.
+            check_image_key(dict(row), org, conversation)
+            if await self.images.size(row["storage_key"]) != row["size_bytes"]:
+                return "image_bytes_unavailable"
+        return None
+
+    async def _seal_image(
+        self, prefix: str, row: dict[str, Any], directory: Path, version: int
+    ) -> dict[str, Any]:
+        """Copy one image's bytes into the archive as its own immutable object."""
+        if self.images is None:
+            raise ArchiveBlocked("image_archive_not_configured")
+        path = directory / f"{row['id']}.image"
+        await self.images.download(row["storage_key"], path, IMAGE_OBJECT_LIMIT)
+        try:
+            if path.stat().st_size != row["size_bytes"]:
+                raise ArchiveBlocked("image_bytes_mismatch")
+            key = f"{prefix}/images/{row['id']}"
+            entry: dict[str, Any] = dict(
+                id=str(row["id"]), key=key, sha256=digest(path), size=path.stat().st_size
+            )
+            await self._upload_verified(key, path, entry, directory, version)
+            return entry
+        finally:
+            path.unlink(missing_ok=True)
+
     async def _upload_verified(
-        self, key: str, path: Path, part: dict[str, Any], directory: Path
+        self, key: str, path: Path, part: dict[str, Any], directory: Path, version: int
     ) -> None:
         try:
             await self.storage.upload(key, path)
@@ -452,7 +555,10 @@ class ArchiveService:
             await self.storage.download(key, check)
             if digest(check) != part["sha256"] or check.stat().st_size != part["size"]:
                 raise ArchiveBlocked("archive_readback_mismatch")
-            if "table" in part and len(list(read_rows(part["table"], check))) != part["count"]:
+            if (
+                "table" in part
+                and len(list(read_rows(part["table"], check, version))) != part["count"]
+            ):
                 raise ArchiveBlocked("archive_count_mismatch")
         finally:
             check.unlink(missing_ok=True)
@@ -463,8 +569,9 @@ class ArchiveService:
         if digest(manifest_path) != job.manifest_hash or manifest_path.stat().st_size > 1024 * 1024:
             raise ArchiveBlocked("manifest_mismatch")
         manifest: dict[str, Any] = json.loads(manifest_path.read_text())
+        version = self._version(job)
         if (
-            manifest["version"] != 1
+            manifest["version"] != version
             or manifest["org_id"] != str(org)
             or manifest["archive_id"] != str(job.id)
             or manifest["generation"] != job.generation
@@ -481,6 +588,7 @@ class ArchiveService:
         }
         if len(manifest["parts"]) > 4096:
             raise ArchiveBlocked("archive_too_many_parts")
+        image_rows: dict[str, dict[str, Any]] = {}
         for number, part in enumerate(manifest["parts"]):
             table = part["table"]
             if (
@@ -495,10 +603,12 @@ class ArchiveService:
             if digest(path) != part["sha256"] or path.stat().st_size != part["size"]:
                 raise ArchiveBlocked("part_hash_mismatch")
             count = 0
-            for row in read_rows(table, path):
+            for row in read_rows(table, path, version):
                 if row["org_id"] != org:
                     raise ArchiveBlocked("part_tenant_mismatch")
-                totals[table]["hash"].update(row_json(row, table).encode() + b"\n")
+                if table == "conversation_images":
+                    image_rows[str(row["id"])] = row
+                totals[table]["hash"].update(row_json(row, table, version).encode() + b"\n")
                 totals[table]["count"] += 1
                 count += 1
             if count != part["count"]:
@@ -508,6 +618,7 @@ class ArchiveService:
                 table
             ]:
                 raise ArchiveBlocked("inventory_hash_mismatch")
+        await self._verified_images(org, job, manifest, image_rows, directory)
         if job.rag:
             from src.services.archive.rag_artifacts import verify_rag
 
@@ -524,7 +635,9 @@ class ArchiveService:
             documents = await verify_rag(self.storage, org, linked, directory)
             for number, part in enumerate(manifest["parts"]):
                 if part["table"] == "file_metadata":
-                    for row in read_rows("file_metadata", directory / f"{number:06d}.parquet"):
+                    for row in read_rows(
+                        "file_metadata", directory / f"{number:06d}.parquet", version
+                    ):
                         document = documents.get(str(row["document_id"]))
                         if (
                             document is None
@@ -533,6 +646,76 @@ class ArchiveService:
                         ):
                             raise ArchiveBlocked("attachment_inventory_mismatch")
         return manifest
+
+    async def _verified_images(
+        self,
+        org: UUID,
+        job: ArchiveJob,
+        manifest: dict[str, Any],
+        image_rows: dict[str, dict[str, Any]],
+        directory: Path,
+    ) -> None:
+        """Every archived image row has exactly one verified object, kept in
+        ``directory`` for a restore."""
+        if self._version(job) < 2:
+            if "images" in manifest:
+                raise ArchiveBlocked("image_manifest_unexpected")
+            return
+        entries = manifest.get("images")
+        if not isinstance(entries, builtins.list) or len(entries) > 100_000:
+            raise ArchiveBlocked("image_manifest_invalid")
+        if {entry.get("id") for entry in entries} != set(image_rows) or len(entries) != len(
+            image_rows
+        ):
+            raise ArchiveBlocked("image_inventory_mismatch")
+        for entry in entries:
+            row = image_rows[entry["id"]]
+            if entry["key"] != f"archives/v1/{org}/{job.id}/images/{entry['id']}" or entry[
+                "size"
+            ] != row["size_bytes"]:
+                raise ArchiveBlocked("image_owner_mismatch")
+            path = directory / f"image-{entry['id']}"
+            path.unlink(missing_ok=True)
+            await self.storage.download(entry["key"], path)
+            if digest(path) != entry["sha256"] or path.stat().st_size != entry["size"]:
+                raise ArchiveBlocked("image_hash_mismatch")
+        # In memory only: platform keys come from the verified archived rows,
+        # never from the manifest's own fields.
+        manifest["_image_keys"] = {key: row["storage_key"] for key, row in image_rows.items()}
+
+    async def _purge_images(self, org: UUID, job: ArchiveJob, manifest: dict[str, Any]) -> None:
+        """Remove the platform copies of verified archived images. Idempotent,
+        so a resume after a crash simply repeats it before the row purge."""
+        entries = manifest.get("images") or []
+        if not entries:
+            return
+        if self.images is None:
+            raise ArchiveBlocked("image_archive_not_configured")
+        keys = manifest["_image_keys"]
+        for entry in entries:
+            await self.images.delete(keys[entry["id"]])
+
+    async def _restore_images(
+        self, org: UUID, job: ArchiveJob, manifest: dict[str, Any], directory: Path
+    ) -> None:
+        """Put verified bytes back at their original keys, then read them back.
+        Runs while the conversation is still hidden; repeating it is harmless."""
+        entries = manifest.get("images") or []
+        if not entries:
+            return
+        if self.images is None:
+            raise ArchiveBlocked("image_archive_not_configured")
+        keys = manifest["_image_keys"]
+        for entry in entries:
+            source = directory / f"image-{entry['id']}"
+            await self.images.upload(keys[entry["id"]], source)
+            check = directory / f"{uuid4()}.readback"
+            try:
+                await self.images.download(keys[entry["id"]], check, IMAGE_OBJECT_LIMIT)
+                if digest(check) != entry["sha256"]:
+                    raise ArchiveBlocked("image_restore_mismatch")
+            finally:
+                check.unlink(missing_ok=True)
 
     async def _lock_audit_claim(
         self,
@@ -597,10 +780,14 @@ class ArchiveService:
                 return
             if stored.state != "verified" or stored.manifest_hash != job.manifest_hash:
                 raise ArchiveBlocked("archive_not_verified")
-            if await inventory(session, org, job.conversation_id, self._ids(job)) != job.inventory:
+            version = self._version(job)
+            if (
+                await inventory(session, org, job.conversation_id, self._ids(job), version)
+                != job.inventory
+            ):
                 raise ArchiveBlocked("inventory_changed")
-            for table in reversed(ORDER if job.kind == "conversation" else ["audit_logs"]):
-                query = selection(table, org, job.conversation_id, self._ids(job))
+            for table in reversed(self._tables(job)):
+                query = selection(table, org, job.conversation_id, self._ids(job), version)
                 ids = query.with_only_columns(TABLES[table].c.id)
                 result = await session.execute(
                     delete(TABLES[table]).where(
@@ -639,6 +826,8 @@ class ArchiveService:
                 directory = Path(temporary)
                 manifest = await self._verified_files(org, job, directory)
                 await self._dependencies(org, job, manifest, directory)
+                if manifest.get("images") and self.images is None:
+                    raise ArchiveBlocked("image_archive_not_configured")
                 if not apply:
                     if job.rag:
                         if self.rag is None:
@@ -684,6 +873,8 @@ class ArchiveService:
                         await self._stage(org, job, manifest, directory)
                     except IntegrityError:
                         raise ArchiveBlocked("restore_payload_collision") from None
+                # Bytes return before the conversation becomes visible again.
+                await self._restore_images(org, job, manifest, directory)
                 await self._rag(org, job, "restore")
                 await self._rag(org, job, "publish")
                 async with self.session(org) as session:
@@ -696,7 +887,9 @@ class ArchiveService:
                     if stored.state != "restore_pending" or not stored.staged:
                         raise ArchiveBlocked("restore_stage_incomplete")
                     if (
-                        await inventory(session, org, job.conversation_id, self._ids(job))
+                        await inventory(
+                            session, org, job.conversation_id, self._ids(job), self._version(job)
+                        )
                         != job.inventory
                     ):
                         raise ArchiveBlocked("restore_inventory_mismatch")
@@ -729,17 +922,20 @@ class ArchiveService:
     ) -> None:
         # Verify all retained FK dependencies without executing inserts in dry-run.
         present = {part["table"] for part in manifest["parts"]}
+        version = self._version(job)
         async with self.session(org) as session:
             if job.kind == "audit":
                 await self._lock_audit_claim(session, org, job, lifecycle="archived")
             for number, part in enumerate(manifest["parts"]):
                 table = TABLES[part["table"]]
-                for row in read_rows(part["table"], directory / f"{number:06d}.parquet"):
+                for row in read_rows(
+                    part["table"], directory / f"{number:06d}.parquet", version
+                ):
                     existing = (
                         (
                             await session.execute(
                                 selection(
-                                    part["table"], org, job.conversation_id, self._ids(job)
+                                    part["table"], org, job.conversation_id, self._ids(job), version
                                 ).where(table.c.id == row["id"])
                             )
                         )
@@ -748,8 +944,12 @@ class ArchiveService:
                     )
                     if existing is not None and (
                         not job.staged
-                        or row_json(decode_record(part["table"], dict(existing)), part["table"])
-                        != row_json(row, part["table"])
+                        or row_json(
+                            decode_record(part["table"], dict(existing), version),
+                            part["table"],
+                            version,
+                        )
+                        != row_json(row, part["table"], version)
                     ):
                         raise ArchiveBlocked("restore_payload_collision")
                     if existing is None and await session.scalar(
@@ -782,9 +982,24 @@ class ArchiveService:
                 raise ArchiveBlocked("restore_phase_changed")
             if job.kind == "audit":
                 await self._lock_audit_claim(session, org, job, lifecycle="archived")
+            version = self._version(job)
+            # An edited image may reference a source in a later part, so the
+            # self-reference is set once every image row exists.
+            image_sources: builtins.list[dict[str, Any]] = []
             for number, part in enumerate(manifest["parts"]):
                 table = part["table"]
-                rows = list(read_rows(table, directory / f"{number:06d}.parquet"))
+                rows = list(read_rows(table, directory / f"{number:06d}.parquet", version))
+                if table == "conversation_images":
+                    for row in rows:
+                        if row["source_image_id"] is not None:
+                            image_sources.append(
+                                {
+                                    "image_id": row["id"],
+                                    "source_id": row["source_image_id"],
+                                    "archived_updated_at": row["updated_at"],
+                                }
+                            )
+                            row["source_image_id"] = None
                 if table in ("conversations", "messages", "audit_logs"):
                     for at in {
                         row["created_at"].replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -795,8 +1010,6 @@ class ArchiveService:
                         )
                 if rows:
                     # Core INSERT preserves explicit SQL NULL despite ORM defaults.
-                    from src.services.archive.catalogue import COLUMNS
-
                     bindings = {
                         name: bindparam(
                             name,
@@ -804,7 +1017,7 @@ class ArchiveService:
                                 none_as_null=True
                             ),
                         )
-                        for name, kind, _ in COLUMNS[table]
+                        for name, kind, _ in catalogue(version)[table]
                         if kind == "json"
                     }
                     for row in rows:
@@ -812,7 +1025,26 @@ class ArchiveService:
                             if row[name] is JSON_NULL:
                                 row[name] = JSON.NULL
                     await session.execute(insert(TABLES[table]).values(**bindings), rows)
-            if await inventory(session, org, job.conversation_id, self._ids(job)) != job.inventory:
+            if image_sources:
+                images = TABLES["conversation_images"]
+                await session.execute(
+                    update(images)
+                    .where(
+                        images.c.org_id == org,
+                        images.c.id == bindparam("image_id"),
+                    )
+                    # Explicit updated_at: the column's onupdate would
+                    # otherwise change the archived row.
+                    .values(
+                        source_image_id=bindparam("source_id"),
+                        updated_at=bindparam("archived_updated_at"),
+                    ),
+                    image_sources,
+                )
+            if (
+                await inventory(session, org, job.conversation_id, self._ids(job), version)
+                != job.inventory
+            ):
                 raise ArchiveBlocked("restore_inventory_mismatch")
             stored.staged = True
             await session.commit()

@@ -8,7 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
-from sqlalchemy import Table, select, func, Text, Select
+from sqlalchemy import Table, select, func, Text, Select, exists, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 # CLI/worker processes do not import API routers. Register retained FK targets
 # explicitly before resolving archived tables' SQLAlchemy foreign-key columns.
@@ -24,6 +24,7 @@ from src.models.interaction import (
     InteractionOutbox,
 )
 from src.models.web_source import WebSource
+from src.models.conversation_image import ConversationImage
 from src.models.knowledge_base import KnowledgeBase
 from src.models.skill import Skill
 from src.models.file_metadata import FileMetadata
@@ -37,7 +38,7 @@ from src.services.archive.schemas import (
     canonical,
     JSON_NULL,
 )
-from src.services.archive.catalogue import COLUMNS
+from src.services.archive.catalogue import CURRENT_VERSION, OMITTED_DEFAULTS, catalogue
 
 MODELS = [
     Conversation,
@@ -50,6 +51,7 @@ MODELS = [
     UserQuestion,
     InteractionOutbox,
     WebSource,
+    ConversationImage,
     KnowledgeBase,
     Skill,
     FileMetadata,
@@ -57,7 +59,7 @@ MODELS = [
 ]
 TABLES: dict[str, Table] = {m.__tablename__: cast(Table, m.__table__) for m in MODELS}
 # Parent-first insertion order; reversed for exact deletion.
-ORDER = [
+ORDER_V1 = [
     "conversations",
     "messages",
     "workflow_runs",
@@ -72,9 +74,32 @@ ORDER = [
     "skills",
     "file_metadata",
 ]
+# Images follow their tool operations; a self-reference to the edited image
+# is restored after every image row exists.
+ORDER_V2 = [
+    *ORDER_V1[: ORDER_V1.index("web_sources") + 1],
+    "conversation_images",
+    *ORDER_V1[ORDER_V1.index("web_sources") + 1 :],
+]
+ORDERS = {1: ORDER_V1, 2: ORDER_V2}
+ORDER = ORDERS[CURRENT_VERSION]
+VERSION_KEY = "_archive_version"
+_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 
-def row_json(row: Mapping[str, Any], table: str) -> str:
+def inventory_version(frozen: Mapping[str, Any]) -> int:
+    """Jobs frozen before versioning carry no marker and are v1."""
+    value = frozen.get(VERSION_KEY, 1)
+    if value not in ORDERS:
+        raise ArchiveFormatError("archive_version_unknown")
+    return int(value)
+
+
+def conversation_tables(version: int) -> list[str]:
+    return ORDERS[version]
+
+
+def row_json(row: Mapping[str, Any], table: str, version: int = CURRENT_VERSION) -> str:
     def transform(value: Any) -> Any:
         if isinstance(value, (UUID, Decimal)):
             return str(value)
@@ -87,7 +112,7 @@ def row_json(row: Mapping[str, Any], table: str) -> str:
         return value
 
     encoded = dict(row)
-    for name, kind, _ in COLUMNS[table]:
+    for name, kind, _ in catalogue(version)[table]:
         value = encoded.get(name)
         if kind == "json" and value is not None:
             encoded[name] = canonical(None if value is JSON_NULL else value)
@@ -108,14 +133,22 @@ def scrub(table: str, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def selection(
-    table: str, org: UUID, conversation: UUID | None, audit_ids: list[UUID] | None = None
+    table: str,
+    org: UUID,
+    conversation: UUID | None,
+    audit_ids: list[UUID] | None = None,
+    version: int = CURRENT_VERSION,
 ) -> Select[Any]:
     target = TABLES[table]
-    if {column.name for column in target.columns} != {name for name, _, _ in COLUMNS[table]}:
+    columns_of_version = catalogue(version)[table]
+    omitted = set(OMITTED_DEFAULTS.get(version, {}).get(table, {}))
+    if {column.name for column in target.columns} != {
+        name for name, _, _ in columns_of_version
+    } | omitted:
         raise ArchiveFormatError("database_schema_changed")
     columns = [
         target.c[name].cast(Text).label(name) if kind == "json" else target.c[name]
-        for name, kind, _ in COLUMNS[table]
+        for name, kind, _ in columns_of_version
     ]
     query = select(*columns).where(target.c.org_id == org)
     if table == "audit_logs":
@@ -143,9 +176,11 @@ def selection(
     )
 
 
-def decode_record(table: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+def decode_record(
+    table: str, raw: Mapping[str, Any], version: int = CURRENT_VERSION
+) -> dict[str, Any]:
     row = dict(raw)
-    for name, kind, _ in COLUMNS[table]:
+    for name, kind, _ in catalogue(version)[table]:
         if kind == "inet" and row[name] is not None:
             row[name] = str(row[name])
         if kind == "json" and row[name] is not None:
@@ -160,8 +195,9 @@ async def pages(
     org: UUID,
     conversation: UUID | None,
     audit_ids: list[UUID] | None = None,
+    version: int = CURRENT_VERSION,
 ) -> AsyncIterator[list[dict[str, Any]]]:
-    query = selection(table, org, conversation, audit_ids)
+    query = selection(table, org, conversation, audit_ids, version)
     # Return only aggregate sizes before transferring payload. Bound each cell
     # independently, then adapt row count to a fixed byte budget per SQL page.
     projected = query.subquery()
@@ -202,9 +238,9 @@ async def pages(
         bounded: list[dict[str, Any]] = []
         size = 0
         for raw in rows:
-            row = decode_record(table, dict(raw))
+            row = decode_record(table, dict(raw), version)
             row = scrub(table, row)
-            width = len(row_json(row, table).encode())
+            width = len(row_json(row, table, version).encode())
             if bounded and size + width > MAX_PART // 2:
                 yield bounded
                 bounded = []
@@ -216,8 +252,40 @@ async def pages(
         offset += len(rows)
 
 
+async def _omitted_columns_hold_defaults(
+    session: AsyncSession, table: str, org: UUID, conversation: UUID | None, version: int
+) -> None:
+    """An older-version archive cannot carry a column it omits, so the live
+    value must still be the default a restore reinstates."""
+    defaults = OMITTED_DEFAULTS.get(version, {}).get(table, {})
+    if not defaults:
+        return
+    target = TABLES[table]
+    query = selection(table, org, conversation, version=version).where(
+        or_(*(target.c[name].is_distinct_from(value) for name, value in defaults.items()))
+    )
+    if await session.scalar(select(exists(query))):
+        raise ArchiveFormatError("archive_version_incompatible")
+
+
+def check_image_key(row: Mapping[str, Any], org: UUID, conversation: UUID | None) -> None:
+    # Bytes are copied by storage key, so the key must be this conversation's
+    # own and name the row that owns it: the operation, or the upload itself.
+    match = re.fullmatch(
+        rf"conversation-images/{org}/{conversation}/(uploads/)?({_UUID})\.(png|jpg|webp)",
+        row["storage_key"],
+    )
+    owner = row["id"] if match and match[1] else row["operation_id"]
+    if match is None or owner is None or match[2] != str(owner):
+        raise ArchiveFormatError("image_inventory_unknown")
+
+
 async def inventory(
-    session: AsyncSession, org: UUID, conversation: UUID | None, audit_ids: list[UUID] | None = None
+    session: AsyncSession,
+    org: UUID,
+    conversation: UUID | None,
+    audit_ids: list[UUID] | None = None,
+    version: int = CURRENT_VERSION,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     kb_id = (
@@ -229,11 +297,15 @@ async def inventory(
         if conversation
         else None
     )
-    for table in ORDER if conversation else ["audit_logs"]:
+    for table in conversation_tables(version) if conversation else ["audit_logs"]:
         digest = hashlib.sha256()
         count = 0
-        async for rows in pages(session, table, org, conversation, audit_ids):
+        if conversation:
+            await _omitted_columns_hold_defaults(session, table, org, conversation, version)
+        async for rows in pages(session, table, org, conversation, audit_ids, version):
             for row in rows:
+                if table == "conversation_images":
+                    check_image_key(row, org, conversation)
                 if table == "messages" and row["content_ref"] is not None:
                     raise ArchiveFormatError("external_message_reference_unsupported")
                 if table == "file_metadata":
@@ -279,9 +351,11 @@ async def inventory(
                         or row["network_policy"] != "none"
                     ):
                         raise ArchiveFormatError("attachment_skill_shape_unknown")
-                digest.update(row_json(row, table).encode() + b"\n")
+                digest.update(row_json(row, table, version).encode() + b"\n")
                 count += 1
         result[table] = {"count": count, "sha256": digest.hexdigest()}
+    if conversation and version > 1:
+        result[VERSION_KEY] = version
     if audit_ids is not None:
         result["_audit_ids"] = [str(value) for value in audit_ids]
         identities = await session.execute(

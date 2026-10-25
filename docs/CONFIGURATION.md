@@ -172,6 +172,13 @@ New archive jobs are default-off. `APP_ARCHIVE_RETENTION_DAYS=180` and
 archive S3 credentials and private RAG service secret/endpoint. Normal API/RAG
 accounts must not receive lifecycle/schema-owner rights or archive bucket access.
 
+Conversations with images are archived only when the data worker has
+`APP_ARCHIVE_IMAGES_S3_ENDPOINT`, `APP_ARCHIVE_IMAGES_S3_ACCESS_KEY` and
+`APP_ARCHIVE_IMAGES_S3_SECRET_KEY` (bucket `APP_ARCHIVE_IMAGES_S3_BUCKET`, default
+`aurum-ai-business`): separate credentials for the platform bucket, scoped to the
+`conversation-images/*` prefix with Get, Put and Delete. Without them such
+conversations stay live with the blocked reason `image_archive_not_configured`.
+
 Observer terminal receipts and partition maintenance continue independently of
 new-archive enablement. See [the archive runbook](operations/data-archive.md) for
 roles, bounds, dry-run/apply, export and exact recovery.

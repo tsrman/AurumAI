@@ -14,6 +14,9 @@
 {{- if not .Values.dataLifecycle.destinations }}
 {{- fail "dataLifecycle.enabled requires explicit dataLifecycle.destinations" }}
 {{- end }}
+{{- if and .Values.dataLifecycle.imagesS3.enabled (not .Values.dataLifecycle.imagesS3.endpoint) }}
+{{- fail "dataLifecycle.imagesS3.enabled requires an explicit imagesS3.endpoint" }}
+{{- end }}
 {{- range $name := list "retentionDays" "sweepIntervalSeconds" "batchSize" "replicaCount" }}
 {{- if not (regexMatch "^[1-9][0-9]*$" (toString (index $.Values.dataLifecycle $name))) }}
 {{- fail (printf "dataLifecycle.%s must be a positive integer" $name) }}

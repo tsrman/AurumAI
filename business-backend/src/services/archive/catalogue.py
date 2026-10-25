@@ -1,5 +1,8 @@
-# Immutable v1 schema catalogue. Changes require a new archive version.
-COLUMNS: dict[str, list[tuple[str, str, bool]]] = {
+# Immutable per-version schema catalogues. A change to any table's columns
+# needs a new archive version; existing versions stay readable forever.
+Catalogue = dict[str, list[tuple[str, str, bool]]]
+
+COLUMNS_V1: Catalogue = {
     "conversations": [
         ("created_at", "utc", False),
         ("user_id", "uuid", False),
@@ -86,7 +89,6 @@ COLUMNS: dict[str, list[tuple[str, str, bool]]] = {
         ("question_count", "int", False),
         ("search_count", "int", False),
         ("read_count", "int", False),
-        ("image_count", "int", False),
         ("terminal_at", "utc", True),
         ("org_id", "uuid", False),
         ("id", "uuid", False),
@@ -240,3 +242,52 @@ COLUMNS: dict[str, list[tuple[str, str, bool]]] = {
         ("updated_at", "utc", False),
     ],
 }
+
+
+# v2 adds the image count of interaction turns and conversation images, whose
+# bytes are archived as separate objects listed in the manifest.
+COLUMNS_V2: Catalogue = {
+    **COLUMNS_V1,
+    "interaction_turns": [
+        column
+        for original in COLUMNS_V1["interaction_turns"]
+        for column in (
+            [original, ("image_count", "int", False)]
+            if original[0] == "read_count"
+            else [original]
+        )
+    ],
+    "conversation_images": [
+        ("conversation_id", "uuid", False),
+        ("turn_id", "uuid", True),
+        ("execution_id", "uuid", True),
+        ("operation_id", "uuid", True),
+        ("origin", "str", False),
+        ("source_image_id", "uuid", True),
+        ("storage_key", "str", False),
+        ("content_type", "str", False),
+        ("size_bytes", "int", False),
+        ("width", "int", True),
+        ("height", "int", True),
+        ("prompt", "str", True),
+        ("model", "str", True),
+        ("org_id", "uuid", False),
+        ("id", "uuid", False),
+        ("created_at", "utc", False),
+        ("updated_at", "utc", False),
+    ],
+}
+
+CATALOGUES: dict[int, Catalogue] = {1: COLUMNS_V1, 2: COLUMNS_V2}
+CURRENT_VERSION = 2
+# Columns added after an older version. Archives of that version leave them
+# out; they must still hold these defaults, which a restore reinstates.
+OMITTED_DEFAULTS: dict[int, dict[str, dict[str, int]]] = {
+    1: {"interaction_turns": {"image_count": 0}},
+}
+
+
+def catalogue(version: int) -> Catalogue:
+    if version not in CATALOGUES:
+        raise ValueError("archive_version_unknown")
+    return CATALOGUES[version]

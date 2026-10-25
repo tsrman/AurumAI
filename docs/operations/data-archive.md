@@ -21,7 +21,12 @@ New eligible arrivals do not continually displace blocked-candidate rechecks.
 Infinite historical backfill has no bounded-wait guarantee; do not replace the
 bounded batch with an unbounded drain.
 
-Payload is written to private verified Parquet objects before source purge. Permanent
+Payload is written to private verified Parquet objects before source purge. Each
+conversation image is copied into the archive as its own object
+(`archives/v1/<org>/<archive>/images/<image>`), listed in the manifest with its
+SHA-256 and size and verified like the parts; the platform copy is deleted only after
+that verification, and a restore puts the verified bytes back at their original key,
+reads them back and only then makes the conversation visible. Permanent
 UUID registries, billing and usage remain in PostgreSQL; their presence is not proof
 that archived payload is still available.
 
@@ -35,12 +40,26 @@ that archived payload is still available.
 3. Provide a private archive bucket/account scoped to `archives/v1/*`, allowing read
    and create. DeleteObject is unnecessary; readiness must not require unrestricted
    bucket write/delete or health objects.
-4. Restrict normal API/RAG S3 accounts to their business bucket. MinIO root credentials
+4. For conversations with images, give the business data worker a second, separate
+   S3 user on the platform bucket limited to `conversation-images/*` with GetObject,
+   PutObject and DeleteObject (`APP_ARCHIVE_IMAGES_S3_*`, Helm
+   `dataLifecycle.imagesS3`), and allow its endpoint in the data worker egress.
+   For MinIO, for example:
+
+   ```json
+   {"Version": "2012-10-17", "Statement": [{"Effect": "Allow",
+     "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+     "Resource": ["arn:aws:s3:::aurum-ai-business/conversation-images/*"]}]}
+   ```
+
+   Without it, conversations that hold images are never claimed.
+5. Restrict normal API/RAG S3 accounts to their business bucket. MinIO root credentials
    in an ordinary API break archive separation; use scoped users or a separate endpoint.
-5. Run private RAG with its lifecycle DB connection and independent service secret;
+6. Run private RAG with its lifecycle DB connection and independent service secret;
    never mount those routes in normal RAG API/public ingress. Business data worker
-   needs only scoped DB, Temporal, archive S3 and private RAG access, not Docker/Redis/LLM.
-6. Run both observers continuously so exact terminal receipts are saved **before
+   needs only scoped DB, Temporal, archive S3, private RAG and (for images) the scoped
+   platform image prefix, not Docker/Redis/LLM.
+7. Run both observers continuously so exact terminal receipts are saved **before
    Temporal history expires**, even with new archives disabled. Verify dry-run and
    readiness before enabling new jobs.
 
@@ -84,7 +103,8 @@ re-embed content, recreate shared collections, or execute historical workflows.
 ## Size and ownership bounds
 
 Business cells are bounded at 1 MiB, serialized rows/SQL pages at 4 MiB, business
-Parquet parts at 8 MiB, RAG parts at 16 MiB and source files at 1 GiB. Business SQL
+Parquet parts at 8 MiB, image objects at 100 MiB, RAG parts at 16 MiB and source files
+at 1 GiB. Business SQL
 cell/row admission happens before claim; page reads remain bounded. RAG content,
 vector artifacts and source-file limits are checked during export after claim;
 violations can leave a claimed job fenced while still preventing purge.
@@ -94,6 +114,15 @@ Legacy ambiguous owners require a separately verified migration; absence of an o
 is not operator-global ownership. Original dense float32 vectors, collection schema/
 dimension and index receipts are preserved. Restore gets a new generation; manifest
 identity is immutable and old callbacks remain fenced.
+
+## Archive format versions
+
+The manifest and every Parquet part carry an archive version. Version 2 adds
+`interaction_turns.image_count` and the `conversation_images` table; version 1 is
+the format before images. A job keeps the version it was frozen with: version-1
+jobs (no `_archive_version` in their inventory) still seal, verify, purge and
+restore with the version-1 columns, and refuse to purge if a column version 1
+leaves out no longer holds its default. Keys stay under `archives/v1/`.
 
 ## What blocks deletion
 
@@ -105,7 +134,9 @@ replacement workflow to fabricate missing established history.
 S3/Milvus intent is recorded before submission. A lost response can mean the remote
 system accepted a request that completes later. Retrying, object absence, matching
 restored bytes, a stopped client or a terminal Temporal workflow do not prove that
-an earlier remote request can no longer mutate the resource.
+an earlier remote request can no longer mutate the resource. The same holds for a
+platform image delete whose reply was lost: restore only an archive whose purge has
+completed, never right after a failed attempt.
 
 Preserve exact org/KB/archive identities, generation, immutable receipt hash and
 pending steps. Private `/internal/archive/inspect` and `/internal/archive/status`
