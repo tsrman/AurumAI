@@ -82,6 +82,12 @@ A workflow run cancelled from the chat no longer loses its `user_cancelled`
 reason when the orchestrator later confirms the cancellation: repeating a run's
 current status without a code keeps the recorded one.
 
+`./smoke-test-archive-images.sh` adds an end-to-end acceptance for archiving
+conversation images: on the disposable lifecycle project the real data-worker
+archives and restores an old conversation with generated, edited and uploaded
+images, with the image account limited by the documented MinIO policy, checked by
+new independent `prepare-`/`check-data-lifecycle-images.py` helpers.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

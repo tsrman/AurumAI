@@ -14,3 +14,8 @@ for name in business archives; do
   mc admin policy create fixture "lifecycle-$name" "/fixture/data-lifecycle-$name-policy.json" >/dev/null
   mc admin policy attach fixture "lifecycle-$name" --user "lifecycle-$name" >/dev/null
 done
+# The data worker's conversation image account: the documented runbook policy,
+# limited to conversation-images/* in the business bucket.
+mc admin user add fixture lifecycle-images lifecycle-images-password >/dev/null
+mc admin policy create fixture lifecycle-images /fixture/data-lifecycle-images-policy.json >/dev/null
+mc admin policy attach fixture lifecycle-images --user lifecycle-images >/dev/null

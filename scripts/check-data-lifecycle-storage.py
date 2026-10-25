@@ -39,9 +39,46 @@ def main() -> None:
                 else:
                     raise AssertionError("cross_bucket_access_allowed")
         print("Bucket IAM: 4 allowed and 4 denied operations passed")
+        check_image_user(admin)
     finally:
         for bucket in buckets:
             admin.delete_object(Bucket=bucket, Key=key)
+
+
+def denied(call, **kwargs) -> None:
+    try:
+        call(**kwargs)
+    except ClientError as exc:
+        assert exc.response["Error"]["Code"] == "AccessDenied"
+    else:
+        raise AssertionError("image_user_access_allowed")
+
+
+def check_image_user(admin) -> None:
+    """The data worker's image account reaches only conversation-images/*."""
+    images = client("lifecycle-images", "lifecycle-images-password")
+    image_key = f"conversation-images/{uuid4()}/{uuid4()}/uploads/{uuid4()}.png"
+    other_key = f"documents/{uuid4()}/iam-probe"
+    archive_key = f"archives/v1/{uuid4()}/iam-probe"
+    payload = b"owned lifecycle image IAM fixture"
+    admin.put_object(Bucket="lifecycle-business", Key=other_key, Body=payload)
+    admin.put_object(Bucket="lifecycle-archives", Key=archive_key, Body=payload)
+    try:
+        images.put_object(Bucket="lifecycle-business", Key=image_key, Body=payload)
+        with images.get_object(Bucket="lifecycle-business", Key=image_key)["Body"] as body:
+            assert body.read() == payload
+        images.delete_object(Bucket="lifecycle-business", Key=image_key)
+        denied(images.get_object, Bucket="lifecycle-business", Key=other_key)
+        denied(images.put_object, Bucket="lifecycle-business", Key=other_key, Body=payload)
+        denied(images.delete_object, Bucket="lifecycle-business", Key=other_key)
+        denied(images.get_object, Bucket="lifecycle-archives", Key=archive_key)
+        denied(images.put_object, Bucket="lifecycle-archives", Key=archive_key, Body=payload)
+        denied(images.list_objects_v2, Bucket="lifecycle-business", Prefix="conversation-images/")
+        print("Image IAM: 3 allowed and 6 denied operations passed")
+    finally:
+        admin.delete_object(Bucket="lifecycle-business", Key=image_key)
+        admin.delete_object(Bucket="lifecycle-business", Key=other_key)
+        admin.delete_object(Bucket="lifecycle-archives", Key=archive_key)
 
 
 if __name__ == "__main__":

@@ -162,6 +162,7 @@ MCP/code need profiles `mcp` and `skills-exec` and a built `runner`/`skill-sandb
 | `./smoke-test-workflow-branching-ui.sh` | Node failure, conditional edges, AND-join, skip cascade |
 | `./smoke-test-workflow-hitl-ui.sh` | Reject/cancel and real65-second dedicated test deadline |
 | `./smoke-test-workflow-loops.sh` | API-only loop cap/fallthrough/cancel and previous-iteration context |
+| `./smoke-test-archive-images.sh` | Disposable lifecycle project: data-worker archives/restores an old conversation with images; scoped image IAM |
 | `./smoke-test-authorization-ui.sh` | Five resource types, live revoke and both audiences |
 | `./smoke-test-images-ui.sh` | Admin image and vision models, chat generation, editing and image attachments, reload; deterministic gateway |
 | `./smoke-test-auth-lifecycle.sh` | UI logout/refresh/recovery and natural access expiry (up to15minutes) |

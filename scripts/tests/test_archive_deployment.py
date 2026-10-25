@@ -137,6 +137,29 @@ def test_compose_keeps_migrations_and_archive_credentials_outside_normal_service
         assert "RAG_API_MIGRATION_DATABASE_URL" not in env
 
 
+def test_compose_data_worker_reaches_image_storage_only_through_its_egress_allowlist():
+    services = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]
+    env = services["data-worker"]["environment"]
+    endpoint = env["APP_ARCHIVE_IMAGES_S3_ENDPOINT"]
+    assert endpoint == "${APP_ARCHIVE_IMAGES_S3_ENDPOINT:-}"
+    # Empty keeps conversations with images live; set, it must be reachable.
+    allowed = json.loads(services["data-egress"]["environment"]["MAINTENANCE_HTTP_ENDPOINTS"])
+    assert "${APP_ARCHIVE_IMAGES_S3_ENDPOINT:-http://minio:9000}" in allowed
+    for name in ("backend", "backend-admin", "rag-api", "rag-worker", "tool-worker"):
+        assert "APP_ARCHIVE_IMAGES_S3_ACCESS_KEY" not in services[name].get("environment", {})
+
+
+def test_lifecycle_fixture_uses_the_documented_image_policy():
+    fixtures = ROOT / "scripts/fixtures"
+    policy = json.loads((fixtures / "data-lifecycle-images-policy.json").read_text())
+    [statement] = policy["Statement"]
+    assert sorted(statement["Action"]) == ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"]
+    assert statement["Resource"] == ["arn:aws:s3:::lifecycle-business/conversation-images/*"]
+    worker = yaml.safe_load((fixtures / "data-lifecycle-compose.yml").read_text())["services"]["data-worker"]
+    assert worker["environment"]["APP_ARCHIVE_IMAGES_S3_ACCESS_KEY"] == "lifecycle-images"
+    assert worker["environment"]["APP_ARCHIVE_IMAGES_S3_BUCKET"] == "lifecycle-business"
+
+
 def test_archive_profile_has_all_dependencies_without_enabling_normal_rag_workers():
     services = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]
     enabled_services = {name for name, service in services.items()
