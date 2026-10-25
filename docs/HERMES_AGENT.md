@@ -96,32 +96,76 @@ What Hermes provides (as of 2026-10):
 
 ### Execution model
 
-A Hermes turn is an external, non-replayable agent loop. It is wrapped the same
-way code-skill sessions are.
+Hermes sessions can be long: one turn may run for hours, and a conversation
+expects its terminal files, installed tools and Hermes state to still be there on
+the next turn. The sandbox therefore belongs to the conversation, not to a turn,
+and lives across turns. The code-skill TTLs (1800 s absolute, 300 s idle) do not
+apply.
 
-- **Workflow.** `ConversationWorkflow` runs a child `HermesSessionWorkflow`. A
-  workflow node does the same through its `AgentWorkflow`. The child is gated by
-  `workflow.patched("hermes-v1")`, and replay tests cover histories from before and
-  after the gate.
+- **Workflow.** Each conversation that uses Hermes has one long-lived
+  `HermesSessionWorkflow`, started on the first Hermes turn. `ConversationWorkflow`
+  and a workflow node's `AgentWorkflow` hand turns to it with a Temporal Update and
+  wait for the result. One run is active per session at a time: a second turn is
+  rejected the same way the composer blocks a running conversation today. The
+  session workflow uses continue-as-new to keep its history bounded. It is gated
+  by `workflow.patched("hermes-v1")`, and replay tests cover histories from before
+  and after the gate.
 - **Activities.** All activities run on the `tools` queue and have bounded
   retries:
-  1. `open_hermes_session` provisions the sandbox and hydrates `HERMES_HOME`.
+  1. `open_hermes_session` provisions the sandbox, or restores it from a snapshot,
+     and hydrates `HERMES_HOME`.
   2. `run_hermes_turn` submits `POST /v1/runs` with an `Idempotency-Key` derived
-     from turn and attempt. It then reads `/events`, heartbeats, and publishes
-     safe progress.
-  3. `close_hermes_session` reads back memory and skill drafts and destroys the
-     sandbox.
-- **Cancellation.** A cancelled turn calls `/stop`.
-- **Failure.** If the sandbox or the activity's owner dies, the turn ends as
-  `hermes_interrupted`. It is not resumed: Temporal records the platform's actions,
-  not Hermes's internal state. This is stated in the user and operator docs.
+     from the turn. It then reads `/events`, heartbeats every few seconds, and
+     publishes safe progress. A retry after a lost worker reattaches to the same
+     `run_id` through `GET /v1/runs/{id}` and `/events`: it does not start a second
+     run. The Temporal timeout of the activity is the turn deadline; the heartbeat
+     timeout (about 60 s) detects a dead worker.
+  3. `snapshot_hermes_session` saves the workspace when the session goes idle.
+  4. `close_hermes_session` reads back memory and skill drafts, takes a final
+     snapshot and destroys the sandbox.
+- **Durable sandbox ownership.** Today `skill-executor` keeps sessions in memory
+  and reaps orphaned sandboxes after a restart. That would kill every long Hermes
+  session on a deploy. Hermes sandboxes are recorded durably instead: labels on the
+  container or Pod and a `hermes_sessions` row with org, user, conversation,
+  sandbox id, state and timestamps. After a restart the executor re-adopts live
+  Hermes sandboxes from that record rather than reaping them; it reaps only those
+  past their limits or without a row.
+- **Lifetime limits.** All of them are operator settings, enforced by the session
+  workflow and the reaper:
+  - turn deadline: default 2 h, maximum 24 h;
+  - idle TTL between turns: default 30 min; at expiry the workspace is
+    snapshotted and the sandbox stopped;
+  - absolute session lifetime: default 24 h, then a snapshot and a fresh sandbox
+    on the next turn;
+  - snapshot retention: default 7 days after the last turn, and deleted with the
+    conversation.
+- **Snapshots.** A snapshot is a bounded archive (default 1 GiB) of the workspace
+  and the session part of `HERMES_HOME`: `state.db`, working files and installed
+  tools. Memory and skills are not in it; they follow the per-user flow below. It
+  goes to the business bucket under `hermes-sessions/{org}/{conversation}/`, with a
+  checksum recorded in `hermes_sessions`. Restoring verifies the checksum, unpacks
+  only regular files and directories, and treats the content as untrusted. The
+  conversation archive removes snapshots with the rest of the conversation;
+  archives do not carry them.
+- **Capacity.** A per-organization and an operator-wide cap on running Hermes
+  sandboxes. Above the cap, the least recently used idle sandbox is snapshotted and
+  stopped. If every sandbox is busy, the turn is rejected with
+  `hermes_capacity_exhausted`.
+- **Cancellation.** A cancelled turn calls `/stop`. The sandbox stays for the next
+  turn.
+- **Failure.** If the sandbox itself dies during a run, the turn ends as
+  `hermes_interrupted`, and the next turn starts from the latest snapshot. A lost
+  worker alone does not interrupt the turn, because the retry reattaches. Temporal
+  records the platform's actions, not Hermes's internal state. The user and
+  operator docs say so.
 - **History.** The final answer is persisted through `persist_assistant_message`
-  as usual. The next turn starts from the complete persistent conversation history
-  (`conversation_history` on `/v1/runs`), not from Hermes's `state.db`. History
-  stays authoritative in PostgreSQL.
-- **Session lifetime.** v1 opens a fresh session per turn: no warm sessions. A
-  warm sandbox reused across turns of the same conversation is a later
-  optimization, bounded by the idle TTL.
+  as usual. PostgreSQL stays authoritative: each run receives the complete
+  persistent conversation history (`conversation_history` on `/v1/runs`). Hermes's
+  `state.db` is only a working cache, rebuilt from that history when a snapshot is
+  missing.
+- **Browser independence.** A long turn runs on the server. Closing the browser
+  does not stop it, and reopening the conversation shows the running turn and then
+  its result, as with workflow runs today.
 
 ### Sandbox image and limits
 
@@ -129,8 +173,9 @@ way code-skill sessions are.
   with no `hermes update` and no build tools on the runtime path. It ships MIT
   attribution in `THIRD_PARTY_NOTICES`, and `AIR_GAPPED.md` lists it.
 - **Resources.** CPU, memory and disk get their own settings, well above the
-  code-skill defaults: initially 2 CPU, 2 GiB and a 1 GiB tmpfs `HERMES_HOME`.
-  Absolute and idle TTLs are separate, and a turn has a wall-clock deadline.
+  code-skill defaults: initially 2 CPU, 2 GiB of memory and a 2 GiB workspace
+  volume for `HERMES_HOME` and working files. The lifetime limits are listed under
+  the execution model.
 - **Hermes configuration.** It is generated by the platform and read-only to the
   agent. The agent can overwrite the file, so the platform-side controls below
   must not depend on it.
@@ -174,14 +219,17 @@ model and by any prompt injection.
 
 - **Session token.** The runner's session token never enters the sandbox. When a
   session opens, the backend mints a separate Hermes session token. It:
-  - is bound to organization, user, conversation, turn and, where relevant,
-    workflow run and node;
+  - is bound to the `hermes_sessions` row: organization, user and conversation;
   - has the audience `hermes-session`;
   - is accepted only by the native-tools proxy route and the MCP bridge;
-  - expires with the session TTL;
-  - is revoked on close.
-- **What a leak can do.** It allows model and tool calls for that one turn while
-  the session lives, still subject to live grants and quotas. Nothing more.
+  - works only while a turn is active. The backend takes the current turn and,
+    where relevant, the workflow run and node from the row, not from the token.
+    Between turns every call fails with `hermes_turn_inactive`;
+  - expires with the absolute session lifetime and is revoked on close or
+    snapshot. A restored sandbox gets a new token.
+- **What a leak can do.** Model and tool calls for that conversation, only while
+  one of its turns is running, and still subject to live grants and quotas. A
+  sandbox that sits idle for hours can do nothing with it.
 - **Hermes API key.** `API_SERVER_KEY` is random per session and known only to the
   activity.
 - **Provider credentials.** No provider credentials enter the sandbox.
@@ -255,8 +303,9 @@ points at it with `tools.include`.
   - Ordinary resource grants then control who can use them.
 - **Hydrated skills.** The platform skills the user can access are hydrated
   read-only.
-- **`state.db` and session search.** These are not persisted in v1. Search over
-  past conversations can later be offered as a platform tool scoped to the user's
+- **`state.db` and session search.** `state.db` lives in the conversation's
+  snapshot, so session search covers that conversation. Search across the user's
+  other conversations can later be offered as a platform tool scoped to the user's
   own conversations.
 
 ### Chat and workflow surface
@@ -291,12 +340,14 @@ Each phase is a separate PR behind the flag:
 
 1. **Native tools in the proxy.** The new route, a Hermes session token and quota
    correlation. Tested against the deterministic gateway.
-2. **Sandbox and network.** The `hermes-sandbox` image, its resources, the
+2. **Sandbox and network.** The `hermes-sandbox` image, its resources, durable
+   sandbox ownership and re-adoption after an executor restart, snapshots, the
    `hermes-egress` sidecar on Docker and Kubernetes, and runtime egress probes.
 3. **MCP bridge.** Knowledge, web, images and questions. MCP skills and code skills
    come later in the same phase if the scope allows.
-4. **Chat agent.** `HermesSessionWorkflow`, events, cancel, the picker, the
-   capability and flag, the UI and acceptance.
+4. **Chat agent.** The long-lived `HermesSessionWorkflow` with turn hand-off,
+   reattach after a lost worker, idle snapshot, capacity caps, events, cancel, the
+   picker, the capability and flag, the UI and acceptance.
 5. **Memory and skill drafts.** Tables, hydrate and read-back, user settings and
    admin approval.
 6. **Workflow node.** A `hermes` node type, billing and replay tests.
@@ -313,12 +364,15 @@ Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
 - **Acceptance.** Deterministic acceptance with the test gateway scripting native
   tool calls. Then a few paid real-provider checks: a chat turn with web and an
   image, and a workflow node.
+- **Long sessions.** Deterministic tests for a turn that outlives several
+  heartbeats, a worker killed mid-run that reattaches without a second run, an
+  executor restart that re-adopts the sandbox, idle snapshot and restore with the
+  workspace intact, an expired token between turns, and capacity eviction.
 - **Reporting.** Which runtime combinations were actually exercised is reported
   separately.
 
 ## Open questions for review
 
-- Session reuse across turns (warm sandbox) in v1, or a fresh session per turn.
 - Whether code skills should be reachable through the bridge in v1, given that
   Hermes already has a terminal in its own sandbox.
-- Default resource limits and the turn deadline.
+- Default resource limits, lifetime limits and the capacity caps.
