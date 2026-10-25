@@ -620,7 +620,8 @@
     "chartMetric": "Chart metric",
     "byModel": "By model",
     "byUser": "By user",
-    "byUserTruncated": "Showing {shown} of {total} users with usage, by descending tokens. Narrow the period or filter by user."
+    "byUserTruncated": "Showing {shown} of {total} users with usage, by descending tokens. Narrow the period or filter by user.",
+    "images": "Images"
   },
   "about": {
     "description": "A self-hosted platform for AI conversations, tools, knowledge and durable multi-agent workflows.",

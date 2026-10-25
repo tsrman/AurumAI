@@ -29,6 +29,7 @@ def _event(
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     total_tokens: int = 0,
+    kind: str = "chat",
 ) -> LLMUsageEvent:
     return LLMUsageEvent(
         org_id=org_id,
@@ -42,6 +43,7 @@ def _event(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        kind=kind,
     )
 
 
@@ -466,3 +468,39 @@ async def test_by_user_total_follows_the_user_filter(
 
     assert report.by_user_total == 1
     assert [row.email for row in report.by_user] == ["other@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_image_calls_count_as_requests_and_as_images(
+    db: AsyncSession,
+    test_org: Organization,
+    test_user: User,
+) -> None:
+    at = datetime(2026, 9, 10, 12, tzinfo=timezone.utc)
+    db.add_all(
+        [
+            _event(test_org.id, test_user.id, model=MODEL_A, status=UsageEventStatus.COMPLETED,
+                   accepted_at=at, completed_at=at, total_tokens=10),
+            _event(test_org.id, test_user.id, model="image-model", kind="image_generate",
+                   status=UsageEventStatus.COMPLETED, accepted_at=at, completed_at=at,
+                   prompt_tokens=5, completion_tokens=95, total_tokens=100),
+            # A provider that reports no usage still produced an image.
+            _event(test_org.id, test_user.id, model="image-model", kind="image_edit",
+                   status=UsageEventStatus.ACCEPTED, accepted_at=at),
+            # A reservation that never reached the provider is no image.
+            _event(test_org.id, test_user.id, model="image-model", kind="image_edit",
+                   status=UsageEventStatus.RESERVED),
+        ]
+    )
+    await db.flush()
+
+    report = await UsageAnalyticsService().report(
+        db, test_org.id, date(2026, 9, 10), date(2026, 9, 10)
+    )
+
+    assert report.totals == UsageTotals(3, 5, 95, 110, 1, 2)
+    by_model = {row.model: row.totals for row in report.by_model}
+    assert (by_model["image-model"].requests, by_model["image-model"].images) == (2, 2)
+    assert by_model[MODEL_A].images == 0
+    assert report.by_user[0].totals.images == 2
+    assert report.daily[0].totals.images == 2

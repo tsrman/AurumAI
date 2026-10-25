@@ -499,6 +499,7 @@ _IMAGE_ERROR_CODES = {
     "image_rejected",
     "image_not_found",
     "image_cancelled",
+    "image_quota_exceeded",
 }
 
 

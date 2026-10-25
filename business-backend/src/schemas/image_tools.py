@@ -18,6 +18,7 @@ ImageErrorCode = Literal[
     "image_rejected",
     "image_not_found",
     "image_cancelled",
+    "image_quota_exceeded",
 ]
 
 IMAGE_TOOL_KINDS: dict[str, str] = {

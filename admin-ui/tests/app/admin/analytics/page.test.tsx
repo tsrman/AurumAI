@@ -46,6 +46,7 @@ const report: AdminUsageReport = {
     completionTokens: 5,
     totalTokens: 12,
     unaccountedRequests: 1,
+    images: 2,
   },
   daily: [],
   byUser: [
@@ -58,6 +59,7 @@ const report: AdminUsageReport = {
       completionTokens: 5,
       totalTokens: 12,
       unaccountedRequests: 1,
+      images: 2,
     },
   ],
   byUserTotal: 1,
@@ -69,6 +71,7 @@ const report: AdminUsageReport = {
       completionTokens: 5,
       totalTokens: 12,
       unaccountedRequests: 1,
+      images: 2,
     },
   ],
 };
@@ -114,6 +117,9 @@ test("reads report filters from URL and renders totals, limits and breakdowns", 
   const totals = screen.getByRole("region", { name: "Totals" });
   expect(within(totals).getByText("3")).toBeInTheDocument();
   expect(within(totals).getByText("12")).toBeInTheDocument();
+  expect(within(totals).getByText("Images").nextSibling).toHaveTextContent("2");
+  // Image counts sit next to requests and tokens in both breakdowns.
+  expect(screen.getAllByRole("columnheader", { name: "Images" })).toHaveLength(2);
   // From the monthly counter (8/90 used), not from the three-day period's
   // own totals — those would have read 7 and 88.
   expect(screen.getByText(/Requests remaining: 2/)).toBeInTheDocument();

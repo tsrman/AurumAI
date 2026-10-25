@@ -21,7 +21,9 @@ from src.models.organization_settings import OrganizationSettings
 from src.models.user import User
 from src.repositories.interaction_repository import InteractionRepository
 from src.schemas.interaction import TurnLimits
-from src.services.image_api_client import ImageApiError
+from src.models.llm_usage import LLMUsageEvent, OrganizationUsageMonthly
+from src.services import image_tools
+from src.services.image_api_client import ImageApiError, ImageResult, ImageUsage
 from src.services.image_tools import (
     IMAGE_TOOL_ATTEMPT_DURATION_SECONDS,
     IMAGE_TOOL_ATTEMPTS_TOTAL,
@@ -29,6 +31,7 @@ from src.services.image_tools import (
     ImageToolsService,
 )
 from src.services.interaction import interaction_service
+from src.services.quota import QuotaExceededError, QuotaService
 
 
 def png(width: int = 2, height: int = 2) -> bytes:
@@ -110,27 +113,62 @@ async def image_fixture() -> ImageFixture:
         await engine.dispose()
 
 
+class RecordingQuota:
+    def __init__(self, reserve_error: Exception | None = None) -> None:
+        self.reserve_error = reserve_error
+        self.calls: list[tuple[str, Any]] = []
+
+    async def reserve(self, *args: Any, **kwargs: Any) -> None:
+        self.calls.append(("reserve", {"model": args[3], "kind": kwargs["kind"].value}))
+        if self.reserve_error is not None:
+            raise self.reserve_error
+
+    async def accept(self, org_id: UUID, request_id: UUID) -> None:
+        self.calls.append(("accept", None))
+
+    async def complete(self, org_id: UUID, request_id: UUID, *tokens: int) -> None:
+        self.calls.append(("complete", tokens))
+
+    async def cancel(self, org_id: UUID, request_id: UUID) -> None:
+        self.calls.append(("cancel", None))
+
+
+@pytest.fixture(autouse=True)
+def quota(monkeypatch: pytest.MonkeyPatch) -> RecordingQuota:
+    recording = RecordingQuota()
+    monkeypatch.setattr(image_tools, "get_quota_service", lambda: recording)
+    return recording
+
+
 class FakeImages:
-    def __init__(self, result: bytes | None = None, errors: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        result: bytes | None = None,
+        errors: list[str | ImageApiError] | None = None,
+        usage: ImageUsage | None = None,
+    ) -> None:
         self.result = result if result is not None else png()
         self.errors = list(errors or [])
+        self.usage = usage
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def generate(self, *, model: str, prompt: str, size: str) -> bytes:
-        self.calls.append(("generate", {"model": model, "prompt": prompt, "size": size}))
+    def _next(self) -> ImageResult:
         if self.errors:
-            raise ImageApiError(self.errors.pop(0))
-        return self.result
+            error = self.errors.pop(0)
+            raise error if isinstance(error, ImageApiError) else ImageApiError(error)
+        return ImageResult(self.result, self.usage)
+
+    async def generate(self, *, model: str, prompt: str, size: str) -> ImageResult:
+        self.calls.append(("generate", {"model": model, "prompt": prompt, "size": size}))
+        return self._next()
 
     async def edit(
         self, *, model: str, prompt: str, image: bytes, content_type: str, size: str
-    ) -> bytes:
+    ) -> ImageResult:
         self.calls.append(
             ("edit", {"model": model, "prompt": prompt, "image": image, "type": content_type})
         )
-        if self.errors:
-            raise ImageApiError(self.errors.pop(0))
-        return self.result
+        return self._next()
 
 
 class FakeStorage:
@@ -317,13 +355,13 @@ async def test_cancelled_turn_fails_the_operation_as_cancelled(
     monkeypatch.setattr(interaction_service._authorization, "require_capability", AsyncMock())
 
     class CancelDuringGeneration(FakeImages):
-        async def generate(self, *, model: str, prompt: str, size: str) -> bytes:
+        async def generate(self, *, model: str, prompt: str, size: str) -> ImageResult:
             async with image_fixture.sessions.begin() as other:
                 await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
                 await InteractionRepository(image_fixture.subject.org_id).cancel_turn(
                     other, image_fixture.turn_id
                 )
-            return png()
+            return ImageResult(png(), None)
 
     service = ImageToolsService(client=CancelDuringGeneration(), storage=FakeStorage())
     with pytest.raises(ImageToolExecutionError, match="image_cancelled"):
@@ -353,4 +391,94 @@ async def test_recent_images_are_newest_first_bounded_and_conversation_scoped(
         other = await recent_conversation_images(db, image_fixture.subject.org_id, uuid4())
     assert [row["id"] for row in recent] == [second["imageId"], first["imageId"]]
     assert recent[1]["prompt"] == "x" * 200
+    assert {row["origin"] for row in recent} == {"generated"}
     assert other == [] and RECENT_IMAGE_LIMIT == 8
+
+
+async def test_each_provider_call_is_counted_against_the_quota(
+    image_fixture: ImageFixture, quota: RecordingQuota
+) -> None:
+    usage = ImageUsage(prompt_tokens=50, completion_tokens=4000, total_tokens=4050)
+    images = FakeImages(errors=["image_unavailable"], usage=usage)
+    service = ImageToolsService(client=images, storage=FakeStorage(), authorize=allow())
+
+    await _run(image_fixture, service, "generate_image", {"prompt": "x"})
+
+    # The failed attempt gives its reservation back; the answered one is
+    # accepted and completed with the provider's tokens.
+    assert quota.calls == [
+        ("reserve", {"model": "gen-model", "kind": "image_generate"}),
+        ("cancel", None),
+        ("reserve", {"model": "gen-model", "kind": "image_generate"}),
+        ("accept", None),
+        ("complete", (50, 4000, 4050)),
+    ]
+
+
+async def test_an_answer_without_usage_stays_an_accepted_request(
+    image_fixture: ImageFixture, quota: RecordingQuota
+) -> None:
+    service = ImageToolsService(client=FakeImages(), storage=FakeStorage(), authorize=allow())
+    await _run(image_fixture, service, "generate_image", {"prompt": "x"})
+    assert [name for name, _ in quota.calls] == ["reserve", "accept"]
+
+
+async def test_an_answered_but_unusable_result_is_still_counted(
+    image_fixture: ImageFixture, quota: RecordingQuota
+) -> None:
+    usage = ImageUsage(1, 2, 3)
+    images = FakeImages(errors=[ImageApiError("image_unavailable", accepted=True, usage=usage)] * 2)
+    service = ImageToolsService(client=images, storage=FakeStorage(), authorize=allow())
+    with pytest.raises(ImageToolExecutionError, match="image_unavailable"):
+        await _run(image_fixture, service, "generate_image", {"prompt": "x"})
+    assert [name for name, _ in quota.calls] == [
+        "reserve", "accept", "complete", "reserve", "accept", "complete",
+    ]
+
+
+async def test_an_exhausted_quota_fails_the_operation_before_any_call(
+    image_fixture: ImageFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    exhausted = RecordingQuota(QuotaExceededError("requests", 10, 10, date(2026, 11, 1)))
+    monkeypatch.setattr(image_tools, "get_quota_service", lambda: exhausted)
+    images = FakeImages()
+    service = ImageToolsService(client=images, storage=FakeStorage(), authorize=allow())
+    with pytest.raises(ImageToolExecutionError, match="image_quota_exceeded"):
+        await _run(image_fixture, service, "generate_image", {"prompt": "x"})
+    assert images.calls == []
+    [operation] = await _operations(image_fixture)
+    assert (operation.status, operation.error_code) == ("failed", "image_quota_exceeded")
+
+
+async def test_image_usage_lands_in_the_monthly_quota_counters(image_fixture: ImageFixture) -> None:
+    org_id = image_fixture.subject.org_id
+    real = QuotaService(image_fixture.sessions)
+    service = ImageToolsService(
+        client=FakeImages(usage=ImageUsage(10, 90, 100)),
+        storage=FakeStorage(),
+        authorize=allow(),
+        quota=real,
+    )
+    try:
+        await _run(image_fixture, service, "generate_image", {"prompt": "x"})
+        async with image_fixture.sessions() as db:
+            [event] = list(
+                await db.scalars(select(LLMUsageEvent).where(LLMUsageEvent.org_id == org_id))
+            )
+            aggregate = await db.scalar(
+                select(OrganizationUsageMonthly).where(OrganizationUsageMonthly.org_id == org_id)
+            )
+        assert (event.kind, event.model, event.status, event.total_tokens) == (
+            "image_generate", "gen-model", "completed", 100,
+        )
+        assert event.conversation_id == image_fixture.conversation_id
+        assert aggregate is not None
+        assert (aggregate.requests_used, aggregate.total_tokens) == (1, 100)
+    finally:
+        async with image_fixture.sessions.begin() as db:
+            await db.execute(delete(LLMUsageEvent).where(LLMUsageEvent.org_id == org_id))
+            await db.execute(
+                delete(OrganizationUsageMonthly).where(OrganizationUsageMonthly.org_id == org_id)
+            )

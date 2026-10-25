@@ -374,6 +374,7 @@ async def test_image_activity_posts_to_the_runner_only_route(monkeypatch: pytest
     ("payload", "expected"),
     [
         ({"detail": {"code": "image_limit"}, "internal": "secret"}, "image_limit"),
+        ({"detail": {"code": "image_quota_exceeded"}}, "image_quota_exceeded"),
         ({"detail": {"code": "something_else"}}, "image_unavailable"),
         ({"detail": "Interaction not found"}, "image_unavailable"),
     ],

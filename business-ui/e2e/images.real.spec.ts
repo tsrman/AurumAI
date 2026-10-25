@@ -231,6 +231,17 @@ test.describe("Images: admin settings to chat generation, editing and attachment
       await member.getByRole("button", { name: new RegExp("IMAGE_E2E_EDIT") }).first().click();
       await expectLoadedImages(member, 4);
       await expectLoadedImages(member, 1, "Attached");
+
+      // Every image call is a counted request with the gateway's fixed usage.
+      const today = new Date().toISOString().slice(0, 10);
+      const usage = await adminApi<{ byModel: { model: string; requests: number; totalTokens: number; images: number }[] }>(
+        request, token, "GET",
+        `/v1/admin/analytics/usage?from=${today}&to=${today}&model=${encodeURIComponent(IMAGE_MODEL)}`
+      );
+      const imageRow = usage.byModel.find((row) => row.model === IMAGE_MODEL);
+      expect(imageRow?.images).toBeGreaterThanOrEqual(4);
+      expect(imageRow?.requests).toBe(imageRow?.images);
+      expect(imageRow?.totalTokens).toBe(110 * (imageRow?.images ?? 0));
     } finally {
       await Promise.allSettled(contexts.map((context) => context.close()));
       // Restore every setting even if one restore fails, and never let a

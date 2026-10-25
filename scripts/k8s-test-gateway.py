@@ -773,12 +773,20 @@ async def models() -> dict[str, Any]:
     }
 
 
+# Fixed Images API usage, so acceptance can check image calls in the quota.
+IMAGE_USAGE = {"input_tokens": 10, "output_tokens": 100, "total_tokens": 110}
+
+
 @app.post("/v1/images/generations")
 async def image_generations(request: Request) -> dict[str, Any]:
     body = await request.json()
     if not IMAGE_MODEL_ID or body.get("model") != IMAGE_MODEL_ID or not str(body.get("prompt") or "").strip():
         raise HTTPException(400, "invalid image request")
-    return {"created": 0, "data": [{"b64_json": base64.b64encode(_png(220, 30, 30)).decode()}]}
+    return {
+        "created": 0,
+        "data": [{"b64_json": base64.b64encode(_png(220, 30, 30)).decode()}],
+        "usage": IMAGE_USAGE,
+    }
 
 
 @app.post("/v1/images/edits")
@@ -788,7 +796,11 @@ async def image_edits(request: Request) -> dict[str, Any]:
     body = await request.body()
     if not IMAGE_MODEL_ID or IMAGE_MODEL_ID.encode() not in body or b"\x89PNG\r\n\x1a\n" not in body:
         raise HTTPException(400, "invalid image edit")
-    return {"created": 0, "data": [{"b64_json": base64.b64encode(_png(30, 30, 220)).decode()}]}
+    return {
+        "created": 0,
+        "data": [{"b64_json": base64.b64encode(_png(30, 30, 220)).decode()}],
+        "usage": IMAGE_USAGE,
+    }
 
 
 @app.post("/v1/chat/completions")

@@ -72,6 +72,7 @@ async def test_admin_usage_returns_utc_period_limits_and_zero_series(
             "completionTokens": 0,
             "totalTokens": 0,
             "unaccountedRequests": 0,
+            "images": 0,
         },
         "daily": [
             {
@@ -81,6 +82,7 @@ async def test_admin_usage_returns_utc_period_limits_and_zero_series(
                 "completionTokens": 0,
                 "totalTokens": 0,
                 "unaccountedRequests": 0,
+                "images": 0,
             }
             for value in ("2026-09-01", "2026-09-02", "2026-09-03")
         ],

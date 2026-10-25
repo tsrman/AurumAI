@@ -252,9 +252,10 @@ function UsageReport({ report, metric, onMetricChange }: UsageReportProps) {
 
   return (
     <>
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label={t("totals")}>
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" aria-label={t("totals")}>
         <SummaryCard label={t("requests")} value={report.totals.requests} />
         <SummaryCard label={t("tokens")} value={report.totals.totalTokens} />
+        <SummaryCard label={t("images")} value={report.totals.images} />
         <div className="rounded-card border border-aurum-border bg-aurum-surface p-4 shadow-card">
           <p className="text-xs font-semibold text-aurum-text-3">{t("requestLimit")}</p>
           <p className="mt-1 text-xl font-semibold text-aurum-text">
@@ -317,10 +318,10 @@ function UsageReport({ report, metric, onMetricChange }: UsageReportProps) {
       <section className="space-y-3">
         <h2 className="text-base font-semibold text-aurum-text">{t("byModel")}</h2>
         <Table>
-          <thead><tr><Th>{t("model")}</Th><Th className="text-right">{t("requests")}</Th><Th className="text-right">{t("tokens")}</Th></tr></thead>
+          <thead><tr><Th>{t("model")}</Th><Th className="text-right">{t("requests")}</Th><Th className="text-right">{t("tokens")}</Th><Th className="text-right">{t("images")}</Th></tr></thead>
           <tbody>
             {report.byModel.map((row) => (
-              <Tr key={row.model}><Td className="font-mono text-xs text-aurum-text">{row.model}</Td><Td className="text-right tabular-nums">{number.format(row.requests)}</Td><Td className="text-right tabular-nums">{number.format(row.totalTokens)}</Td></Tr>
+              <Tr key={row.model}><Td className="font-mono text-xs text-aurum-text">{row.model}</Td><Td className="text-right tabular-nums">{number.format(row.requests)}</Td><Td className="text-right tabular-nums">{number.format(row.totalTokens)}</Td><Td className="text-right tabular-nums">{number.format(row.images)}</Td></Tr>
             ))}
           </tbody>
         </Table>
@@ -340,10 +341,10 @@ function UsageReport({ report, metric, onMetricChange }: UsageReportProps) {
           </p>
         ) : null}
         <Table>
-          <thead><tr><Th>{t("user")}</Th><Th className="text-right">{t("requests")}</Th><Th className="text-right">{t("tokens")}</Th></tr></thead>
+          <thead><tr><Th>{t("user")}</Th><Th className="text-right">{t("requests")}</Th><Th className="text-right">{t("tokens")}</Th><Th className="text-right">{t("images")}</Th></tr></thead>
           <tbody>
             {report.byUser.map((row) => (
-              <Tr key={row.userId}><Td><span className="font-medium text-aurum-text">{row.fullName || row.email}</span><div className="text-xs text-aurum-text-3">{row.email}</div></Td><Td className="text-right tabular-nums">{number.format(row.requests)}</Td><Td className="text-right tabular-nums">{number.format(row.totalTokens)}</Td></Tr>
+              <Tr key={row.userId}><Td><span className="font-medium text-aurum-text">{row.fullName || row.email}</span><div className="text-xs text-aurum-text-3">{row.email}</div></Td><Td className="text-right tabular-nums">{number.format(row.requests)}</Td><Td className="text-right tabular-nums">{number.format(row.totalTokens)}</Td><Td className="text-right tabular-nums">{number.format(row.images)}</Td></Tr>
             ))}
           </tbody>
         </Table>

@@ -11,6 +11,7 @@ const daily: DailyUsage[] = [
     completionTokens: 0,
     totalTokens: 0,
     unaccountedRequests: 0,
+    images: 0,
   },
   {
     date: "2026-09-02",
@@ -19,6 +20,7 @@ const daily: DailyUsage[] = [
     completionTokens: 3,
     totalTokens: 8,
     unaccountedRequests: 1,
+    images: 0,
   },
 ];
 
