@@ -87,6 +87,7 @@ def test_defaults_are_off_and_packages() -> None:
 def test_the_service_secret_is_required() -> None:
     environment = {key: value for key, value in os.environ.items() if key != "HERMES_EGRESS_SERVICE_SECRET"}
     environment["APP_SECRET_KEY"] = "deployment-contract-secret-not-for-runtime"
+    environment["KEYCLOAK_ADMIN_PASSWORD"] = "deployment-contract-keycloak-not-for-runtime"
     result = subprocess.run(
         ["docker", "compose", "-f", "docker-compose.yml", "-f", str(OVERLAY), "--profile", "hermes", "config"],
         cwd=ROOT, env=environment, text=True, capture_output=True, check=False,

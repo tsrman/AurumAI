@@ -533,7 +533,7 @@ async def handle_proxy(
             if any(task.exception() for task in done if not task.cancelled()):
                 for task in pending:
                     task.cancel()
-            else:
+            elif pending:
                 await asyncio.wait(pending, timeout=config.idle_timeout)
                 for task in pending:
                     task.cancel()

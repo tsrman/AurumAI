@@ -492,6 +492,11 @@ async def test_recheck_closes_open_tunnels_after_revocation() -> None:
         authority.allow = False
         await proxy.recheck_once(handle[1])
         closed = await asyncio.wait_for(reader.read(-1), 5)
+        # The handler forgets the tunnel once both directions have finished.
+        for _ in range(100):
+            if not handle[1].tunnels:
+                break
+            await asyncio.sleep(0.02)
     finally:
         writer.close()
         await _stop(handle, upstreams)
@@ -625,3 +630,28 @@ async def test_state_does_not_grow_with_finished_turns_and_connections() -> None
     assert ("session-1", "turn-0") not in state.turn_bytes
     assert state.connections == {}
     assert state.cache == {}
+
+
+@pytest.mark.asyncio
+async def test_a_tunnel_both_sides_close_ends_cleanly(caplog) -> None:
+    handle, port, upstreams, _ = await _forward(Authority("public"))
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    with caplog.at_level(logging.ERROR):
+        try:
+            writer.write(_connect("example.com:443"))
+            await writer.drain()
+            await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
+            writer.write(b"bye")
+            await writer.drain()
+            writer.write_eof()
+            assert await asyncio.wait_for(reader.read(-1), 5) == b"bye"
+            for _ in range(100):
+                if not handle[1].tunnels:
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            writer.close()
+            await _stop(handle, upstreams)
+
+    assert handle[1].tunnels == set()
+    assert "Set of Tasks/Futures is empty" not in caplog.text
