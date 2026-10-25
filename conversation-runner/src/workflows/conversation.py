@@ -134,6 +134,13 @@ class ConversationInput:
     lifecycle_operation_id: str | None = None
 
 
+def _message_image_ids(message: dict[str, Any]) -> list[str]:
+    value = message.get("image_ids")
+    if message.get("role") != "user" or not isinstance(value, list):
+        return []
+    return [item for item in value[:4] if isinstance(item, str)]
+
+
 @workflow.defn
 class ConversationWorkflow:
     def __init__(self) -> None:
@@ -1030,6 +1037,7 @@ class ConversationWorkflow:
             "content": message.get("content"),
             "turn_id": message.get("turn_id"),
         }
+        image_ids = _message_image_ids(message)
         if self.messages:
             last = self.messages[-1]
             if comparable["turn_id"] is not None:
@@ -1045,7 +1053,8 @@ class ConversationWorkflow:
                     and last.get("content") == comparable["content"]
                 ):
                     return
-        self.messages.append(comparable)
+        # Only ids travel here; the chat completions proxy inlines the bytes.
+        self.messages.append({**comparable, "image_ids": image_ids} if image_ids else comparable)
 
     async def _maybe_call_tools(
         self,

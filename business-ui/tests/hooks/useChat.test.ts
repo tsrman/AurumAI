@@ -679,6 +679,50 @@ test("real mode: image tool results attach their ids to the answer", async () =>
   window.keycloak = originalKeycloak;
 });
 
+test("real mode: attached image ids go with the user message and show on it", async () => {
+  vi.useRealTimers();
+
+  const originalApiUrl = process.env.NEXT_PUBLIC_API_URL;
+  process.env.NEXT_PUBLIC_API_URL = "http://localhost:8000/v1";
+  const originalKeycloak = window.keycloak;
+  window.keycloak = { token: "token", updateToken: vi.fn().mockResolvedValue(true) };
+
+  const { createConversation, getConversation, streamChat } = await import("@/lib/chat-api");
+  const conversation = {
+    id: "conv-images",
+    title: "New conversation",
+    model: "pro", temperature: 0.7,
+    status: "active",
+    lastMessageAt: null,
+    createdAt: "2026-06-19T10:00:00Z",
+    messageCount: 0,
+    tokenCount: 0,
+    costUsd: 0,
+  };
+  vi.mocked(createConversation).mockResolvedValueOnce(conversation);
+  vi.mocked(getConversation).mockResolvedValueOnce({ conversation, messages: [] });
+  vi.mocked(streamChat).mockImplementationOnce(() => ({ cancel: vi.fn() }));
+  const imageId = "66666666-6666-4666-8666-666666666666";
+
+  const { result } = renderHook(() => useChat(), { wrapper: Wrapper });
+  act(() => {
+    result.current.send("", undefined, [imageId]);
+  });
+
+  await waitFor(() => expect(vi.mocked(streamChat)).toHaveBeenCalled());
+  const request = vi.mocked(streamChat).mock.calls.at(-1)![0];
+  expect(request.messages).toEqual([{ role: "user", content: "", imageIds: [imageId] }]);
+  await waitFor(() =>
+    expect(result.current.messages.find((m) => m.role === "user")).toMatchObject({
+      content: "",
+      images: [imageId],
+    })
+  );
+
+  process.env.NEXT_PUBLIC_API_URL = originalApiUrl;
+  window.keycloak = originalKeycloak;
+});
+
 test("real mode: run-command/run-result progress lands in the matching tool row", async () => {
   vi.useRealTimers();
 
@@ -899,6 +943,46 @@ test("re-rendering with new translator instances does not re-hydrate the convers
     expect(vi.mocked(getConversation).mock.calls.length).toBe(calls);
   } finally {
     fresh?.mockRestore();
+    window.keycloak = originalKeycloak;
+  }
+});
+
+test("hydrating a conversation keeps the images attached to user messages", async () => {
+  vi.useRealTimers();
+  const originalKeycloak = window.keycloak;
+  window.keycloak = { token: "token", updateToken: vi.fn().mockResolvedValue(true) };
+  const { useAppShell } = await import("@/hooks/useAppShell");
+  const { getConversation } = await import("@/lib/chat-api");
+  const imageId = "77777777-7777-4777-8777-777777777777";
+  const conversation = {
+    id: "conv-attached", title: "Attached", model: "pro", temperature: 0.7, status: "active" as const,
+    lastMessageAt: null, createdAt: "2026-06-19T10:00:00Z", messageCount: 1, tokenCount: 0, costUsd: 0,
+  };
+  vi.mocked(getConversation).mockReset();
+  vi.mocked(getConversation).mockResolvedValue({
+    conversation,
+    messages: [
+      {
+        id: "m-user", role: "user", content: "", model: null, tokensIn: 0, tokensOut: 0,
+        costUsd: 0, latencyMs: null, toolCalls: null, toolResults: null,
+        createdAt: "2026-06-19T10:00:00Z", imageIds: [imageId, "not-an-id"],
+      },
+    ],
+  });
+  try {
+    const { result } = renderHook(
+      () => ({ chat: useChat(), shell: useAppShell() }),
+      { wrapper: Wrapper }
+    );
+    act(() => {
+      result.current.shell.setActiveConversationId("conv-attached");
+    });
+    await waitFor(() =>
+      expect(result.current.chat.messages.find((m) => m.role === "user")).toMatchObject({
+        images: [imageId],
+      })
+    );
+  } finally {
     window.keycloak = originalKeycloak;
   }
 });

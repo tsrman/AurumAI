@@ -143,15 +143,8 @@ async def organization_image_models(
     ),
 ) -> ApiResponse[OrganizationImageModelsResponse]:
     snapshot = await load_catalog()
-    generation_model, edit_model = await service.image_models(session, org_id)
     return ApiResponse(
-        data=OrganizationImageModelsResponse(
-            enabled=settings.IMAGES_ENABLED,
-            gateway_status=snapshot.status,
-            generation_model=generation_model,
-            edit_model=edit_model,
-            models=list(service.catalog_model_ids(snapshot)),
-        ),
+        data=await _image_settings_response(session, org_id, snapshot, service),
         meta=_meta(),
     )
 
@@ -172,6 +165,8 @@ async def update_organization_image_models(
         await service.set_image_models(
             session, org_id, data.generation_model, data.edit_model, snapshot
         )
+        if data.vision_models is not None:
+            await service.set_vision_models(session, org_id, data.vision_models, snapshot)
     except GatewayUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -184,12 +179,24 @@ async def update_organization_image_models(
         ) from exc
     await session.commit()
     return ApiResponse(
-        data=OrganizationImageModelsResponse(
-            enabled=settings.IMAGES_ENABLED,
-            gateway_status=snapshot.status,
-            generation_model=data.generation_model,
-            edit_model=data.edit_model,
-            models=list(service.catalog_model_ids(snapshot)),
-        ),
+        data=await _image_settings_response(session, org_id, snapshot, service),
         meta=_meta(),
+    )
+
+
+async def _image_settings_response(
+    session: AsyncSession,
+    org_id: UUID,
+    snapshot: GatewayCatalogSnapshot,
+    service: OrganizationModelSettingsService,
+) -> OrganizationImageModelsResponse:
+    generation_model, edit_model = await service.image_models(session, org_id)
+    return OrganizationImageModelsResponse(
+        enabled=settings.IMAGES_ENABLED,
+        gateway_status=snapshot.status,
+        generation_model=generation_model,
+        edit_model=edit_model,
+        models=list(service.catalog_model_ids(snapshot)),
+        vision_models=list(await service.vision_models(session, org_id)),
+        chat_models=list(service.chat_model_ids(snapshot)),
     )

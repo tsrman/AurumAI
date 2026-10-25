@@ -135,3 +135,19 @@ async def test_organization_settings_store_separate_image_models(db) -> None:
         )
     ).scalars().all()
     assert sorted(columns) == ["image_edit_model", "image_generation_model"]
+
+
+async def test_vision_models_default_empty_and_are_bounded(db, test_org) -> None:
+    from src.models.organization_settings import OrganizationSettings
+
+    await db.execute(
+        text("INSERT INTO organization_settings (org_id) VALUES (:org)"), {"org": test_org.id}
+    )
+    stored = await db.get(OrganizationSettings, test_org.id)
+    assert stored is not None and stored.vision_models == []
+    with pytest.raises(IntegrityError):
+        async with db.begin_nested():
+            await db.execute(
+                text("UPDATE organization_settings SET vision_models = :models WHERE org_id = :org"),
+                {"models": [f"m{i}" for i in range(101)], "org": test_org.id},
+            )

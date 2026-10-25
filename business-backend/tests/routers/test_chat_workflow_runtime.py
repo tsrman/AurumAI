@@ -503,3 +503,124 @@ async def test_assistant_persistence_finishes_exact_interaction_turn_before_comm
         session, conv.org_id, conv.user_id, conv.id, turn_id, status="completed"
     )
     assert order == ["finish", "commit"]
+
+
+def _image_stream_patches(conv, pubsub, signal, stored_message, **overrides):  # noqa: ANN001, ANN003, ANN202
+    patches = {
+        "get": patch.object(chat.conversation_repository, "get", AsyncMock(return_value=conv)),
+        "classify": patch.object(chat, "_maybe_classify_workflow", AsyncMock(return_value=None)),
+        "allowed": patch.object(chat, "ensure_model_allowed", AsyncMock()),
+        "create": patch.object(
+            chat.message_repository, "create", AsyncMock(return_value=stored_message)
+        ),
+        "begin": patch.object(chat.interaction_service, "begin_turn", AsyncMock()),
+        "subscribe": patch.object(
+            chat.event_bus, "subscribe_channel", AsyncMock(return_value=pubsub)
+        ),
+        "runner": patch.object(chat.session_manager, "get_or_create", AsyncMock()),
+        "signal": patch.object(chat, "_signal_or_start_conversation_workflow", signal),
+        "temporal": patch.object(chat, "get_temporal_client", return_value=MagicMock()),
+        "vision": patch.object(chat, "vision_enabled", AsyncMock(return_value=True)),
+        "check": patch.object(chat, "check_unclaimed_uploads", AsyncMock()),
+        "claim": patch.object(chat, "claim_uploads", AsyncMock()),
+        "capability": patch.object(
+            chat.authorization_service, "has_capability", AsyncMock(return_value=False)
+        ),
+    }
+    patches.update(overrides)
+    return patches
+
+
+def _image_request(conv, image_ids, **extra):  # noqa: ANN001, ANN003, ANN202
+    return ChatRequest(
+        conversation_id=str(conv.id),
+        messages=[{"role": "user", "content": "what is this", "imageIds": image_ids}],
+        model="vision-model",
+        **extra,
+    )
+
+
+@pytest.mark.asyncio
+async def test_uploaded_images_are_claimed_stored_on_the_message_and_signalled() -> None:
+    from contextlib import ExitStack
+
+    conv, user, session, pubsub = _fixture()
+    image_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+    patches = _image_stream_patches(conv, pubsub, signal, SimpleNamespace(turn_id=uuid.uuid4()))
+    patches["claim"] = patch.object(chat, "claim_uploads", AsyncMock(return_value=image_ids))
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(item) for name, item in patches.items()}
+        await chat.chat_stream(
+            request=_image_request(conv, image_ids),
+            user=user,
+            session=session,
+            quota=AllowQuota([]),
+        )
+
+    mocks["classify"].assert_not_awaited()
+    mocks["vision"].assert_awaited_once_with(session, conv.org_id, "vision-model")
+    claim_args = mocks["claim"].call_args.args
+    assert claim_args[:3] == (session, conv.org_id, conv.id)
+    assert [str(value) for value in claim_args[4]] == image_ids
+    assert mocks["create"].call_args.kwargs["extra"] == {"image_ids": image_ids}
+    assert signal.call_args.args[2]["image_ids"] == image_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["not_vision", "unavailable", "workflow"])
+async def test_images_are_refused_before_the_turn_starts(reason: str) -> None:
+    from contextlib import ExitStack
+
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock()
+    patches = _image_stream_patches(conv, pubsub, signal, SimpleNamespace(turn_id=uuid.uuid4()))
+    if reason == "not_vision":
+        patches["vision"] = patch.object(chat, "vision_enabled", AsyncMock(return_value=False))
+    elif reason == "unavailable":
+        patches["check"] = patch.object(
+            chat,
+            "check_unclaimed_uploads",
+            AsyncMock(side_effect=chat.ImageUploadError("image_not_available")),
+        )
+    extra = {"workflowId": str(uuid.uuid4())} if reason == "workflow" else {}
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(item) for name, item in patches.items()}
+        with pytest.raises(HTTPException) as raised:
+            await chat.chat_stream(
+                request=_image_request(conv, [str(uuid.uuid4())], **extra),
+                user=user,
+                session=session,
+                quota=AllowQuota([]),
+            )
+
+    assert raised.value.status_code == 422
+    mocks["begin"].assert_not_awaited()
+    mocks["create"].assert_not_awaited()
+    signal.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_upload_claimed_concurrently_rolls_the_turn_back() -> None:
+    from contextlib import ExitStack
+
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock()
+    patches = _image_stream_patches(conv, pubsub, signal, SimpleNamespace(turn_id=uuid.uuid4()))
+    patches["claim"] = patch.object(
+        chat, "claim_uploads", AsyncMock(side_effect=chat.ImageUploadError("image_not_available"))
+    )
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(item) for name, item in patches.items()}
+        with pytest.raises(HTTPException) as raised:
+            await chat.chat_stream(
+                request=_image_request(conv, [str(uuid.uuid4())]),
+                user=user,
+                session=session,
+                quota=AllowQuota([]),
+            )
+
+    assert raised.value.status_code == 409
+    session.rollback.assert_awaited()
+    mocks["create"].assert_not_awaited()
+    signal.assert_not_awaited()

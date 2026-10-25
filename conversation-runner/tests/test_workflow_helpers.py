@@ -116,3 +116,24 @@ def test_feature_off_removes_question_tool_from_both_runtime_prompts() -> None:
     assert "ask_user" not in _build_agent_system_prompt(
         agent, [], user_questions_enabled=False
     )
+
+
+def test_append_message_once_keeps_only_user_image_ids() -> None:
+    workflow = ConversationWorkflow()
+    image_ids = [f"00000000-0000-4000-8000-00000000000{i}" for i in range(6)]
+
+    workflow._append_message_once(
+        {"role": "user", "content": "look", "turn_id": "t1", "image_ids": image_ids}
+    )
+    workflow._append_message_once(
+        {"role": "assistant", "content": "x", "turn_id": "t1", "image_ids": image_ids}
+    )
+    # The queued signal of a restored turn still deduplicates.
+    workflow._append_message_once(
+        {"role": "assistant", "content": "x", "turn_id": "t1", "image_ids": image_ids}
+    )
+
+    assert workflow.messages == [
+        {"role": "user", "content": "look", "turn_id": "t1", "image_ids": image_ids[:4]},
+        {"role": "assistant", "content": "x", "turn_id": "t1"},
+    ]

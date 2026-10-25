@@ -124,7 +124,21 @@ JPEG or WebP. Images are stored in the platform bucket under
 owner. Each turn may create at most four images; image-enabled turns list the
 conversation's eight newest images to the model so a later turn can edit them.
 Conversations with images are not archived until the archive format carries image
-bytes. Image calls are not yet counted in token quotas, usage events or Admin UI
+bytes.
+
+The same switch also enables image attachments. In Admin UI → Models → Images an
+administrator marks the chat models that accept image input; the chat composer
+offers PNG, JPEG and WebP attachments only while such a model is selected, and the
+backend rejects images sent to any other model. A message carries at most four
+images of at most `IMAGES_UPLOAD_MAX_BYTES` (10 MB) each; uploads need only
+`chat.send`. The runner forwards image ids, never bytes: the chat completions proxy
+inlines the four newest images of the request as base64 `image_url` parts, and
+replaces older images, or all of them when the selected model is not marked, with a
+short text note. Attached images also appear in the image list a later turn can edit. Removing an
+attachment before sending deletes it; an upload left unsent (for example when the tab
+closes) stays with the conversation, unused, and like any conversation image keeps
+it from being archived.
+Workflows cannot receive images yet, so a message with images is never routed to one. Image calls are not yet counted in token quotas, usage events or Admin UI
 analytics; the per-turn limit and the request rate limit are the only bounds.
 
 ## Identity and data lifecycle

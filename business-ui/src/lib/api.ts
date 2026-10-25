@@ -24,6 +24,7 @@ export interface Me {
 export interface Model {
   id: string;
   object?: string;
+  vision?: boolean;
 }
 
 export const api = ky.create({

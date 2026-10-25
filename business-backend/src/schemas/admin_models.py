@@ -51,11 +51,17 @@ class OrganizationImageModelsResponse(AdminModelSchema):
     generation_model: str | None
     edit_model: str | None
     models: list[str]
+    # Chat models marked as accepting images, and the chat models to pick from.
+    vision_models: list[str]
+    chat_models: list[str]
 
 
 class OrganizationImageModelsUpdate(AdminModelSchema):
     generation_model: str | None = Field(max_length=255)
     edit_model: str | None = Field(max_length=255)
+    # Omitted keeps the current list, so clients that only set the image
+    # tool models do not clear it.
+    vision_models: list[str] | None = Field(default=None, max_length=100)
 
     @field_validator("generation_model", "edit_model")
     @classmethod
@@ -63,3 +69,12 @@ class OrganizationImageModelsUpdate(AdminModelSchema):
         if value is not None:
             ResourceRef(ResourceType.MODEL, value)
         return value
+
+    @field_validator("vision_models")
+    @classmethod
+    def canonical_vision_ids(cls, values: list[str] | None) -> list[str] | None:
+        for value in values or ():
+            if len(value) > 255:
+                raise ValueError("model id too long")
+            ResourceRef(ResourceType.MODEL, value)
+        return values

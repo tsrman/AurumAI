@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Image generation/editing acceptance against the deterministic gateway:
-# Admin UI picks the organization image models, a member generates and edits
-# an image in Business UI, and both survive a reload. The test restores the
-# organization capabilities, model grants and image models it changes; this
+# Image acceptance against the deterministic gateway: Admin UI picks the
+# organization image models and marks the chat model as a vision model; a
+# member generates and edits images, attaches a picture the model must receive
+# inline, edits that upload, and everything survives a reload. The test restores
+# the organization capabilities, model grants and image settings it changes; this
 # wrapper restores the ordinary backend configuration on exit.
 #
 # Prerequisites: a built Compose stack (`docker compose up -d`) and the current

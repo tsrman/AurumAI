@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends
@@ -10,6 +11,7 @@ from src.core.config import settings
 from src.core.dependencies import get_org_db_session
 from src.schemas.common import ApiResponse, Meta
 from src.services.model_access import allowed_model_ids
+from src.services.organization_model_settings import organization_model_settings_service
 # Re-exported: the marker list and this predicate moved to the shared catalog
 # so services on the authorization path can filter to chat models without
 # importing a router.
@@ -78,8 +80,14 @@ async def list_models(
             role=user.role,
         )
     )
+    vision_ids: set[str] = set()
+    if settings.IMAGES_ENABLED and user.org_id:
+        vision_ids = set(
+            await organization_model_settings_service.vision_models(session, UUID(user.org_id))
+        )
+    # `vision` tells the composer whether this model may receive images.
     models = [
-        m
+        {**m, "vision": m["id"] in vision_ids}
         for m in models
         if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"] in visible_ids
     ]

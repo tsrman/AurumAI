@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from src.core.database import Base
@@ -8,6 +8,11 @@ from src.core.database import Base
 
 class OrganizationSettings(Base):
     __tablename__ = "organization_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "cardinality(vision_models) <= 100", name="ck_organization_settings_vision_models"
+        ),
+    )
 
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
@@ -18,6 +23,10 @@ class OrganizationSettings(Base):
     # and for editing images.
     image_generation_model: Mapped[str | None] = mapped_column(String(255))
     image_edit_model: Mapped[str | None] = mapped_column(String(255))
+    # Chat models the organization marked as accepting image input.
+    vision_models: Mapped[list[str]] = mapped_column(
+        ARRAY(String(255)), nullable=False, default=list, server_default="{}"
+    )
     allowed_models: Mapped[list[str] | None] = mapped_column(
         ARRAY(String), default=lambda: ["gpt-4o", "claude-3-5-sonnet"]
     )

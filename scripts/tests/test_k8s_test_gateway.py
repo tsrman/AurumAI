@@ -995,3 +995,32 @@ def test_image_follow_up_edits_the_newest_listed_conversation_image() -> None:
         gateway._image_response([message(role="user", content="IMAGE_E2E_EDIT_PREVIOUS")])
         == "IMAGE_E2E_NO_PREVIOUS_IMAGE"
     )
+
+
+def test_vision_marker_counts_inline_images_in_the_request() -> None:
+    gateway = _load_gateway()
+    png = "data:image/png;base64,iVBORw0KGgo="
+    request = gateway.CompletionRequest.model_validate(
+        {
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "earlier"},
+                    {"type": "image_url", "image_url": {"url": png}},
+                ]},
+                {"role": "assistant", "content": "ok"},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "IMAGE_E2E_VISION what is this"},
+                    {"type": "image_url", "image_url": {"url": png}},
+                    {"type": "image_url", "image_url": {"url": png}},
+                    # A remote URL is never an inline image.
+                    {"type": "image_url", "image_url": {"url": "https://example.com/x.png"}},
+                ]},
+            ]
+        }
+    )
+    assert request.messages[2].content == "IMAGE_E2E_VISION what is this"
+    assert gateway._content_for(request) == "IMAGE_E2E_SEEN 2 of 3"
+    plain = gateway.CompletionRequest.model_validate(
+        {"messages": [{"role": "user", "content": "IMAGE_E2E_VISION"}]}
+    )
+    assert gateway._content_for(plain) == "IMAGE_E2E_SEEN 0 of 0"

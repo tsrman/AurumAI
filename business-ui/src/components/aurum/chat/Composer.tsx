@@ -13,9 +13,21 @@ import { ACCEPTED_SUFFIXES, MAX_FILE_BYTES } from "@/components/aurum/knowledge/
 import { useAttachFile, useDocuments } from "@/hooks/useDocuments";
 import { useTranslations } from "next-intl";
 import { useErrorMessage } from "@/lib/errors";
+import { deleteConversationImage, uploadConversationImage } from "@/lib/images-api";
+
+/** Match the backend's validated image formats and IMAGES_UPLOAD_MAX_BYTES. */
+const IMAGE_SUFFIXES = [".png", ".jpg", ".jpeg", ".webp"] as const;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGES_PER_MESSAGE = 4;
+
+interface PendingImage {
+  imageId: string;
+  name: string;
+  previewUrl: string;
+}
 
 export interface ComposerProps {
-  onSend?: (text: string, workflowId?: string) => void;
+  onSend?: (text: string, workflowId?: string, imageIds?: string[]) => void;
   isStreaming?: boolean;
   onStop?: () => void;
   // while Keycloak is still initializing, isRealMode()
@@ -48,7 +60,8 @@ export function Composer({
   const t = useTranslations("chat.composer");
   const errorMessage = useErrorMessage();
   const isDisabled = Boolean(disabled || blockedByActiveTurn);
-  const { agents, myAgents, activeAgentId, conversations } = useAppShell();
+  const { agents, myAgents, activeAgentId, conversations, models, activeModelId } = useAppShell();
+  const visionModel = Boolean(models.find((model) => model.id === activeModelId)?.vision);
   const { isAuthenticated } = useAuth();
   const [text, setText] = useState("");
   const [workflowId, setWorkflowId] = useState<string | null>(null);
@@ -59,6 +72,13 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [attachedKnowledgeBaseId, setAttachedKnowledgeBaseId] = useState<string | null>(null);
+  // Uploaded images waiting for the next message.
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const previewUrlsRef = useRef<string[]>([]);
+  useEffect(() => {
+    const urls = previewUrlsRef.current;
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
 
   // A different conversation (or none) means any chip below belongs to a
   // conversation that's no longer active — reset in render, not an effect
@@ -68,6 +88,7 @@ export function Composer({
     setLastSeenConversationId(conversationId ?? null);
     setAttachedKnowledgeBaseId(null);
     setAttachError(null);
+    setPendingImages([]);
   }
 
   const attachFile = useAttachFile();
@@ -89,9 +110,20 @@ export function Composer({
 
       const rejections: string[] = [];
       const accepted: File[] = [];
+      const images: File[] = [];
       for (const file of files) {
         const name = file.name.toLowerCase();
-        if (!ACCEPTED_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
+        if (IMAGE_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
+          if (!visionModel) {
+            rejections.push(t("imagesNotAccepted", { file: file.name }));
+          } else if (file.size > MAX_IMAGE_BYTES) {
+            rejections.push(t("imageTooLarge", { file: file.name }));
+          } else if (pendingImages.length + images.length >= MAX_IMAGES_PER_MESSAGE) {
+            rejections.push(t("tooManyImages", { max: MAX_IMAGES_PER_MESSAGE }));
+          } else {
+            images.push(file);
+          }
+        } else if (!ACCEPTED_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
           rejections.push(t("unsupported", { file: file.name }));
         } else if (file.size > MAX_FILE_BYTES) {
           rejections.push(t("tooLarge", { file: file.name }));
@@ -102,7 +134,7 @@ export function Composer({
 
       const failures: string[] = [...rejections];
 
-      if (accepted.length > 0) {
+      if (accepted.length > 0 || images.length > 0) {
         try {
           // Resolved once for the whole batch — ensureConversationId creates
           // a conversation on first call, and every file in this selection
@@ -114,6 +146,26 @@ export function Composer({
           // conversation's hidden knowledge base on the *first* attachment —
           // concurrent first calls could race (see
           // conversation_attachments.py's _get_or_create_conversation_knowledge_base).
+          for (const file of images) {
+            try {
+              const uploaded = await uploadConversationImage(id, file);
+              const previewUrl = URL.createObjectURL(file);
+              previewUrlsRef.current.push(previewUrl);
+              setPendingImages((prev) => [
+                ...prev,
+                { imageId: uploaded.imageId, name: file.name, previewUrl },
+              ]);
+              // Workflows cannot receive images.
+              setWorkflowId(null);
+            } catch (err) {
+              failures.push(
+                t("attachFailedFor", {
+                  file: file.name,
+                  reason: err instanceof Error ? errorMessage(err) : t("attachFailedReason"),
+                })
+              );
+            }
+          }
           for (const file of accepted) {
             try {
               const doc = await attachFile.mutateAsync({ conversationId: id, file });
@@ -134,7 +186,16 @@ export function Composer({
 
       setAttachError(failures.length > 0 ? failures.join("; ") : null);
     },
-    [attachFile, conversationId, ensureConversationId, isDisabled, t, errorMessage]
+    [
+      attachFile,
+      conversationId,
+      ensureConversationId,
+      isDisabled,
+      t,
+      errorMessage,
+      visionModel,
+      pendingImages.length,
+    ]
   );
 
   const handleOpenSettingsClick = useCallback(async () => {
@@ -182,8 +243,13 @@ export function Composer({
     // stuck mid-phase forever.
     if (isStreaming || isDisabled) return;
     const trimmed = text.trim();
-    if (!trimmed) return;
-    if (workflowId) {
+    if (pendingImages.length > 0) {
+      if (!visionModel) return;
+      onSend?.(trimmed, undefined, pendingImages.map((image) => image.imageId));
+      setPendingImages([]);
+    } else if (!trimmed) {
+      return;
+    } else if (workflowId) {
       onSend?.(trimmed, workflowId);
     } else {
       onSend?.(trimmed);
@@ -193,7 +259,7 @@ export function Composer({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, onSend, isStreaming, isDisabled, workflowId]);
+  }, [text, onSend, isStreaming, isDisabled, workflowId, pendingImages, visionModel]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -202,13 +268,51 @@ export function Composer({
     }
   };
 
-  const canSend = !isStreaming && !isDisabled && text.trim().length > 0;
+  const imagesBlocked = pendingImages.length > 0 && !visionModel;
+  const canSend =
+    !isStreaming &&
+    !isDisabled &&
+    !imagesBlocked &&
+    (text.trim().length > 0 || pendingImages.length > 0);
 
   return (
     <div className="flex-none px-6 pb-4 pt-1.5">
       <div className="mx-auto max-w-[824px]">
-        {(attachedDocuments && attachedDocuments.length > 0) || attachError ? (
+        {(attachedDocuments && attachedDocuments.length > 0) ||
+        attachError ||
+        pendingImages.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-2">
+            {pendingImages.map((image) => (
+              <span
+                key={image.imageId}
+                className="relative inline-flex h-16 w-16 overflow-hidden rounded-card border border-aurum-border bg-aurum-surface"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- local preview of the user's own file */}
+                <img src={image.previewUrl} alt={image.name} className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  aria-label={t("removeImage", { file: image.name })}
+                  onClick={() => {
+                    setPendingImages((prev) => prev.filter((item) => item.imageId !== image.imageId));
+                    // Best effort: a leftover upload is harmless, just unused.
+                    if (conversationId) {
+                      void deleteConversationImage(conversationId, image.imageId).catch(() => undefined);
+                    }
+                  }}
+                  className="absolute right-0.5 top-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-aurum-surface/90 text-aurum-text-2 shadow-card hover:text-aurum-text"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {imagesBlocked ? (
+              <span
+                role="alert"
+                className="inline-flex items-center rounded-full border border-aurum-err-fg/30 bg-aurum-err-bg px-2.5 py-1 text-xs text-aurum-err-fg"
+              >
+                {t("modelRejectsImages")}
+              </span>
+            ) : null}
             {attachedDocuments?.map((doc) => (
               <span
                 key={doc.id}
@@ -260,7 +364,7 @@ export function Composer({
               type="file"
               multiple
               aria-label={t("chooseFile")}
-              accept={ACCEPTED_SUFFIXES.join(",")}
+              accept={(visionModel ? [...ACCEPTED_SUFFIXES, ...IMAGE_SUFFIXES] : ACCEPTED_SUFFIXES).join(",")}
               className="hidden"
               onChange={handleFileSelected}
             />
@@ -289,7 +393,7 @@ export function Composer({
             <WorkflowPickerMenu
               value={workflowId}
               onChange={setWorkflowId}
-              disabled={isDisabled || isStreaming || !isAuthenticated}
+              disabled={isDisabled || isStreaming || !isAuthenticated || pendingImages.length > 0}
             />
 
             <div className="flex-1" />

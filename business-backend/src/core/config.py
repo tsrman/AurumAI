@@ -235,14 +235,18 @@ class Settings(BaseSettings):
     WEB_TOOLS_URL: str = "http://web-tools:8120"
     WEB_TOOLS_SERVICE_SECRET: SecretStr = SecretStr("")
 
-    # Operator kill switch for image generation and editing. Each turn also
-    # needs the images.generate capability and an organization image model.
+    # Operator kill switch for image generation, editing and uploads. Image
+    # tools also need the images.generate capability and an organization image
+    # model; uploads need a chat model the organization marked as vision.
     IMAGES_ENABLED: bool = False
     # OpenAI-compatible Images API; empty means the chat gateway and its key.
     IMAGES_API_URL: str = ""
     IMAGES_API_KEY: SecretStr = SecretStr("")
     IMAGES_TIMEOUT_SECONDS: float = Field(default=120, gt=0, le=600)
     IMAGES_MAX_BYTES: int = Field(default=20 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
+    # Each upload is sent to vision models inline as base64, so it stays below
+    # common provider per-image limits.
+    IMAGES_UPLOAD_MAX_BYTES: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
 
     @field_validator("WEB_TOOLS_URL")
     @classmethod

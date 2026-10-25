@@ -43,8 +43,8 @@ async def test_list_models_returns_gateway_models(user: UserInfo, monkeypatch, d
         result = await list_models(user, db)
 
     assert result.data == [
-        {"id": "model-a", "object": "model"},
-        {"id": "model-b", "object": "model"},
+        {"id": "model-a", "object": "model", "vision": False},
+        {"id": "model-b", "object": "model", "vision": False},
     ]
     assert mock_client.call_args.kwargs.get("verify") is True
 

@@ -68,6 +68,27 @@ async def test_load_propagates_http_error(mock_client_with_response):
         await manager.load()
 
 
+@pytest.mark.asyncio
+async def test_load_keeps_image_ids_of_user_messages_only(mock_client_with_response):
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {"data": {"messages": {"data": [
+        {"role": "user", "content": "look", "turnId": "t1", "imageIds": ["img-1"]},
+        {"role": "assistant", "content": "a cat", "turnId": "t1", "imageIds": ["img-2"]},
+        {"role": "user", "content": "plain", "turnId": "t2", "imageIds": []},
+    ]}}}
+    mock_client_with_response(response)
+
+    manager = StateManager()
+    await manager.load()
+
+    assert manager.messages == [
+        {"role": "user", "content": "look", "turn_id": "t1", "image_ids": ["img-1"]},
+        {"role": "assistant", "content": "a cat", "turn_id": "t1"},
+        {"role": "user", "content": "plain", "turn_id": "t2"},
+    ]
+
+
 def test_append_adds_message_to_list():
     manager = StateManager()
     manager.append({"role": "user", "content": "hi"})

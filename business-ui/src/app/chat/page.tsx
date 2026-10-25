@@ -40,9 +40,9 @@ export default function ChatPage() {
   // auth completes. Guard typing, attachments and suggestions until a
   // selected model exists so no empty-model conversation is created.
   const guardedSend = useCallback(
-    (text: string, workflowId?: string) => {
+    (text: string, workflowId?: string, imageIds?: string[]) => {
       if (admissionPending) return;
-      send(text, workflowId);
+      send(text, workflowId, imageIds);
     },
     [admissionPending, send]
   );

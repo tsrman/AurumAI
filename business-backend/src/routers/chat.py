@@ -31,6 +31,7 @@ from src.schemas.chat import (
     PersistConversationMessageRequest,
     PersistedImageClaims,
     PersistedWebSourceClaims,
+    UploadedImageResponse,
 )
 from src.schemas.conversation import (
     ConversationCreate,
@@ -44,7 +45,19 @@ from src.core.temporal import get_temporal_client
 from src.services.streaming import sse_event, create_streaming_response
 from src.services.chat_service import chat_service
 from src.services.conversation_attachments import attach_file
+from src.services.image_content import ImageContentError
 from src.services.image_tools import organization_image_models, recent_conversation_images
+from src.services.image_uploads import (
+    ImageUploadError,
+    check_unclaimed_uploads,
+    claim_uploads,
+    delete_unclaimed_upload,
+    select_vision_images,
+    store_uploaded_image,
+    vision_enabled,
+    vision_llm_messages,
+)
+from src.services.object_storage import object_storage
 from src.services.model_access import ensure_model_allowed
 from src.services.authorization import authorization_service
 from src.services.session_manager import session_manager
@@ -504,6 +517,27 @@ async def _maybe_classify_workflow(
     return workflow_id
 
 
+async def _require_sendable_uploads(
+    session: AsyncSession, request: ChatRequest, conv: "Conversation"
+) -> None:
+    if request.workflow_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Workflows cannot receive images",
+        )
+    if not await vision_enabled(session, conv.org_id, request.model):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="This model does not accept images",
+        )
+    try:
+        await check_unclaimed_uploads(session, conv.org_id, conv.id, request.messages[-1].image_ids)
+    except ImageUploadError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Image is not available"
+        ) from exc
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
@@ -522,11 +556,16 @@ async def chat_stream(
     workflow_run: WorkflowRun | None = None
 
     conv = await _get_owned_conversation(session, conversation_id, user, write=True)
+    upload_ids = user_message.image_ids
+    if upload_ids:
+        await _require_sendable_uploads(session, request, conv)
 
     turn_model = request.model
     effective_workflow_id = request.workflow_id
     auto_routed = False
-    if effective_workflow_id is None:
+    # Workflows cannot use images yet, so a message with images is never
+    # routed to one.
+    if effective_workflow_id is None and not upload_ids:
         effective_workflow_id = await _maybe_classify_workflow(session, quota, user, request)
         auto_routed = effective_workflow_id is not None
 
@@ -625,6 +664,16 @@ async def chat_stream(
                 detail="Conversation already has an active turn",
             ) from exc
 
+        try:
+            claimed_images = await claim_uploads(
+                session, conv.org_id, conv.id, turn_id, upload_ids
+            )
+        except ImageUploadError as exc:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Image is not available"
+            ) from exc
+
         await message_repository.create(
             session,
             conversation_id=conversation_id,
@@ -634,6 +683,7 @@ async def chat_stream(
             content=user_message.content,
             model=request.model,
             turn_id=turn_id,
+            extra={"image_ids": claimed_images} if claimed_images else {},
         )
         conv.last_message_at = datetime.now(timezone.utc)
         await session.commit()
@@ -724,6 +774,8 @@ async def chat_stream(
         }
         if recent_images:
             signal_payload["recent_images"] = recent_images
+        if upload_ids:
+            signal_payload["image_ids"] = [str(image_id) for image_id in dict.fromkeys(upload_ids)]
         if workflow_run is None:
             signal_payload["model"] = request.model
         else:
@@ -994,13 +1046,31 @@ async def chat_completions(
         user_id=user.user_id,
         role=user.role,
     )
+    raw_session_conversation = (
+        user.raw_claims.get("conversation_id")
+        if user.raw_claims.get("type") == "session"
+        else None
+    )
+    # Resolved before the commit below: image rows are read under the same
+    # org-scoped, conversation-fenced transaction as the checks above.
+    vision_images = await select_vision_images(
+        session,
+        uuid.UUID(user.org_id or ""),
+        uuid.UUID(str(raw_session_conversation)) if raw_session_conversation else None,
+        request.model,
+        [m.image_ids for m in request.messages],
+    )
     # Authorization can reopen the generation-fenced transaction. Release it
     # before quota/provider I/O and the response's request-scoped dependency
     # lifetime. Durable execution receipts keep archive blocked while work runs.
     await session.commit()
     llm_request = {
         "model": request.model,
-        "messages": [{"role": m.role, "content": m.content} for m in request.messages],
+        "messages": await vision_llm_messages(
+            [(m.role, m.content, m.image_ids) for m in request.messages],
+            vision_images,
+            object_storage,
+        ),
         "temperature": request.temperature,
         "max_tokens": request.max_tokens,
         # Always stream upstream regardless of request.stream — this
@@ -1328,6 +1398,63 @@ async def attach_file_to_conversation(
     conv = await _get_owned_conversation(session, conversation_id, user, write=True)
     doc = await attach_file(session, conv, file)
     return ApiResponse(data=DocumentResponse.model_validate(doc), meta=_meta())
+
+
+@router.post("/conversations/{conversation_id}/images", status_code=201)
+async def upload_conversation_image(
+    conversation_id: str,
+    file: UploadFile = File(...),
+    user: UserInfo = Depends(require_capability(Capability.CHAT_SEND)),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[UploadedImageResponse]:
+    """Store an image the user attaches to their next message. Only vision
+    models receive it; that is checked when the message is sent."""
+    if not settings.IMAGES_ENABLED:
+        raise HTTPException(status_code=403, detail="Image uploads are disabled")
+    conv = await _get_owned_conversation(session, conversation_id, user, write=True)
+    data = await file.read(settings.IMAGES_UPLOAD_MAX_BYTES + 1)
+    try:
+        image = await store_uploaded_image(
+            session, object_storage, conv.org_id, conv.id, data
+        )
+    except ImageContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Unsupported or oversized image",
+        ) from exc
+    await session.commit()
+    return ApiResponse(
+        data=UploadedImageResponse(
+            imageId=str(image.id),
+            contentType=image.content_type,
+            width=image.width,
+            height=image.height,
+        ),
+        meta=_meta(),
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}/images/{image_id}", status_code=204
+)
+async def delete_unsent_conversation_image(
+    conversation_id: str,
+    image_id: uuid.UUID,
+    user: UserInfo = Depends(get_current_user),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> None:
+    """Discard an upload the user removed before sending. Images a message
+    already carries stay part of the conversation."""
+    conv = await _get_owned_conversation(session, conversation_id, user, write=True)
+    storage_key = await delete_unclaimed_upload(session, conv.org_id, conv.id, image_id)
+    if storage_key is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    await session.commit()
+    try:
+        await object_storage.delete(storage_key)
+    except Exception:
+        # The row is gone, so nothing references the object any more.
+        logger.warning("unsent image object not deleted", exc_info=True)
 
 
 class LifecycleExecutionRequest(BaseModel):

@@ -408,6 +408,8 @@ def test_recent_images_are_listed_only_for_editing_and_sanitized() -> None:
     listed = recent_image_list(raw)
     assert listed[0] == {"image_id": GENERATED, "prompt": ("a red lighthouse" + "!" * 300)[:200]}
     assert all(item["image_id"] != "not-a-uuid" for item in listed) and len(listed) <= 8
+    uploaded = recent_image_list([{"id": GENERATED, "prompt": None, "origin": "uploaded"}])
+    assert uploaded == [{"image_id": GENERATED, "prompt": "", "source": "attached by the user"}]
     with_list = builtin_instructions(
         "ordinary", user_questions_enabled=False, image_editing_enabled=True, recent_images=raw
     )

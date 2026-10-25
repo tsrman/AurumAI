@@ -140,17 +140,23 @@ async def recent_conversation_images(
     shortened because they are repeated into every image-enabled turn.
     """
     rows = await session.execute(
-        select(ConversationImage.id, ConversationImage.prompt)
+        select(ConversationImage.id, ConversationImage.prompt, ConversationImage.origin)
         .where(
             ConversationImage.org_id == org_id,
             ConversationImage.conversation_id == conversation_id,
+            # An upload counts once a sent message carries it.
+            ConversationImage.turn_id.is_not(None),
         )
         .order_by(ConversationImage.created_at.desc(), ConversationImage.id)
         .limit(RECENT_IMAGE_LIMIT)
     )
     return [
-        {"id": str(image_id), "prompt": (prompt or "")[:RECENT_IMAGE_PROMPT_CHARS]}
-        for image_id, prompt in rows.all()
+        {
+            "id": str(image_id),
+            "prompt": (prompt or "")[:RECENT_IMAGE_PROMPT_CHARS],
+            "origin": origin,
+        }
+        for image_id, prompt, origin in rows.all()
     ]
 
 
