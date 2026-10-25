@@ -311,3 +311,38 @@ async def test_workflow_nodes_get_images_and_the_final_answer_lists_them() -> No
     # The gated node sees the earlier node's image first, so it can edit it.
     assert [image["id"] for image in paint.recent_images] == [GENERATED, EARLIER]
     assert [image["id"] for image in draw.recent_images] == [EARLIER]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("call", "code"),
+    [
+        ('{"tool":"generate_image","args":{"prompt":"a fox"}}', "unknown_tool"),
+        ('{"tool":"teleport","args":{}}', "unknown_tool"),
+    ],
+)
+async def test_an_unavailable_built_in_is_answered_instead_of_hanging(call: str, code: str) -> None:
+    result, requests, calls, history = await _run_agent(
+        _node_input(),
+        [f"<tool_call>{call}</tool_call>", "Answer without that tool."],
+        [],
+    )
+
+    assert result == "Answer without that tool." and calls == []
+    assert requests[1]["messages"][-1]["content"].endswith(f": {code}")
+    await Replayer(workflows=[AgentWorkflow]).replay_workflow(history)
+
+
+@pytest.mark.asyncio
+async def test_malformed_arguments_for_an_offered_built_in_are_answered() -> None:
+    result, requests, calls, _ = await _run_agent(
+        _node_input(image_generation_enabled=True),
+        [
+            '<tool_call>{"tool":"generate_image","args":{"prompt":"   "}}</tool_call>',
+            "I need a real prompt.",
+        ],
+        [],
+    )
+
+    assert isinstance(result, AgentResult) and calls == []
+    assert requests[1]["messages"][-1]["content"] == "Tool result for generate_image: invalid_arguments"

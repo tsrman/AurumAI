@@ -339,20 +339,31 @@ class AgentWorkflow:
 
             messages.append({"role": "assistant", "content": raw})
             for call in tool_calls:
-                if (
-                    question_protocol_enabled
-                    and not web_protocol_enabled
-                    and call.get("tool") in {"web_search", "web_read"}
-                ):
-                    # Before web-tools-v1, ask_user-enabled histories parsed
-                    # this shape as an unknown built-in and failed before
-                    # scheduling another activity. Preserve that command path.
-                    raise ValueError("unknown built-in tool")
-                builtin = prepare_builtin_invocation(
-                    call,
-                    workflow.uuid4,
-                    enabled_tools=enabled_tools,
-                )
+                # A built-in this agent was not offered, or malformed arguments
+                # for one, is answered as a tool result the model can recover
+                # from. Raising here failed the workflow task, which Temporal
+                # retries indefinitely, so the node never finished.
+                try:
+                    if (
+                        question_protocol_enabled
+                        and not web_protocol_enabled
+                        and call.get("tool") in {"web_search", "web_read"}
+                    ):
+                        raise ValueError("unknown built-in tool")
+                    builtin = prepare_builtin_invocation(
+                        call,
+                        workflow.uuid4,
+                        enabled_tools=enabled_tools,
+                    )
+                except ValueError as exc:
+                    code = (
+                        "unknown_tool" if str(exc) == "unknown built-in tool" else "invalid_arguments"
+                    )
+                    name = str(call.get("tool") or call.get("skill_id") or "tool")[:64]
+                    messages.append(
+                        {"role": "user", "content": f"Tool result for {name}: {code}"}
+                    )
+                    continue
                 if builtin is not None:
                     max_iterations = 50
                     if input.turn_id is None or input.workflow_phase is None:
