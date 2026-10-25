@@ -255,6 +255,9 @@ build build hermes-sandbox`. skill-executor settings (`SKILL_EXECUTOR_` prefix):
 | `HERMES_SNAPSHOT_RETENTION_SECONDS`, `HERMES_SNAPSHOT_KEEP` | 604800 (7 days), 2 |
 | `HERMES_SNAPSHOT_RETRY_SECONDS`, `HERMES_SNAPSHOT_TIMEOUT_SECONDS` | 300, 900 |
 | `HERMES_SNAPSHOT_DIR` | the system temporary directory (needs twice the snapshot bound) |
+| `HERMES_MAX_RUNNING`, `HERMES_MAX_RUNNING_PER_ORG` | 16, 4 |
+| `HERMES_WORKSPACE_MODE` | `volume` (or `tmpfs`) |
+| `HERMES_WORKSPACE_MAX_BYTES`, `HERMES_DISK_CHECK_INTERVAL_SECONDS` | 1 GiB, 60 |
 
 A restarted skill-executor re-adopts live and stopped sandboxes from their Docker
 labels and reconnects a recreated guard. A sandbox past its idle or absolute
@@ -271,7 +274,36 @@ besides reading skill bundles; Compose still gives it the MinIO root account, so
 scoping is the operator's. While snapshots are on, creating a new sandbox needs the
 store: if `latest.json` cannot be read, creation fails with
 `hermes_snapshot_store_failed` (503) instead of starting without the snapshot.
-Workspace volumes have no size limit yet.
+
+Capacity: running sandboxes are capped operator-wide and per organization; stopped
+ones do not count. When a create (or a resume) reaches a cap, the least recently
+used idle sandbox is retired as at its idle TTL; idle means no open stream from
+skill-executor and no run its relay reports as queued or running. With none
+idle, creation fails with `hermes_capacity_exhausted` (503).
+
+Workspace size, by `HERMES_WORKSPACE_MODE`:
+
+- `volume` (default): a Docker volume with a soft limit. Every
+  `HERMES_DISK_CHECK_INTERVAL_SECONDS` skill-executor reads Docker's volume usage;
+  a sandbox over `HERMES_WORKSPACE_MAX_BYTES` has its active runs stopped and gets
+  no new ones (`hermes_workspace_full`, 507) until it is back under. Between
+  checks the host disk is not protected. Docker computes that usage by walking
+  every local volume on the daemon, not only Hermes ones (about 0.9 s for 89
+  volumes on a development host), so keep the interval well above that.
+- `tmpfs`: a tmpfs volume of that size, enforced by the kernel. It is charged to
+  the container's memory, so the memory limit is raised by the same amount, and
+  it is lost when the container stops: a sandbox whose snapshot fails is paused
+  instead (still holding its memory), cannot be resumed, and its next create
+  replaces it from a snapshot once one is stored. Any restart of the container
+  (Hermes exiting, Docker or the host restarting) loses a tmpfs workspace; such a
+  workspace is removed without a snapshot, and the session continues from its
+  latest one.
+
+Keep `HERMES_WORKSPACE_MAX_BYTES` at or below `HERMES_SNAPSHOT_MAX_BYTES`. The
+soft limit can still be overshot between checks; a workspace over the snapshot
+bound is kept stopped without further attempts until the retention, and
+`DELETE /hermes/sandboxes/{id}` (without `?snapshot=true`) removes it, after which
+the next create restores the last snapshot that fit.
 
 ## Identity and data lifecycle
 

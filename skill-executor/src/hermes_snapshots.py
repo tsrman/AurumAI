@@ -83,16 +83,20 @@ def _relative(name: str, strip: str | None) -> str | None:
     return path if len(path) <= 4096 else None
 
 
-def sanitize(source: Path, target: Path, *, strip: str | None, max_bytes: int, max_entries: int) -> Snapshot:
+def sanitize(
+    source: Path, target: Path, *, strip: str | None, max_bytes: int, max_entries: int, marker: str | None = None
+) -> Snapshot:
     """Rewrite the tar at `source` as a clean workspace archive at `target`.
 
     `strip` is the top-level directory Docker's archive API puts entries under.
+    With `marker`, a source without that (excluded) file is refused.
     Links, devices and anything outside the workspace are dropped; a missing
     parent directory is added, so Docker never creates one owned by root.
     """
     digest = hashlib.sha256()
     total = entries = 0
     directories: set[str] = set()
+    marked = marker is None
 
     def add(out: tarfile.TarFile, info: tarfile.TarInfo, data: Any = None) -> None:
         nonlocal entries
@@ -118,6 +122,8 @@ def sanitize(source: Path, target: Path, *, strip: str | None, max_bytes: int, m
             with tarfile.open(fileobj=raw, mode="w|", format=tarfile.PAX_FORMAT) as out:
                 for member in archive:
                     path = _relative(member.name, strip)
+                    if path is not None and path == marker and member.isreg():
+                        marked = True
                     if path is None or _excluded(path):
                         continue
                     mtime = max(0, min(int(member.mtime), 2**33 - 1))
@@ -134,6 +140,8 @@ def sanitize(source: Path, target: Path, *, strip: str | None, max_bytes: int, m
                         info.mode = 0o700 if member.mode & 0o100 else 0o600
                         info.uid = info.gid = SANDBOX_UID
                         add(out, info, archive.extractfile(member))
+        if not marked:
+            raise SnapshotError("hermes_workspace_lost")
     except SnapshotError:
         target.unlink(missing_ok=True)
         raise
@@ -283,7 +291,9 @@ class SnapshotStore:
         return removed
 
 
-async def to_thread_sanitize(source: Path, target: Path, *, strip: str | None, settings: Settings) -> Snapshot:
+async def to_thread_sanitize(
+    source: Path, target: Path, *, strip: str | None, settings: Settings, marker: str | None = None
+) -> Snapshot:
     return await asyncio.to_thread(
         sanitize,
         source,
@@ -291,4 +301,5 @@ async def to_thread_sanitize(source: Path, target: Path, *, strip: str | None, s
         strip=strip,
         max_bytes=settings.hermes_snapshot_max_bytes,
         max_entries=settings.hermes_snapshot_max_entries,
+        marker=marker,
     )

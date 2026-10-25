@@ -42,6 +42,7 @@ class FakeContainer:
         self.archives: list[tuple[str, bytes]] = []
         self.started = False
         self.stopped = False
+        self.paused = False
         self.deleted = False
 
     async def put_archive(self, path: str, data: Any) -> None:
@@ -54,6 +55,10 @@ class FakeContainer:
     async def stop(self, t: int | None = None) -> None:
         self.stopped = True
         self._container["State"] = "exited"
+
+    async def pause(self) -> None:
+        self.paused = True
+        self._container["State"] = "paused"
 
     async def delete(self, force: bool = False) -> None:
         self.deleted = True
@@ -92,6 +97,7 @@ class FakeDocker:
         self.network_map: dict[str, FakeNetwork] = {}
         self.volume_map: dict[str, dict[str, Any]] = {}
         self.overlaps_left = 0
+        self.volume_sizes: dict[str, int] = {}
         self.api_version = "1.56"
         outer = self
 
@@ -146,6 +152,10 @@ class FakeDocker:
 
     async def version(self) -> dict[str, str]:
         return {"ApiVersion": self.api_version}
+
+    async def _query_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        assert path == "system/df" and params == {"type": "volume"}
+        return {"Volumes": [{"Name": n, "UsageData": {"Size": self.volume_sizes.get(n, 0)}} for n in self.volume_map]}
 
 
 @pytest.fixture
