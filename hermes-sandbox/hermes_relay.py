@@ -12,12 +12,14 @@ the agent can stop the server and answer in its place.
                    starts the run once per key, then streams it
   events RUN_ID    replays and follows a run's events
   stop RUN_ID      asks Hermes to stop a run
+  active           the recent runs Hermes still reports as queued or running
 """
 
 import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -26,6 +28,10 @@ STATE = os.environ.get("HERMES_RELAY_STATE", "/workspace/.aurum")
 API = os.environ.get("HERMES_RELAY_API", "http://127.0.0.1:8642")
 MAX_LINE = 256 * 1024
 TERMINAL = {"run.completed", "run.failed", "run.cancelled", "run.interrupted"}
+ACTIVE = {"queued", "running", "waiting_for_approval"}
+# Only runs started within the longest turn deadline, newest first, are asked about.
+RECENT_SECONDS = 86400
+RECENT_RUNS = 32
 
 
 def emit(kind: str, **fields: object) -> None:
@@ -93,6 +99,31 @@ def run(path: str) -> int:
     return follow(run_id)
 
 
+def active() -> int:
+    runs = os.path.join(STATE, "runs")
+    try:
+        markers = sorted(os.scandir(runs), key=lambda entry: entry.stat().st_mtime, reverse=True)
+    except FileNotFoundError:
+        markers = []
+    found = []
+    for entry in markers[:RECENT_RUNS]:
+        if time.time() - entry.stat().st_mtime > RECENT_SECONDS:
+            break
+        with open(entry.path) as marker:
+            run_id = marker.read().strip()
+        try:
+            with request("GET", f"/v1/runs/{run_id}", timeout=10) as response:
+                status = json.load(response).get("status")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                continue
+            raise
+        if status in ACTIVE:
+            found.append(run_id)
+    emit("active", run_ids=found)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     command = argv[0] if argv else ""
     if command == "health":
@@ -105,11 +136,13 @@ def main(argv: list[str]) -> int:
         return run(argv[1])
     if command == "events" and len(argv) == 2:
         return follow(argv[1])
+    if command == "active" and len(argv) == 1:
+        return active()
     if command == "stop" and len(argv) == 2:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|active", file=sys.stderr)
     return 2
 
 

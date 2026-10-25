@@ -96,6 +96,18 @@ class Settings(BaseSettings):
     hermes_orphan_grace_seconds: int = 600
     hermes_event_line_max_bytes: int = 256 * 1024
     hermes_stop_timeout_seconds: int = 10
+    # Running sandboxes, operator-wide and per organization. At a cap the least
+    # recently used idle sandbox is retired; with none idle, creation fails.
+    hermes_max_running: int = 16
+    hermes_max_running_per_org: int = 4
+    # "volume": a Docker volume, kept while stopped; the limit below is soft,
+    # checked from Docker's volume usage, and a sandbox over it gets no new
+    # runs. "tmpfs": a size-bounded tmpfs the kernel enforces, charged to the
+    # container's memory (raised by the limit) and lost when it stops, so a
+    # sandbox whose snapshot fails is paused instead and cannot be resumed.
+    hermes_workspace_mode: Literal["volume", "tmpfs"] = "volume"
+    hermes_workspace_max_bytes: int = 1024 * 1024 * 1024
+    hermes_disk_check_interval_seconds: int = 60
     # Workspace snapshots (src/hermes_snapshots.py) in the s3_* bucket. Off
     # without an S3 endpoint; expired sandboxes are then removed outright.
     hermes_snapshot_enabled: bool = True

@@ -12,7 +12,11 @@
 # workspace snapshots in a disposable MinIO: an idle sandbox's workspace comes
 # back in a fresh sandbox without the old secrets, and a sandbox whose snapshot
 # cannot be stored stays stopped with its volume (also across an executor
-# restart), resumes, and is retired once the store is back.
+# restart), resumes, and is retired once the store is back. Phase 2c-ii-b adds
+# the organization cap (the least recently used idle sandbox is retired), the
+# soft workspace limit from Docker's volume usage, and the tmpfs workspace:
+# files written after the start, a kernel-enforced size, and a pause instead
+# of a stop when its snapshot cannot be stored.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000/58090, no other
 # aurum-ai-hermes-egress-guard container. Never point this at a shared stack.
@@ -73,6 +77,14 @@ create_json() {  # create_json <session hex> [curl args]; prints the response
     -d "{\"session_id\":\"$session\",\"org_id\":\"$ORG\",\"conversation_id\":\"$CONVERSATION\",\"token\":\"$TOKEN\",\"model\":\"hermes-egress-test\"}"
 }
 outcome() { python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('outcome'))" "$1"; }
+run_status() {  # run_status <session hex> <key>; prints the HTTP status of starting a run
+  curl -s -o /dev/null -w '%{http_code}' -X POST "$EXECUTOR/hermes/sandboxes/$1/runs" -H 'Content-Type: application/json' \
+    -d "{\"key\":\"$2\",\"input\":\"Say hello.\",\"session_id\":\"$CONVERSATION\"}"
+}
+executor_with() {  # executor_with VAR=value...; recreates skill-executor with these settings
+  env "$@" "${STACK[@]}" up -d --force-recreate skill-executor >/dev/null
+  for _ in $(seq 30); do curl -fsS "$EXECUTOR/health" >/dev/null 2>&1 && break; sleep 1; done
+}
 state_of() { docker inspect -f '{{.State.Status}}' "aurum-ai-hermes-$1" 2>/dev/null || echo gone; }
 mc_() { docker exec "$PROJECT-minio-1" mc "$@"; }
 run_once() {  # run_once <session hex> <key>; prints the relay's result line
@@ -202,4 +214,48 @@ for _ in $(seq 40); do [[ "$(state_of "$A")" == exited ]] && break; sleep 2; don
 "${STACK[@]}" up -d --wait minio >/dev/null
 for _ in $(seq 40); do gone "$A" && break; sleep 2; done
 gone "$A" || fail "stopped sandbox A was not retired after the store came back"
+
+log "at the organization cap, the least recently used idle sandbox is retired"
+C=$(python3 -c "import uuid; print(uuid.uuid4().hex)")
+executor_with SKILL_EXECUTOR_HERMES_MAX_RUNNING_PER_ORG=2 SKILL_EXECUTOR_HERMES_WORKSPACE_MAX_BYTES=67108864 \
+  SKILL_EXECUTOR_HERMES_DISK_CHECK_INTERVAL_SECONDS=5
+[[ "$(outcome "$(create_json "$A")")" == restored ]] || fail "sandbox A was not restored"
+sleep 2
+[[ "$(create "$B")" == 201 ]] || fail "sandbox B was not created"
+[[ "$(docker exec "aurum-ai-hermes-$B" hermes-relay active)" == '{"type":"active","run_ids":[]}' ]] \
+  || fail "the relay reports active runs on an idle sandbox"
+[[ "$(create "$C")" == 201 ]] || fail "sandbox C was not admitted at the cap"
+gone "$A" || fail "the least recently used sandbox A was not retired"
+docker container inspect "aurum-ai-hermes-$B" >/dev/null 2>&1 || fail "sandbox B was retired instead of A"
+
+log "over the soft workspace limit, a sandbox gets no new runs until it is back under"
+inside "$C" 'head -c 83886080 /dev/zero > $HOME/big'
+for _ in $(seq 30); do [[ "$(run_status "$C" turn-7)" == 507 ]] && break; sleep 2; done
+[[ "$(run_status "$C" turn-7)" == 507 ]] || fail "a sandbox over its workspace limit still starts runs"
+inside "$C" 'rm $HOME/big'
+for _ in $(seq 30); do [[ "$(run_status "$C" turn-8)" == 200 ]] && break; sleep 2; done
+expect_completed "$(run_once "$C" turn-9)"
+curl -fsS -X DELETE "$EXECUTOR/hermes/sandboxes/$B" -o /dev/null && curl -fsS -X DELETE "$EXECUTOR/hermes/sandboxes/$C" -o /dev/null \
+  || fail "closing B and C failed"
+
+log "a tmpfs workspace is restored after the start and bounded by the kernel"
+executor_with SKILL_EXECUTOR_HERMES_WORKSPACE_MODE=tmpfs SKILL_EXECUTOR_HERMES_WORKSPACE_MAX_BYTES=67108864 \
+  SKILL_EXECUTOR_HERMES_IDLE_TTL_SECONDS=15
+[[ "$(outcome "$(create_json "$A")")" == restored ]] || fail "sandbox A was not restored onto tmpfs"
+inside "$A" 'grep -q "^tmpfs /workspace tmpfs" /proc/mounts' || fail "the workspace is not a tmpfs"
+[[ "$(inside "$A" 'cat $HOME/project/kept.txt')" == kept ]] || fail "the tmpfs workspace did not get the snapshot"
+inside "$A" 'head -c 83886080 /dev/zero > $HOME/big 2>/dev/null' && fail "the tmpfs workspace is not bounded"
+inside "$A" 'rm -f $HOME/big'
+expect_completed "$(run_once "$A" turn-10)"
+
+log "a tmpfs sandbox whose snapshot fails is paused, then retired once the store is back"
+"${STACK[@]}" stop minio >/dev/null
+for _ in $(seq 40); do [[ "$(state_of "$A")" == paused ]] && break; sleep 2; done
+[[ "$(state_of "$A")" == paused ]] || fail "idle tmpfs sandbox A was not paused: $(state_of "$A")"
+"${STACK[@]}" up -d --wait minio >/dev/null
+for _ in $(seq 40); do gone "$A" && break; sleep 2; done
+gone "$A" || fail "paused sandbox A was not retired after the store came back"
+SHA=$(mc_ cat "$PREFIX/latest.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha256'])") \
+  || fail "no snapshot of the paused tmpfs sandbox"
+mc_ cat "$PREFIX/$SHA.tar" | tar -tf - | grep -q 'home/project/kept.txt' || fail "the tmpfs snapshot lost the workspace"
 log "PASS"

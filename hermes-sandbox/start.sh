@@ -5,7 +5,10 @@
 # container's environment, where `docker inspect` shows it.
 set -eu
 mkdir -p "$HERMES_HOME" "$HOME" /workspace/.aurum
-for _ in $(seq 600); do
+# With a tmpfs workspace the files arrive after the start, behind a restored
+# snapshot of up to the snapshot bound, so this waits as long as a restore may
+# take (SKILL_EXECUTOR_HERMES_SNAPSHOT_TIMEOUT_SECONDS, fifteen minutes).
+for _ in $(seq 9000); do
     [ -s "$HERMES_HOME/config.yaml" ] && [ -s /workspace/.aurum/proxy ] && break
     sleep 0.1
 done

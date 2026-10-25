@@ -38,6 +38,9 @@ _STATUS = {
     "hermes_snapshot_store_failed": 503,
     "hermes_snapshot_timeout": 504,
     "hermes_resume_failed": 502,
+    "hermes_capacity_exhausted": 503,
+    "hermes_workspace_full": 507,
+    "hermes_workspace_lost": 410,
 }
 
 
@@ -83,6 +86,7 @@ def _view(sandbox: HermesSandbox) -> dict[str, Any]:
         "last_active": sandbox.last_active,
         "expires_at": sandbox.created_at + settings.hermes_max_lifetime_seconds,
         "state": sandbox.state,
+        "workspace_full": sandbox.workspace_full,
     }
 
 
@@ -133,7 +137,8 @@ async def get_sandbox(session_id: str) -> dict[str, Any]:
 async def start_run(session_id: str, data: RunRequest) -> StreamingResponse:
     _available()
     try:
-        sandboxes.get_running(session_id)
+        if sandboxes.get_running(session_id).workspace_full:
+            raise HermesSandboxError("hermes_workspace_full")
     except HermesSandboxError as exc:
         raise _error(exc) from None
     return StreamingResponse(

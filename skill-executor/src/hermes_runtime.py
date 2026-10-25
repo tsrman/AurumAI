@@ -23,6 +23,12 @@ removed; the session's next create restores the snapshot into a fresh sandbox.
 A sandbox whose snapshot fails stays stopped with its volume, is retried, and
 can be resumed, and is removed only when the snapshot retention runs out. The
 reaper also removes networks or volumes left without a sandbox.
+
+Capacity is capped operator-wide and per organization: at a cap the least
+recently used idle sandbox (no open stream, and no run its relay reports as
+active) is retired to make room. The workspace is either a Docker volume with a
+soft size limit, checked from Docker's own volume usage (the agent cannot hide
+files from it), or a size-bounded tmpfs volume (see Settings.hermes_workspace_mode).
 """
 
 from __future__ import annotations
@@ -64,6 +70,9 @@ DISABLED_TOOLSETS = (
     "spotify", "tts", "video", "video_gen", "web", "x_search", "yuanbao",
 )
 _CHUNK = 64 * 1024
+# Written by the platform into every workspace; a snapshot source without it
+# lost its workspace (see DockerHermesSandboxes._retire).
+WORKSPACE_MARKER = ".aurum/proxy"
 Outcome = Literal["existing", "created", "restored", "resumed"]
 
 
@@ -87,6 +96,10 @@ class HermesSandbox:
     state: Literal["running", "stopped", "retiring"] = "running"
     stopped_at: float | None = None
     snapshot_attempt_at: float = 0.0
+    # Over the soft workspace limit: no new runs until it is back under.
+    workspace_full: bool = False
+    # Why its last snapshot failed, when it is kept stopped.
+    snapshot_error: str | None = None
 
 
 def resource_name(session_id: str) -> str:
@@ -156,8 +169,17 @@ class DockerHermesSandboxes:
         self._docker: aiodocker.Docker | None = None
         self._sandboxes: dict[str, HermesSandbox] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._capacity_lock = asyncio.Lock()
+        # Admitted creations not yet in _sandboxes, per organization.
+        self._reserved: dict[str, int] = {}
+        self._streams: dict[str, int] = {}
         self._ready = False
         self._swept_at = 0.0
+        self._disk_checked_at = 0.0
+
+    @property
+    def _tmpfs(self) -> bool:
+        return self._settings.hermes_workspace_mode == "tmpfs"
 
     def _lock(self, session_id: str) -> asyncio.Lock:
         return self._locks.setdefault(session_id, asyncio.Lock())
@@ -297,7 +319,22 @@ class DockerHermesSandboxes:
             {"Container": guard.id, "EndpointConfig": {"Aliases": ["hermes-egress"]}}
         )
 
+    def _volume_config(self, name: str, labels: dict[str, str]) -> dict[str, Any]:
+        config: dict[str, Any] = {"Name": name, "Labels": labels}
+        if self._tmpfs:
+            size = self._settings.hermes_workspace_max_bytes
+            config["DriverOpts"] = {
+                "type": "tmpfs",
+                "device": "tmpfs",
+                "o": f"size={size},uid={SANDBOX_UID},gid={SANDBOX_UID},mode=0700",
+            }
+        return config
+
     def _container_config(self, name: str, labels: dict[str, str]) -> dict[str, Any]:
+        memory = self._settings.hermes_memory_bytes
+        if self._tmpfs:
+            # tmpfs pages are charged to the container that writes them.
+            memory += self._settings.hermes_workspace_max_bytes
         return {
             "Image": self._settings.hermes_sandbox_image,
             "User": f"{SANDBOX_UID}:{SANDBOX_UID}",
@@ -308,7 +345,7 @@ class DockerHermesSandboxes:
                 "Tmpfs": {"/tmp": f"rw,nosuid,nodev,size={self._settings.hermes_tmp_mb}m"},
                 "CapDrop": ["ALL"],
                 "SecurityOpt": ["no-new-privileges"],
-                "Memory": self._settings.hermes_memory_bytes,
+                "Memory": memory,
                 "NanoCpus": int(self._settings.hermes_cpus * 1_000_000_000),
                 "PidsLimit": self._settings.hermes_pids_limit,
                 "Mounts": [{"Type": "volume", "Source": name, "Target": "/workspace"}],
@@ -338,21 +375,37 @@ class DockerHermesSandboxes:
                     raise HermesSandboxError("hermes_sandbox_owner_mismatch")
                 if existing.state == "running":
                     return existing, "existing"
-                if time.time() - existing.created_at < self._settings.hermes_max_lifetime_seconds:
-                    return await self._resume(existing, token=token, model=model), "resumed"
-                # Past its lifetime: a snapshot and a fresh sandbox, as for a running one.
+                # A paused tmpfs sandbox would keep its old token: never resumed.
+                fresh = time.time() - existing.created_at < self._settings.hermes_max_lifetime_seconds
+                if fresh and not self._tmpfs:
+                    await self._admit(org_id, session_id)
+                    try:
+                        return await self._resume(existing, token=token, model=model), "resumed"
+                    finally:
+                        self._release(org_id)
+                # Otherwise a snapshot and a fresh sandbox, as for a running one.
                 await self._retire(existing)
             if snapshot_sha256 is not None and not self._store.enabled:
                 raise HermesSandboxError("hermes_snapshot_unavailable")
-            sandbox, restored = await self._provision(
-                session_id=session_id,
-                org_id=org_id,
-                conversation_id=conversation_id,
-                token=token,
-                model=model,
-                snapshot_sha256=snapshot_sha256,
-                restore=restore,
-            )
+            # Before admission: a store that is down must not evict anyone.
+            sha = snapshot_sha256
+            if sha is None and restore and self._store.enabled:
+                try:
+                    sha = await self._store.latest(org_id, conversation_id)
+                except SnapshotError as exc:
+                    raise HermesSandboxError(exc.code) from None
+            await self._admit(org_id, session_id)
+            try:
+                sandbox, restored = await self._provision(
+                    session_id=session_id,
+                    org_id=org_id,
+                    conversation_id=conversation_id,
+                    token=token,
+                    model=model,
+                    snapshot_sha256=sha,
+                )
+            finally:
+                self._release(org_id)
             try:
                 await self._wait_healthy(sandbox)
             except Exception:
@@ -360,6 +413,66 @@ class DockerHermesSandboxes:
                 await self._remove(sandbox.network)
                 raise
         return sandbox, "restored" if restored else "created"
+
+    # Capacity ---------------------------------------------------------------
+
+    async def _admit(self, org_id: str, session_id: str) -> None:
+        """Reserve a running slot, retiring least recently used idle sandboxes
+        while a cap is reached. Called with the session's lock held; victims are
+        running, so never a session that is itself being created."""
+        settings = self._settings
+        async with self._capacity_lock:
+            while True:
+                running = [
+                    s for s in self._sandboxes.values() if s.state == "running" and s.session_id != session_id
+                ]
+                in_org = sum(1 for s in running if s.org_id == org_id) + self._reserved.get(org_id, 0)
+                org_full = in_org >= settings.hermes_max_running_per_org
+                all_full = len(running) + sum(self._reserved.values()) >= settings.hermes_max_running
+                if not (org_full or all_full):
+                    self._reserved[org_id] = self._reserved.get(org_id, 0) + 1
+                    return
+                pool = [s for s in running if s.org_id == org_id] if org_full else running
+                victim = await self._idle_victim(pool)
+                if victim is None:
+                    raise HermesSandboxError("hermes_capacity_exhausted")
+                logger.info("Retiring idle Hermes sandbox %s to make room", victim.session_id)
+                async with self._lock(victim.session_id):
+                    current = self._sandboxes.get(victim.session_id)
+                    if current is not None and current.state == "running":
+                        try:
+                            await self._retire(current)
+                        except HermesSandboxError as exc:
+                            # Stopped (or paused) anyway, so the slot is free.
+                            logger.warning("Hermes sandbox %s kept stopped: %s", victim.session_id, exc.code)
+
+    def _release(self, org_id: str) -> None:
+        left = self._reserved.get(org_id, 0) - 1
+        if left > 0:
+            self._reserved[org_id] = left
+        else:
+            self._reserved.pop(org_id, None)
+
+    async def _idle_victim(self, pool: list[HermesSandbox]) -> HermesSandbox | None:
+        for sandbox in sorted(pool, key=lambda s: s.last_active):
+            if not self._streams.get(sandbox.session_id) and not await self._active_runs(sandbox):
+                return sandbox
+        return None
+
+    async def _active_runs(self, sandbox: HermesSandbox) -> list[str]:
+        """Runs the relay reports as queued or running. It is the sandbox's own
+        word: a sandbox claiming to be busy still goes at its idle or absolute
+        lifetime. A relay that does not answer reports none."""
+        try:
+            _, output = await self._exec(sandbox, ["hermes-relay", "active"])
+        except DockerError:
+            return []
+        lines, _ = bounded_json_lines(output + b"\n", self._settings.hermes_event_line_max_bytes)
+        for line in lines:
+            run_ids = line.get("run_ids")
+            if line["type"] == "active" and isinstance(run_ids, list):
+                return [run_id for run_id in run_ids if isinstance(run_id, str) and len(run_id) <= 128]
+        return []
 
     async def _secrets(self, container: Any, *, token: str, model: str) -> None:
         api_key = secrets.token_urlsafe(32)
@@ -379,7 +492,6 @@ class DockerHermesSandboxes:
         token: str,
         model: str,
         snapshot_sha256: str | None,
-        restore: bool,
     ) -> tuple[HermesSandbox, bool]:
         name = resource_name(session_id)
         created = time.time()
@@ -388,19 +500,22 @@ class DockerHermesSandboxes:
         try:
             await self._create_network(name, labels)
             await self._connect_guard(name)
-            await self.docker.volumes.create({"Name": name, "Labels": labels})  # type: ignore[no-untyped-call]
+            await self.docker.volumes.create(self._volume_config(name, labels))  # type: ignore[no-untyped-call]
             container = await self.docker.containers.create(
                 config=self._container_config(name, labels), name=name
             )
             sha = snapshot_sha256
-            if sha is None and restore and self._store.enabled:
-                sha = await self._store.latest(org_id, conversation_id)
+            # A tmpfs volume is mounted only while the container runs, so its
+            # files are written after the start; start.sh waits for them.
+            if self._tmpfs:
+                await container.start()
             if sha is not None:
                 await self._restore(container, org_id, conversation_id, sha)
                 restored = True
             # After the restore, so the platform's files are always the current ones.
             await self._secrets(container, token=token, model=model)
-            await container.start()
+            if not self._tmpfs:
+                await container.start()
         except SnapshotError as exc:
             await self._remove(name)
             raise HermesSandboxError(exc.code) from None
@@ -470,6 +585,8 @@ class DockerHermesSandboxes:
         exec_ = await container.exec(cmd=cmd, stdout=True, stderr=False, user=f"{SANDBOX_UID}")
         stream = exec_.start(detach=False)
         pending = b""
+        session_id = sandbox.session_id
+        self._streams[session_id] = self._streams.get(session_id, 0) + 1
         try:
             while (message := await stream.read_out()) is not None:
                 if message.stream != 1:
@@ -481,10 +598,15 @@ class DockerHermesSandboxes:
                 for line in lines:
                     yield line
         finally:
+            self._streams[session_id] -= 1
+            if not self._streams[session_id]:
+                del self._streams[session_id]
             await stream.close()
 
     async def run(self, session_id: str, request: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
         sandbox = self.get_running(session_id)
+        if sandbox.workspace_full:
+            raise HermesSandboxError("hermes_workspace_full")
         key = hashlib.sha256(str(request["key"]).encode()).hexdigest()
         container = await self.docker.containers.get(sandbox.container_id)
         await container.put_archive(  # type: ignore[no-untyped-call]
@@ -532,7 +654,9 @@ class DockerHermesSandboxes:
                 with self._tempdir() as directory:
                     raw, clean = Path(directory, "workspace.tar"), Path(directory, "snapshot.tar")
                     await self._workspace_archive(sandbox.container_id, raw)
-                    snapshot = await to_thread_sanitize(raw, clean, strip="workspace", settings=self._settings)
+                    snapshot = await to_thread_sanitize(
+                        raw, clean, strip="workspace", settings=self._settings, marker=WORKSPACE_MARKER
+                    )
                     raw.unlink()
                     await self._store.put(sandbox.org_id, sandbox.conversation_id, clean, snapshot, sandbox.session_id)
                     return snapshot
@@ -562,9 +686,13 @@ class DockerHermesSandboxes:
             return await self._snapshot(self.get(session_id))
 
     async def _stop_container(self, sandbox: HermesSandbox) -> None:
+        """Stop it, or pause it on tmpfs, where stopping would lose the workspace."""
         try:
             container = await self.docker.containers.get(sandbox.container_id)
-            await container.stop(t=self._settings.hermes_stop_timeout_seconds)
+            if self._tmpfs:
+                await container.pause()
+            else:
+                await container.stop(t=self._settings.hermes_stop_timeout_seconds)
         except DockerError:
             pass
 
@@ -578,18 +706,27 @@ class DockerHermesSandboxes:
         if self._store.enabled:
             try:
                 snapshot = await self._snapshot(sandbox)
+            except HermesSandboxError as exc:
+                if exc.code != "hermes_workspace_lost":
+                    self._keep_stopped(sandbox, exc.code)
+                    raise
+                # Nothing of the platform's left (a tmpfs workspace after a
+                # restart): a snapshot would replace the last good one.
+                logger.warning("Hermes sandbox %s lost its workspace; removed without a snapshot", session_id)
             except Exception as exc:
                 # Never left "retiring": the reaper would skip it for good.
-                now = time.time()
-                self._sandboxes[session_id] = replace(
-                    sandbox, state="stopped", stopped_at=sandbox.stopped_at or now, snapshot_attempt_at=now
-                )
-                if isinstance(exc, HermesSandboxError):
-                    raise
+                self._keep_stopped(sandbox, "hermes_snapshot_failed")
                 raise HermesSandboxError("hermes_snapshot_failed") from exc
         self._sandboxes.pop(session_id, None)
         await self._remove(sandbox.network)
         return snapshot
+
+    def _keep_stopped(self, sandbox: HermesSandbox, error: str) -> None:
+        now = time.time()
+        self._sandboxes[sandbox.session_id] = replace(
+            sandbox, state="stopped", stopped_at=sandbox.stopped_at or now, snapshot_attempt_at=now,
+            snapshot_error=error,
+        )
 
     # Removal and reaping ----------------------------------------------------
 
@@ -662,6 +799,11 @@ class DockerHermesSandboxes:
                         continue
                     if now - sandbox.snapshot_attempt_at < settings.hermes_snapshot_retry_seconds:
                         continue
+                    # A stopped workspace cannot shrink: retrying would stream
+                    # it again for nothing. It waits for the retention or a
+                    # DELETE without a snapshot (the last good one stays).
+                    if sandbox.snapshot_error == "hermes_snapshot_too_large":
+                        continue
                 elif not self._expired(sandbox, now):
                     continue
                 logger.info("Retiring Hermes sandbox %s", session_id)
@@ -672,7 +814,43 @@ class DockerHermesSandboxes:
                     logger.warning("Hermes sandbox %s kept stopped: %s", session_id, exc.code)
         await self._reap_leftovers(time.time())
         await self._sweep_snapshots()
+        await self._check_disk()
         return reaped
+
+    async def _volume_usage(self) -> dict[str, int]:
+        """Docker's own size of each volume (dockerd walks it as root)."""
+        data = await self.docker._query_json("system/df", params={"type": "volume"})
+        return {
+            str(volume.get("Name")): int((volume.get("UsageData") or {}).get("Size", -1))
+            for volume in data.get("Volumes") or []
+        }
+
+    async def _check_disk(self) -> None:
+        """The soft workspace limit: over it, a sandbox's active runs are stopped
+        and it gets no new ones until it is back under. A tmpfs workspace is
+        bounded by the kernel instead."""
+        now = time.time()
+        if self._tmpfs or now - self._disk_checked_at < self._settings.hermes_disk_check_interval_seconds:
+            return
+        self._disk_checked_at = now
+        try:
+            usage = await self._volume_usage()
+        except DockerError:
+            logger.warning("Could not read Docker volume usage", exc_info=True)
+            return
+        limit = self._settings.hermes_workspace_max_bytes
+        for session_id, sandbox in list(self._sandboxes.items()):
+            if sandbox.state != "running":
+                continue
+            full = usage.get(sandbox.volume, -1) > limit
+            if full != sandbox.workspace_full:
+                current = self._sandboxes.get(session_id)
+                if current is not None:
+                    self._sandboxes[session_id] = replace(current, workspace_full=full)
+            if full:
+                logger.warning("Hermes sandbox %s is over its workspace limit", session_id)
+                for run_id in await self._active_runs(sandbox):
+                    await self._exec(sandbox, ["hermes-relay", "stop", run_id])
 
     async def _sweep_snapshots(self) -> None:
         now = time.time()

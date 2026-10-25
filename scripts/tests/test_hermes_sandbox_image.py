@@ -56,6 +56,7 @@ def test_image_is_built_and_published_with_the_others() -> None:
 
 class FakeHermes(http.server.BaseHTTPRequestHandler):
     runs: list[dict] = []
+    statuses: dict[str, str] = {}
 
     def log_message(self, *args: object) -> None:
         pass
@@ -72,7 +73,7 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
             return self._send(401, b"{}")
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         FakeHermes.runs.append(body)
-        self._send(202, json.dumps({"run_id": "run_1", "status": "started"}).encode())
+        self._send(202, json.dumps({"run_id": f"run_{len(FakeHermes.runs)}", "status": "started"}).encode())
 
     def do_GET(self) -> None:
         if self.path.endswith("/events"):
@@ -84,12 +85,16 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
                 'data: {"event": "after the end"}',
             ]
             return self._send(200, ("\n".join(events) + "\n").encode(), "text/event-stream")
-        self._send(200, json.dumps({"status": "completed", "output": "done", "usage": {"total_tokens": 3}}).encode())
+        run_id = self.path.rsplit("/", 1)[-1]
+        status = FakeHermes.statuses.get(run_id, "completed")
+        if status == "missing":
+            return self._send(404, b"{}")
+        self._send(200, json.dumps({"status": status, "output": "done", "usage": {"total_tokens": 3}}).encode())
 
 
 @pytest.fixture
 def relay(tmp_path: Path):  # noqa: ANN201
-    FakeHermes.runs = []
+    FakeHermes.runs, FakeHermes.statuses = [], {}
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeHermes)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     home = tmp_path / ".hermes"
@@ -139,3 +144,19 @@ def test_a_retried_run_attaches_instead_of_starting_again(relay) -> None:
     assert len(FakeHermes.runs) == 2
     assert other[-1]["status"] == "completed"
     assert not (tmp_path / "request-turn-1.json").exists()
+
+
+def test_active_lists_the_recent_runs_hermes_still_runs(relay) -> None:
+    run, tmp_path = relay
+    assert run("active") == [{"type": "active", "run_ids": []}]
+    for key in ("turn-1", "turn-2", "turn-3"):
+        run("run", _request(tmp_path, key))
+    FakeHermes.statuses = {"run_1": "running", "run_2": "missing", "run_3": "queued"}
+    old = tmp_path / ".aurum" / "runs" / "stale"
+    old.write_text("run_9")
+    os.utime(old, (0, 0))
+    FakeHermes.statuses["run_9"] = "running"
+
+    [line] = run("active")
+
+    assert line["type"] == "active" and sorted(line["run_ids"]) == ["run_1", "run_3"]
