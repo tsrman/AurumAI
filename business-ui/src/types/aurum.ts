@@ -21,6 +21,8 @@ export interface Model {
   name: string;
   shortName: string;
   description: string;
+  // The organization marked this model as accepting attached images.
+  vision?: boolean;
 }
 
 export interface KnowledgeBase {
@@ -68,6 +70,8 @@ export interface UserMessage {
   id: string;
   role: "user";
   content: string;
+  // Ids of images the user attached to this message.
+  images?: string[];
   createdAt?: string;
 }
 

@@ -36,6 +36,8 @@ let imageQuery: {
       generationModel: string | null;
       editModel: string | null;
       models: string[];
+      visionModels: string[];
+      chatModels: string[];
     };
   };
   isLoading: boolean;
@@ -84,6 +86,8 @@ beforeEach(() => {
         generationModel: null,
         editModel: null,
         models: ["provider/readable", "provider/image"],
+        visionModels: [],
+        chatModels: ["provider/readable"],
       },
     },
     isLoading: false,
@@ -240,14 +244,34 @@ test("labels a catalogued default whose organization grant was revoked", () => {
 test("image generation and editing models are chosen separately", () => {
   render(<AdminModelsPage />);
   const images = screen.getByRole("heading", { name: "Images" }).closest("section")!;
-  const save = within(images).getByRole("button", { name: "Save image models" });
+  const save = within(images).getByRole("button", { name: "Save image settings" });
   expect(save).toBeDisabled();
   fireEvent.change(within(images).getByLabelText("Image generation model"), {
     target: { value: "provider/image" },
   });
   fireEvent.click(save);
   expect(imageMutate).toHaveBeenCalledWith(
-    { generationModel: "provider/image", editModel: null },
+    { generationModel: "provider/image", editModel: null, visionModels: [] },
+    expect.anything()
+  );
+});
+
+test("chat models are marked as accepting images", () => {
+  imageQuery = {
+    ...imageQuery,
+    data: { data: { ...imageQuery.data!.data, visionModels: ["gone/vision"] } },
+  };
+  render(<AdminModelsPage />);
+  const images = screen.getByRole("heading", { name: "Images" }).closest("section")!;
+  const save = within(images).getByRole("button", { name: "Save image settings" });
+  const gone = within(images).getByRole("checkbox", { name: "gone/vision — no longer published" });
+  expect(gone).toBeChecked();
+  expect(save).toBeDisabled();
+  fireEvent.click(within(images).getByRole("checkbox", { name: "provider/readable" }));
+  fireEvent.click(gone);
+  fireEvent.click(save);
+  expect(imageMutate).toHaveBeenCalledWith(
+    { generationModel: null, editModel: null, visionModels: ["provider/readable"] },
     expect.anything()
   );
 });

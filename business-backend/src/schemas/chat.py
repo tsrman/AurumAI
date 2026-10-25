@@ -3,9 +3,18 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+MAX_MESSAGE_IMAGES = 4
+
+
 class ChatMessage(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     role: str
     content: str
+    # Uploaded images (POST /conversations/{id}/images) this message carries.
+    image_ids: list[UUID] = Field(
+        default_factory=list, alias="imageIds", max_length=MAX_MESSAGE_IMAGES
+    )
 
 
 class ChatOptions(BaseModel):
@@ -30,6 +39,15 @@ class ChatRequest(BaseModel):
 class ChatCompletionMessage(BaseModel):
     role: str
     content: str
+    # Conversation images the proxy inlines for vision models; the runner
+    # forwards them from user messages only.
+    image_ids: list[UUID] = Field(default_factory=list, max_length=MAX_MESSAGE_IMAGES)
+
+    @model_validator(mode="after")
+    def images_only_on_user_messages(self) -> "ChatCompletionMessage":
+        if self.image_ids and self.role != "user":
+            raise ValueError("only user messages may carry images")
+        return self
 
 
 class ChatCompletionRequest(BaseModel):
@@ -73,6 +91,13 @@ class PersistConversationMessageRequest(BaseModel):
     turn_id: UUID
     tool_calls: Optional[list[Any] | dict[str, Any]] = None
     tool_results: Optional[dict[str, Any]] = None
+
+
+class UploadedImageResponse(BaseModel):
+    imageId: str
+    contentType: str
+    width: int | None
+    height: int | None
 
 
 class PersistedImageClaims(BaseModel):

@@ -30,6 +30,13 @@ class StateManager:
                     messages.extend(
                         {"role": m["role"], "content": m["content"]}
                         | ({"turn_id": m["turnId"]} if m.get("turnId") else {})
+                        # Images the user attached; generated ones are not
+                        # sent back to the model.
+                        | (
+                            {"image_ids": m["imageIds"]}
+                            if m["role"] == "user" and m.get("imageIds")
+                            else {}
+                        )
                         for m in page["data"]
                     )
                 except KeyError as exc:

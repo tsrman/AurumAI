@@ -141,6 +141,7 @@ export function AppShellProvider({
       name: m.id,
       shortName: m.id,
       description: "",
+      vision: m.vision === true,
     }));
   }, [isAuthenticated, modelsData]);
 

@@ -225,5 +225,41 @@ class OrganizationModelSettingsService:
             .on_conflict_do_update(index_elements=[OrganizationSettings.org_id], set_=values)
         )
 
+    @staticmethod
+    async def vision_models(session: AsyncSession, org_id: UUID) -> tuple[str, ...]:
+        models = await session.scalar(
+            select(OrganizationSettings.vision_models).where(
+                OrganizationSettings.org_id == org_id
+            )
+        )
+        return tuple(models or ())
+
+    async def set_vision_models(
+        self,
+        session: AsyncSession,
+        org_id: UUID,
+        models: list[str],
+        snapshot: GatewayCatalogSnapshot | None,
+    ) -> None:
+        chosen = list(dict.fromkeys(models))
+        if chosen:
+            if snapshot is None or snapshot.status is GatewayCatalogStatus.UNAVAILABLE:
+                raise GatewayUnavailable
+            published = set(self._chat_model_ids(snapshot))
+            if any(model not in published for model in chosen):
+                raise ModelNotFound
+        await session.execute(
+            insert(OrganizationSettings)
+            .values(org_id=org_id, vision_models=chosen)
+            .on_conflict_do_update(
+                index_elements=[OrganizationSettings.org_id],
+                set_={"vision_models": chosen},
+            )
+        )
+
+    @classmethod
+    def chat_model_ids(cls, snapshot: GatewayCatalogSnapshot) -> tuple[str, ...]:
+        return cls._chat_model_ids(snapshot)
+
 
 organization_model_settings_service = OrganizationModelSettingsService()

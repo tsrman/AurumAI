@@ -25,7 +25,8 @@ Detailed fresh verification belongs in the release report and CI.
   skills, workflows, knowledge bases, models and usage analytics, with access
   configured from each resource.
 - Image generation and editing in chat through an OpenAI-compatible Images API,
-  with separate organization models and an `images.generate` capability.
+  with separate organization models and an `images.generate` capability, and
+  image attachments for chat models the organization marks as vision models.
 - Guided workflow authoring with runnable examples, and starter tools
   (`install-platform.sh`, CSV statistics and JSON formatting code skills).
 - Service lint/types/tests, frontend tests/builds, migration checks, image builds
@@ -50,10 +51,8 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 
 - Integrate Hermes Agent as a universal system agent within the existing
   conversation runtime, tools and workflow orchestration.
-- Image inputs in chat: uploaded images for vision models and as editing sources
-  (generation and editing of chat-created images are implemented), plus image
-  tools inside workflow agents, archiving of conversation images, and image
-  usage in quotas and analytics.
+- Images beyond ordinary chat: image tools and attachments inside workflow agents,
+  archiving of conversation images, and image usage in quotas and analytics.
 - Loop wall-clock budgets; nested/overlapping loop bodies and confirmation nodes
   inside a loop remain outside the current graph contract.
 - Broader runtime/provider/load coverage, with fresh Kubernetes CNI/SSRF acceptance

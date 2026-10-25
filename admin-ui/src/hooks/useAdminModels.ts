@@ -44,7 +44,7 @@ export function useOrganizationImageModels() {
 export function useUpdateOrganizationImageModels() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (settings: { generationModel: string | null; editModel: string | null }) =>
+    mutationFn: (settings: Parameters<typeof putOrganizationImageModels>[0]) =>
       putOrganizationImageModels(settings),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-image-models"] }),
   });

@@ -13,6 +13,36 @@ export async function getConversationImageBlob(
     .blob();
 }
 
+export interface UploadedImage {
+  imageId: string;
+  contentType: string;
+  width: number | null;
+  height: number | null;
+}
+
+/** Store an image for the user's next message in this conversation. */
+export async function uploadConversationImage(
+  conversationId: string,
+  file: File
+): Promise<UploadedImage> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await api
+    .post(`conversations/${encodeURIComponent(conversationId)}/images`, {
+      body: form,
+      timeout: 120_000,
+    })
+    .json<{ data: UploadedImage }>();
+  return response.data;
+}
+
+/** Discard an upload the user removed before sending it. */
+export async function deleteConversationImage(conversationId: string, imageId: string): Promise<void> {
+  await api.delete(
+    `conversations/${encodeURIComponent(conversationId)}/images/${encodeURIComponent(imageId)}`
+  );
+}
+
 /** Keep only well-formed ids from an untrusted SSE or history payload. */
 export function imageIdsFrom(value: unknown): string[] {
   if (!Array.isArray(value)) return [];

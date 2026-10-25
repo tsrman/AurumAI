@@ -495,18 +495,21 @@
     "accessAria": "Access to {model}",
     "images": {
       "title": "Images",
-      "description": "Models used when people ask the chat to create or change a picture.",
+      "description": "Models used when people ask the chat to create or change a picture, and chat models that can look at pictures people attach.",
       "generation": "Image generation model",
       "generationHint": "Creates new images from a text description.",
       "edit": "Image editing model",
-      "editHint": "Changes an image created earlier in the conversation.",
+      "editHint": "Changes an image from the conversation: one the chat created or one a person attached.",
       "off": "Off",
       "unavailable": "{model} — no longer published",
-      "operatorOff": "Image tools are switched off on this deployment (APP_IMAGES_ENABLED). The choice below takes effect once they are on.",
+      "operatorOff": "Images are switched off on this deployment (APP_IMAGES_ENABLED): image tools and attachments. The choices below take effect once they are on.",
       "capabilityHint": "People also need the “Generate images” capability, given on the Groups page.",
       "loadFailed": "Could not load image settings",
       "saving": "Saving...",
-      "save": "Save image models"
+      "save": "Save image settings",
+      "vision": "Models that accept images",
+      "visionHint": "People can attach pictures to a message only when one of these chat models is selected. Mark only models your provider serves with image input.",
+      "noChatModels": "The gateway publishes no chat models."
     }
   },
   "skills": {

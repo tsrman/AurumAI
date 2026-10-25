@@ -183,8 +183,57 @@ async def test_models_route_returns_only_live_v2_grants_without_private_metadata
 
     assert response.status_code == 200
     assert response.json()["data"] == [
-        {"id": granted_id, "object": "model", "owned_by": "visible-provider"}
+        {"id": granted_id, "object": "model", "owned_by": "visible-provider", "vision": False}
     ]
     assert private_id not in response.text
     assert "private-provider-metadata" not in response.text
     assert "raw-private-model" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_models_route_marks_vision_models_only_with_images_enabled(
+    db,
+    test_org: Organization,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.models.organization_settings import OrganizationSettings
+
+    vision_id, text_id = "provider/vision-model", "provider/text-model"
+    for model_id in (vision_id, text_id):
+        db.add(
+            AccessGrant(
+                org_id=test_org.id,
+                resource_type="model",
+                resource_id=model_id,
+                principal_type=PrincipalType.USER.value,
+                principal_id=test_user.id,
+                permission=AccessPermission.READ.value,
+                created_via=GrantSource.PROVISIONING.value,
+            )
+        )
+    db.add(OrganizationSettings(org_id=test_org.id, vision_models=[vision_id]))
+    await db.commit()
+
+    async def gateway_models() -> list[Any]:
+        return [{"id": vision_id, "object": "model"}, {"id": text_id, "object": "model"}]
+
+    async def override_session():
+        yield db
+
+    app = FastAPI()
+    app.include_router(models_router.router, prefix="/v1")
+    app.dependency_overrides[get_current_user] = lambda: UserInfo(
+        user_id=str(test_user.id), org_id=str(test_org.id), role="member"
+    )
+    app.dependency_overrides[get_org_db_session] = override_session
+    monkeypatch.setattr(models_router, "list_gateway_models", gateway_models)
+
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        monkeypatch.setattr(models_router.settings, "IMAGES_ENABLED", False)
+        off = (await client.get("/v1/models")).json()["data"]
+        monkeypatch.setattr(models_router.settings, "IMAGES_ENABLED", True)
+        on = (await client.get("/v1/models")).json()["data"]
+
+    assert {m["id"]: m["vision"] for m in off} == {vision_id: False, text_id: False}
+    assert {m["id"]: m["vision"] for m in on} == {vision_id: True, text_id: False}

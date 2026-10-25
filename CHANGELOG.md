@@ -41,8 +41,12 @@ built-in `generate_image` and `edit_image` tools. Organizations choose separate
 generation and editing models in Admin UI (Models → Images); users need the new
 `images.generate` capability, and the operator switch `IMAGES_ENABLED` is off by
 default. Results are validated PNG/JPEG/WebP bytes stored per conversation and shown
-under the answer. Editing works on images created earlier in the same conversation;
-uploading your own images comes next.
+under the answer. Editing works on images created earlier in the same conversation.
+
+People can attach PNG, JPEG and WebP images to a chat message when the selected
+model is one the organization marked in Admin UI (Models → Images) as accepting
+images. The backend inlines them for the model at request time, keeps them in the
+conversation history after a reload, and lists them as sources for `edit_image`.
 
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image

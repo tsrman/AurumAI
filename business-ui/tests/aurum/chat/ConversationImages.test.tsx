@@ -40,3 +40,22 @@ test("renders nothing without an active conversation", () => {
   expect(container).toBeEmptyDOMElement();
   expect(getBlob).not.toHaveBeenCalled();
 });
+
+test("the user's attached images sit above their message", async () => {
+  const { UserBubble } = await import("@/components/aurum/chat/UserBubble");
+  getBlob.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+  render(<UserBubble message={{ id: "u1", role: "user", content: "what is this", images: [A] }} />);
+  expect(screen.getByRole("group", { name: "Attached images" })).toBeInTheDocument();
+  expect(await screen.findByAltText("Attached image 1")).toHaveAttribute("src", "blob:image");
+  expect(screen.getByText("what is this")).toBeInTheDocument();
+});
+
+test("an image-only message shows no empty bubble", async () => {
+  const { UserBubble } = await import("@/components/aurum/chat/UserBubble");
+  getBlob.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+  const { container } = render(
+    <UserBubble message={{ id: "u1", role: "user", content: "", images: [A] }} />
+  );
+  await screen.findByAltText("Attached image 1");
+  expect(container.querySelector("p")).toBeNull();
+});

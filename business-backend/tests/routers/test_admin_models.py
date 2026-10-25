@@ -312,6 +312,8 @@ async def test_image_models_are_set_separately_and_listed_from_the_whole_catalog
         "generationModel": None,
         "editModel": None,
         "models": [MODEL_ID, IMAGE_MODEL_ID, "text-embedding-3-small"],
+        "visionModels": [],
+        "chatModels": [MODEL_ID, IMAGE_MODEL_ID],
     }
     assert saved.status_code == 200
     assert read_back.json()["data"]["generationModel"] == IMAGE_MODEL_ID
@@ -320,6 +322,42 @@ async def test_image_models_are_set_separately_and_listed_from_the_whole_catalog
     assert stored is not None
     await db.refresh(stored)
     assert (stored.image_generation_model, stored.image_edit_model) == (IMAGE_MODEL_ID, MODEL_ID)
+
+
+@pytest.mark.asyncio
+async def test_vision_models_are_chat_models_and_survive_image_model_updates(
+    db: AsyncSession, test_org: Organization, test_user: User
+) -> None:
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=_app(db, test_org, test_user, snapshot=_image_snapshot())),
+        base_url="http://test",
+    ) as client:
+        marked = await client.put(
+            "/v1/admin/settings/images",
+            json={"generationModel": None, "editModel": None, "visionModels": [MODEL_ID, MODEL_ID]},
+        )
+        # Clients that only send the tool models keep the vision list.
+        kept = await client.put(
+            "/v1/admin/settings/images",
+            json={"generationModel": IMAGE_MODEL_ID, "editModel": None},
+        )
+        embedding = await client.put(
+            "/v1/admin/settings/images",
+            json={
+                "generationModel": None,
+                "editModel": None,
+                "visionModels": ["text-embedding-3-small"],
+            },
+        )
+        cleared = await client.put(
+            "/v1/admin/settings/images",
+            json={"generationModel": None, "editModel": None, "visionModels": []},
+        )
+    assert marked.status_code == 200
+    assert marked.json()["data"]["visionModels"] == [MODEL_ID]
+    assert kept.json()["data"]["visionModels"] == [MODEL_ID]
+    assert embedding.status_code == 422
+    assert cleared.json()["data"]["visionModels"] == []
 
 
 @pytest.mark.asyncio

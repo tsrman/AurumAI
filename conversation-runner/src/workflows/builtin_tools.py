@@ -47,7 +47,8 @@ _IMAGE_GENERATE_INSTRUCTIONS = (
     "size is optional: auto, 1024x1024, 1024x1536 or 1536x1024."
 )
 _IMAGE_EDIT_INSTRUCTIONS = (
-    "To change an image created earlier in this conversation, emit exactly:\n"
+    "To change an image from this conversation (one you created or one the user "
+    "attached), emit exactly:\n"
     '<tool_call>{"tool":"edit_image","args":{"image_id":"UUID",'
     '"prompt":"what to change"}}</tool_call>\n'
     "Use only an image_id from the list of this conversation's images below or "
@@ -270,7 +271,10 @@ def builtin_instructions(
 
 
 def recent_image_list(value: object) -> list[dict[str, str]]:
-    """Keep at most eight well-formed {image_id, prompt} entries from a signal."""
+    """Keep at most eight well-formed {image_id, prompt} entries from a signal.
+
+    Uploads are marked so the model can tell them from its own images.
+    """
     if not isinstance(value, list):
         return []
     listed: list[dict[str, str]] = []
@@ -282,9 +286,10 @@ def recent_image_list(value: object) -> list[dict[str, str]]:
             canonical = str(UUID(str(image_id)))
         except ValueError:
             continue
-        listed.append(
-            {"image_id": canonical, "prompt": prompt[:200] if isinstance(prompt, str) else ""}
-        )
+        entry = {"image_id": canonical, "prompt": prompt[:200] if isinstance(prompt, str) else ""}
+        if item.get("origin") == "uploaded":
+            entry["source"] = "attached by the user"
+        listed.append(entry)
     return listed
 
 

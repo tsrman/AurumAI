@@ -6,14 +6,18 @@ import { useTranslations } from "next-intl";
 import { useAppShell } from "@/hooks/useAppShell";
 import { getConversationImageBlob } from "@/lib/images-api";
 
+type ImageVariant = "generated" | "attached";
+
 function ConversationImage({
   conversationId,
   imageId,
   index,
+  variant,
 }: {
   conversationId: string;
   imageId: string;
   index: number;
+  variant: ImageVariant;
 }) {
   const t = useTranslations("chat.images");
   const [state, setState] = useState<
@@ -38,7 +42,7 @@ function ConversationImage({
     };
   }, [conversationId, imageId]);
 
-  const label = t("alt", { index: index + 1 });
+  const label = t(variant === "attached" ? "attachedAlt" : "alt", { index: index + 1 });
   if (state.status === "loading") {
     return (
       <div
@@ -76,14 +80,20 @@ function ConversationImage({
   );
 }
 
-/** Images an assistant answer produced, fetched with the user's session. */
-export function ConversationImages({ imageIds }: { imageIds: string[] }) {
+/** Conversation images (an answer's or the user's own), fetched with the user's session. */
+export function ConversationImages({
+  imageIds,
+  variant = "generated",
+}: {
+  imageIds: string[];
+  variant?: ImageVariant;
+}) {
   const t = useTranslations("chat.images");
   const { activeConversationId } = useAppShell();
   if (!activeConversationId || imageIds.length === 0) return null;
   return (
     <div
-      aria-label={t("label")}
+      aria-label={t(variant === "attached" ? "attachedLabel" : "label")}
       role="group"
       className={imageIds.length === 1 ? "max-w-md" : "grid max-w-2xl grid-cols-2 gap-3"}
     >
@@ -93,6 +103,7 @@ export function ConversationImages({ imageIds }: { imageIds: string[] }) {
           conversationId={activeConversationId}
           imageId={imageId}
           index={index}
+          variant={variant}
         />
       ))}
     </div>

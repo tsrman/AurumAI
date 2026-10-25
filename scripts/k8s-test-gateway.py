@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 MODEL_ID = os.getenv("TEST_GATEWAY_MODEL_ID", "k8s-test")
 # Published only when set, so scenarios without images keep a one-model catalog.
@@ -76,6 +76,24 @@ _QUESTION_MARKERS = ("ASK_CITY_THEN_FINAL", "ASK_TWICE", "ASK_LOOP", "ASK_OPTION
 class Message(BaseModel):
     role: str
     content: str
+    # Vision requests send text plus image parts; only the text is kept and
+    # the inline images are counted.
+    image_parts: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten_parts(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or not isinstance(value.get("content"), list):
+            return value
+        parts = [part for part in value["content"] if isinstance(part, dict)]
+        text = "".join(str(part.get("text", "")) for part in parts if part.get("type") == "text")
+        images = sum(
+            1
+            for part in parts
+            if part.get("type") == "image_url"
+            and str((part.get("image_url") or {}).get("url", "")).startswith("data:image/")
+        )
+        return {**value, "content": text, "image_parts": images}
 
 
 class CompletionRequest(BaseModel):
@@ -659,6 +677,11 @@ def _image_response(messages: list[Message]) -> str | None:
     if start is None or not messages[start].content.startswith("IMAGE_E2E_"):
         return None
     prompt = messages[start].content
+    if prompt.startswith("IMAGE_E2E_VISION"):
+        # Proves the inline images reached the model: this message's count
+        # and the count across every user message sent in the request.
+        total = sum(m.image_parts for m in messages if m.role == "user")
+        return f"IMAGE_E2E_SEEN {messages[start].image_parts} of {total}"
     results: list[tuple[str, dict[str, Any]]] = []
     for message in messages[start + 1:]:
         match = re.match(r"^Tool result for (generate_image|edit_image): (.*)$", message.content, re.S)

@@ -130,6 +130,7 @@ function backendMessageToUIMessage(
       id: msg.id,
       role: "user",
       content: msg.content ?? "",
+      images: imageIdsFrom(msg.imageIds),
       createdAt: msg.createdAt,
     };
   }
@@ -157,7 +158,7 @@ function backendMessageToUIMessage(
 
 export interface UseChatReturn {
   messages: Message[];
-  send: (text: string, workflowId?: string) => void;
+  send: (text: string, workflowId?: string, imageIds?: string[]) => void;
   regenerate: (messageId: string) => void;
   isStreaming: boolean;
   isLoading: boolean;
@@ -918,9 +919,9 @@ export function useChat(): UseChatReturn {
   );
 
   const sendBackend = useCallback(
-    async (text: string, workflowId?: string) => {
+    async (text: string, workflowId?: string, imageIds: string[] = []) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!trimmed && imageIds.length === 0) return;
 
       clearAllTimeouts();
       // A previous turn might still be streaming (e.g. this slipped through
@@ -950,6 +951,7 @@ export function useChat(): UseChatReturn {
           id: makeUserId(),
           role: "user",
           content: trimmed,
+          ...(imageIds.length > 0 ? { images: imageIds } : {}),
           createdAt: new Date().toISOString(),
         };
 
@@ -993,7 +995,9 @@ export function useChat(): UseChatReturn {
         // function body, including the guard above that calls it.
         const { cancel: cancelFetch } = streamChat({
           conversation_id: convId,
-          messages: [{ role: "user", content: trimmed }],
+          messages: [
+            { role: "user", content: trimmed, ...(imageIds.length > 0 ? { imageIds } : {}) },
+          ],
           model: activeModelId,
           options: { temperature: 0.7, max_tokens: 4096 },
           workflowId,
@@ -1064,9 +1068,9 @@ export function useChat(): UseChatReturn {
   );
 
   const send = useCallback(
-    (text: string, workflowId?: string) => {
+    (text: string, workflowId?: string, imageIds?: string[]) => {
       if (isRealMode()) {
-        void sendBackend(text, workflowId);
+        void sendBackend(text, workflowId, imageIds);
       } else {
         // Mock mode has no workflow runtime. Keep its existing deterministic
         // single-agent response even if a stale caller passes a selection.

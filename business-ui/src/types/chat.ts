@@ -2,6 +2,8 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   model?: string;
+  // Uploaded image ids; the backend accepts them on the user message only.
+  imageIds?: string[];
 }
 
 export interface ConversationResponse {

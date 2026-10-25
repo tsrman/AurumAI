@@ -611,6 +611,9 @@ export interface OrganizationImageModels {
   generationModel: string | null;
   editModel: string | null;
   models: string[];
+  // Chat models marked as accepting images, picked from chatModels.
+  visionModels: string[];
+  chatModels: string[];
 }
 
 export async function getOrganizationImageModels() {
@@ -622,6 +625,7 @@ export async function getOrganizationImageModels() {
 export async function putOrganizationImageModels(settings: {
   generationModel: string | null;
   editModel: string | null;
+  visionModels?: string[];
 }) {
   return (await api.put("admin/settings/images", { json: settings })).json<
     ApiResponse<OrganizationImageModels>

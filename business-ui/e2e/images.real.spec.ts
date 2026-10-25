@@ -7,11 +7,13 @@ import {
 } from "@playwright/test";
 
 /**
- * Image generation and editing end to end against the deterministic stack
- * (smoke-test-images-ui.sh): an administrator picks the organization image
- * models in Admin UI, a member asks for an image and an edit, and both images
- * come back through the owner-only content route, also after a reload.
- * Organization capabilities, model grants and image models are restored.
+ * Image generation, editing and attachments end to end against the
+ * deterministic stack (smoke-test-images-ui.sh): an administrator picks the
+ * organization image models and marks the chat model as accepting images in
+ * Admin UI; a member asks for an image and an edit, attaches a picture the
+ * model must receive inline, edits that upload, and every image comes back
+ * through the owner-only content route, also after a reload. Organization
+ * capabilities, model grants and image settings are restored.
  */
 const ENABLED = process.env.E2E_IMAGES_UI === "true";
 const BUSINESS_URL = process.env.E2E_BUSINESS_UI_URL || "http://localhost:3000";
@@ -23,7 +25,16 @@ const CHAT_MODEL = process.env.E2E_IMAGES_CHAT_MODEL || "gpt-4o-mini";
 const IMAGE_MODEL = process.env.E2E_IMAGES_MODEL || "test-image";
 
 type Grant = { principalType: string; principalId: string; permission: string };
-type ImageModels = { generationModel: string | null; editModel: string | null };
+type ImageModels = {
+  generationModel: string | null;
+  editModel: string | null;
+  visionModels: string[];
+};
+// A valid 1x1 PNG.
+const UPLOAD_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64"
+);
 
 async function loginAt(page: Page, appUrl: string, landing: RegExp, username: string): Promise<void> {
   await page.goto(`${appUrl}/login`);
@@ -72,8 +83,8 @@ async function userApi(page: Page, path: string): Promise<{ status: number; body
   }, `${BUSINESS_API}${path}`);
 }
 
-async function expectLoadedImages(page: Page, count: number): Promise<void> {
-  const images = page.getByAltText(/^Generated image \d+$/);
+async function expectLoadedImages(page: Page, count: number, kind = "Generated"): Promise<void> {
+  const images = page.getByAltText(new RegExp(`^${kind} image \\d+$`));
   await expect(images).toHaveCount(count, { timeout: 30_000 });
   for (let index = 0; index < count; index += 1) {
     await expect
@@ -85,10 +96,10 @@ async function expectLoadedImages(page: Page, count: number): Promise<void> {
 // Playwright traces persist request headers, including Keycloak bearer tokens.
 test.use({ trace: "off" });
 
-test.describe("Images: admin models to chat generation and editing", () => {
+test.describe("Images: admin settings to chat generation, editing and attachments", () => {
   test.skip(!ENABLED, "E2E_IMAGES_UI is not enabled");
 
-  test("generate, edit and reload images with separately chosen models", async ({ browser, request }) => {
+  test("generate, edit, attach and reload images with separately chosen models", async ({ browser, request }) => {
     test.setTimeout(240_000);
     const token = await adminToken(request);
     const subjects = await adminApi<{ principalType: string; principalId: string }[]>(
@@ -113,6 +124,7 @@ test.describe("Images: admin models to chat generation and editing", () => {
       await adminApi(request, token, "PUT", "/v1/admin/settings/images", {
         generationModel: null,
         editModel: null,
+        visionModels: [],
       });
       await adminApi(request, token, "PUT", "/v1/admin/authorization/capabilities/organization", {
         capabilities: [...new Set([...originalCapabilities, "images.generate"])],
@@ -134,13 +146,14 @@ test.describe("Images: admin models to chat generation and editing", () => {
       const images = adminPage.getByRole("heading", { name: "Images" }).locator("xpath=ancestor::section[1]");
       await images.getByLabel("Image generation model").selectOption(IMAGE_MODEL);
       await images.getByLabel("Image editing model").selectOption(IMAGE_MODEL);
+      await images.getByRole("checkbox", { name: CHAT_MODEL, exact: true }).check();
       const saved = adminPage.waitForResponse(
         (response) =>
           response.url().endsWith("/v1/admin/settings/images") &&
           response.request().method() === "PUT" &&
           response.status() === 200
       );
-      await images.getByRole("button", { name: "Save image models" }).click();
+      await images.getByRole("button", { name: "Save image settings" }).click();
       await saved;
 
       const memberContext = await browser.newContext();
@@ -179,10 +192,45 @@ test.describe("Images: admin models to chat generation and editing", () => {
       );
       await expectLoadedImages(member, 3);
 
-      // History rendering: all three images after a full reload.
+      // An attached picture reaches the vision model inline, and later turns
+      // still send it from the conversation history.
+      await member.getByLabel("Choose a file to attach").setInputFiles({
+        name: "pixel.png",
+        mimeType: "image/png",
+        buffer: UPLOAD_PNG,
+      });
+      await expect(member.getByRole("img", { name: "pixel.png" })).toBeVisible({ timeout: 30_000 });
+      await member.getByLabel("Message").fill("IMAGE_E2E_VISION what is this");
+      await member.getByLabel("Send").click();
+      await expect(member.getByTestId("assistant-content").last()).toContainText(
+        "IMAGE_E2E_SEEN 1 of 1",
+        { timeout: 120_000 }
+      );
+      await expectLoadedImages(member, 1, "Attached");
+      await member.getByLabel("Message").fill("IMAGE_E2E_VISION again");
+      await member.getByLabel("Send").click();
+      await expect(member.getByTestId("assistant-content").last()).toContainText(
+        "IMAGE_E2E_SEEN 0 of 1",
+        { timeout: 120_000 }
+      );
+
+      // The upload is now the newest conversation image, so a follow-up edit
+      // uses it as the source.
+      await member.getByLabel("Message").fill("IMAGE_E2E_EDIT_PREVIOUS");
+      await member.getByLabel("Send").click();
+      await expect(member.getByTestId("assistant-content").last()).toContainText(
+        "IMAGE_E2E_DONE edited",
+        { timeout: 120_000 }
+      );
+      await expectLoadedImages(member, 4);
+      // Later turns hydrate the conversation from history; the attachment stays.
+      await expectLoadedImages(member, 1, "Attached");
+
+      // History rendering: every image after a full reload.
       await member.reload();
       await member.getByRole("button", { name: new RegExp("IMAGE_E2E_EDIT") }).first().click();
-      await expectLoadedImages(member, 3);
+      await expectLoadedImages(member, 4);
+      await expectLoadedImages(member, 1, "Attached");
     } finally {
       await Promise.allSettled(contexts.map((context) => context.close()));
       // Restore every setting even if one restore fails, and never let a
@@ -191,6 +239,7 @@ test.describe("Images: admin models to chat generation and editing", () => {
         adminApi(request, token, "PUT", "/v1/admin/settings/images", {
           generationModel: originalImages.generationModel,
           editModel: originalImages.editModel,
+          visionModels: originalImages.visionModels,
         }),
         adminApi(request, token, "PUT", "/v1/admin/authorization/grants/reconcile", {
           resourceType: "model",

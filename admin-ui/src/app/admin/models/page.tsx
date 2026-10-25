@@ -223,12 +223,25 @@ function ImageModelsSection({ canWrite }: { canWrite: boolean }) {
   const query = useOrganizationImageModels();
   const update = useUpdateOrganizationImageModels();
   const saved = query.data?.data;
-  const baseline = `${saved?.generationModel ?? ""}\u0000${saved?.editModel ?? ""}`;
-  const [draft, setDraft] = useState<{ baseline: string; generation: string; edit: string } | null>(null);
-  const generation = draft?.baseline === baseline ? draft.generation : (saved?.generationModel ?? "");
-  const edit = draft?.baseline === baseline ? draft.edit : (saved?.editModel ?? "");
-  const change = (next: { generation?: string; edit?: string }) =>
-    setDraft({ baseline, generation: next.generation ?? generation, edit: next.edit ?? edit });
+  const savedVision = useMemo(() => saved?.visionModels ?? [], [saved?.visionModels]);
+  const baseline = [saved?.generationModel ?? "", saved?.editModel ?? "", ...savedVision].join("\u0000");
+  const [draft, setDraft] = useState<{
+    baseline: string;
+    generation: string;
+    edit: string;
+    vision: string[];
+  } | null>(null);
+  const current = draft?.baseline === baseline ? draft : null;
+  const generation = current ? current.generation : (saved?.generationModel ?? "");
+  const edit = current ? current.edit : (saved?.editModel ?? "");
+  const vision = current ? current.vision : savedVision;
+  const change = (next: { generation?: string; edit?: string; vision?: string[] }) =>
+    setDraft({
+      baseline,
+      generation: next.generation ?? generation,
+      edit: next.edit ?? edit,
+      vision: next.vision ?? vision,
+    });
 
   if (query.isLoading) return null;
   if (query.error || !saved) {
@@ -238,7 +251,12 @@ function ImageModelsSection({ canWrite }: { canWrite: boolean }) {
       </Section>
     );
   }
-  const changed = generation !== (saved.generationModel ?? "") || edit !== (saved.editModel ?? "");
+  const visionChanged =
+    vision.length !== savedVision.length || vision.some((model) => !savedVision.includes(model));
+  const changed =
+    generation !== (saved.generationModel ?? "") || edit !== (saved.editModel ?? "") || visionChanged;
+  // Marked models the gateway no longer publishes stay listed so they can be cleared.
+  const visionChoices = [...saved.chatModels, ...vision.filter((model) => !saved.chatModels.includes(model))];
   const options = (current: string) => (
     <>
       <option value="">{t("off")}</option>
@@ -276,6 +294,33 @@ function ImageModelsSection({ canWrite }: { canWrite: boolean }) {
           {options(edit)}
         </select>
       </SettingRow>
+      <SettingRow label={t("vision")} description={t("visionHint")}>
+        {visionChoices.length === 0 ? (
+          <p className="text-sm text-aurum-text-3">{t("noChatModels")}</p>
+        ) : (
+          <fieldset className="flex max-h-56 flex-col gap-2 overflow-y-auto" aria-label={t("vision")}>
+            {visionChoices.map((model) => (
+              <label key={model} className="flex items-center gap-2 text-sm text-aurum-text">
+                <input
+                  type="checkbox"
+                  checked={vision.includes(model)}
+                  disabled={!canWrite}
+                  onChange={(event) =>
+                    change({
+                      vision: event.target.checked
+                        ? [...vision, model]
+                        : vision.filter((selected) => selected !== model),
+                    })
+                  }
+                />
+                <span className="font-mono text-xs">
+                  {saved.chatModels.includes(model) ? model : t("unavailable", { model })}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+      </SettingRow>
       <p className="mt-4 text-xs leading-5 text-aurum-text-3">{t("capabilityHint")}</p>
       {update.isError ? <Notice tone="error" className="mt-4">{errorMessage(update.error)}</Notice> : null}
       {canWrite ? (
@@ -284,7 +329,7 @@ function ImageModelsSection({ canWrite }: { canWrite: boolean }) {
             disabled={!changed || update.isPending}
             onClick={() =>
               update.mutate(
-                { generationModel: generation || null, editModel: edit || null },
+                { generationModel: generation || null, editModel: edit || null, visionModels: vision },
                 { onSuccess: () => setDraft(null) }
               )
             }

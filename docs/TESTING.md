@@ -163,7 +163,7 @@ MCP/code need profiles `mcp` and `skills-exec` and a built `runner`/`skill-sandb
 | `./smoke-test-workflow-hitl-ui.sh` | Reject/cancel and real65-second dedicated test deadline |
 | `./smoke-test-workflow-loops.sh` | API-only loop cap/fallthrough/cancel and previous-iteration context |
 | `./smoke-test-authorization-ui.sh` | Five resource types, live revoke and both audiences |
-| `./smoke-test-images-ui.sh` | Admin image models, chat generation and editing, reload; deterministic gateway |
+| `./smoke-test-images-ui.sh` | Admin image and vision models, chat generation, editing and image attachments, reload; deterministic gateway |
 | `./smoke-test-auth-lifecycle.sh` | UI logout/refresh/recovery and natural access expiry (up to15minutes) |
 | `./smoke-test-k8s.sh` | Fresh owned k3d/Helm install/upgrade, runner/sandbox/RBAC |
 | `./smoke-test-user-questions-k8s.sh` | Fresh owned questions Ingress/Pod UID lifecycle |
