@@ -256,6 +256,16 @@ class Settings(BaseSettings):
     # common provider per-image limits.
     IMAGES_UPLOAD_MAX_BYTES: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
 
+    # Operator kill switch for the Hermes Agent surface (docs/HERMES_AGENT.md).
+    # Users also need the agents.hermes capability. Hermes session tokens are
+    # accepted only while their conversation has an active turn; until session
+    # rows can revoke them, their lifetime is this short expiry.
+    HERMES_ENABLED: bool = False
+    HERMES_SESSION_TOKEN_TTL_SECONDS: int = Field(default=900, ge=60, le=86400)
+    # Upper bounds for one native-tools completion request from a sandbox.
+    HERMES_MAX_TOOLS: int = Field(default=128, ge=1, le=512)
+    HERMES_MAX_MESSAGES: int = Field(default=1000, ge=1, le=10000)
+
     @field_validator("WEB_TOOLS_URL")
     @classmethod
     def _web_tools_origin_only(cls, value: str) -> str:

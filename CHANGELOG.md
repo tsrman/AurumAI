@@ -88,6 +88,16 @@ archives and restores an old conversation with generated, edited and uploaded
 images, with the image account limited by the documented MinIO policy, checked by
 new independent `prepare-`/`check-data-lifecycle-images.py` helpers.
 
+The first Hermes Agent phase (docs/HERMES_AGENT.md) adds a native-tools completion
+route, `POST /v1/hermes/chat/completions`, for a future Hermes sandbox. It accepts
+OpenAI `tools`, assistant `tool_calls`, `tool` messages and inline images, and
+streams the gateway's chunks, tool call deltas included, unchanged, with the same
+capability, model grant, vision and quota checks as the runner route. It accepts
+only a new Hermes session token, issued to a runner by
+`POST /v1/internal/hermes/session-tokens` and usable only while its conversation has
+an active turn. Both routes need the new `agents.hermes` capability and the
+default-off `APP_HERMES_ENABLED` switch; nothing calls them yet.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

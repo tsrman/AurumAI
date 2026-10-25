@@ -9,6 +9,7 @@ from fastapi.routing import APIRoute
 import src.routers
 from src.core.auth import get_current_user_or_session
 from src.core.dependencies import get_service_db_session
+from src.core.hermes_auth import get_hermes_db_session, get_hermes_session_user
 
 
 EXPECTED_INTERNAL_ROUTES = {
@@ -46,7 +47,10 @@ EXPECTED_INTERNAL_ROUTES = {
         "/workflow-runs/{run_id}/nodes/{phase_key}",
         "PUT",
     ),
+    ("hermes_internal", "/hermes/session-tokens", "POST"),
 }
+
+EXPECTED_HERMES_ROUTES = {("hermes", "/hermes/chat/completions", "POST")}
 
 
 def _dependency_calls(dependencies: Iterable[Any]) -> set[Any]:
@@ -95,3 +99,20 @@ def test_internal_session_route_matrix_uses_session_auth_and_org_scoped_db() -> 
             )
 
     assert actual == EXPECTED_INTERNAL_ROUTES
+
+
+def test_hermes_token_routes_are_exactly_the_sandbox_surface() -> None:
+    actual: set[tuple[str, str, str]] = set()
+    for router_name, router in _all_routers().items():
+        for route in router.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            calls = _dependency_calls(route.dependant.dependencies)
+            if get_hermes_session_user not in calls:
+                continue
+            for method in route.methods:
+                actual.add((router_name, route.path, method))
+            assert get_hermes_db_session in calls
+            assert get_current_user_or_session not in calls
+
+    assert actual == EXPECTED_HERMES_ROUTES

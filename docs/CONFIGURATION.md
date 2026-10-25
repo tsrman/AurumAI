@@ -159,6 +159,30 @@ request without token data. Usage events record the call as `image_generate` or
 user next to requests and tokens. Image tokens of attachments sent to vision models are
 part of the chat completion's own prompt tokens.
 
+## Hermes Agent
+
+Hermes Agent is being integrated in phases (see [the design](HERMES_AGENT.md)).
+`APP_HERMES_ENABLED=false` is its operator switch; while it is off, the Hermes routes
+answer 404. Users also need the `agents.hermes` capability (Admin UI → Groups), which
+provisioning never grants. The first phase adds only the backend side a Hermes
+sandbox will call; nothing starts a sandbox yet, and Compose and the Helm chart do
+not pass the switch to the backend until the phase that does.
+
+- `POST /v1/hermes/chat/completions` is an OpenAI-compatible completion route with
+  native tools: `tools`, `tool_choice`, assistant `tool_calls`, `tool` messages and
+  inline `data:image/png|jpeg|webp;base64` images (never remote image URLs). The
+  gateway's chunks, tool call deltas included, are streamed unchanged. The
+  configured `LLM_GATEWAY_URL` must therefore forward native tools; the runner's own
+  route does not need that. Model grants, the vision model list and the monthly quota
+  apply as on the runner route, and requests count against the user's ordinary rate
+  limit. `APP_HERMES_MAX_TOOLS` (128) and `APP_HERMES_MAX_MESSAGES` (1000) bound one
+  request.
+- The route accepts only a Hermes session token. A runner obtains one for its own
+  conversation from `POST /v1/internal/hermes/session-tokens`. The token holds
+  identity only, has its own audience that no other route accepts, and works only
+  while its conversation has an active turn. Until session records can revoke it,
+  its lifetime is `APP_HERMES_SESSION_TOKEN_TTL_SECONDS` (900).
+
 ## Identity and data lifecycle
 
 Groups synchronized from Keycloak are managed in Keycloak. Admin UI disables local

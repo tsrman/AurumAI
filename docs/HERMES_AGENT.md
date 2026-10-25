@@ -339,7 +339,22 @@ points at it with `tools.include`.
 Each phase is a separate PR behind the flag:
 
 1. **Native tools in the proxy.** The new route, a Hermes session token and quota
-   correlation. Tested against the deterministic gateway.
+   correlation. Tested with a scripted gateway stream against a real database;
+   acceptance through the deterministic gateway follows with the chat agent in
+   phase 4, the first caller of the route.
+
+   Implemented with two deliberate gaps, both closed by phase 2's
+   `hermes_sessions` rows (a new conversation-scoped table belongs with the archive
+   and lifecycle work of that phase):
+   - the token carries a session id (`sid`) but no row backs it yet, so it cannot be
+     revoked; it works only during an active turn of its conversation and expires
+     after `APP_HERMES_SESSION_TOKEN_TTL_SECONDS`;
+   - workflow run, phase and node correlation is never read from the request body,
+     so calls are billed to the conversation only.
+
+   `APP_HERMES_ENABLED` is not yet passed to the backend by Compose or the Helm
+   chart; phase 4 wires it. Like the runner route, the Hermes route always streams
+   and ignores `stream: false`.
 2. **Sandbox and network.** The `hermes-sandbox` image, its resources, durable
    sandbox ownership and re-adoption after an executor restart, snapshots, the
    `hermes-egress` sidecar on Docker and Kubernetes, and runtime egress probes.

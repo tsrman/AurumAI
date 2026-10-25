@@ -7,7 +7,6 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any, Optional
 from datetime import datetime, timezone
-import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import ValidationError
 from fastapi.responses import StreamingResponse
@@ -22,7 +21,7 @@ from src.core.authorization_dependencies import authorization_subject, require_c
 from src.core.capability_catalog import Capability
 from src.core.events import event_bus
 from src.core.exceptions import PlatformException
-from src.core.langfuse_client import get_langfuse, sanitize_content, sanitize_messages
+from src.core.langfuse_client import get_langfuse, sanitize_messages
 from src.schemas.chat import (
     ChatCompletionMessage as ChatCompletionMessage,
     ChatCompletionRequest,
@@ -44,6 +43,11 @@ from src.schemas.document import DocumentResponse
 from src.core.temporal import get_temporal_client
 from src.services.streaming import sse_event, create_streaming_response
 from src.services.chat_service import chat_service
+from src.services.completion_stream import (
+    parse_provider_usage,
+    proxy_completion_events,
+    quota_exceeded_exception,
+)
 from src.services.conversation_attachments import attach_file
 from src.services.image_content import ImageContentError
 from src.services.image_tools import organization_image_models, recent_conversation_images
@@ -151,17 +155,7 @@ def _parse_conversation_id(conversation_id: str) -> uuid.UUID:
 
 
 def _quota_platform_exception(exc: QuotaExceededError) -> PlatformException:
-    return PlatformException(
-        code="quota_exceeded",
-        message="Monthly quota exceeded",
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        details={
-            "resource": exc.resource,
-            "used": exc.used,
-            "limit": exc.limit,
-            "periodEnd": exc.period_end.isoformat(),
-        },
-    )
+    return quota_exceeded_exception(exc)
 
 
 def _quota_uuid(value: str | None, field: str) -> uuid.UUID:
@@ -181,35 +175,9 @@ def _parse_provider_usage(
     org_id: uuid.UUID,
     model: str,
 ) -> tuple[int, int, int] | None:
-    try:
-        payload = json.loads(chunk_json)
-    except (TypeError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict) or "usage" not in payload:
-        return None
-    usage = payload["usage"]
-    if usage is None:
-        # Not a defect: with stream_options {"include_usage": true} an
-        # OpenAI-compatible provider puts `"usage": null` on *every* chunk and
-        # the real figures only on the last one. Warning here logged a line
-        # per token of every stream.
-        return None
-    values: tuple[object, object, object] | None = None
-    if isinstance(usage, dict):
-        values = (
-            usage.get("prompt_tokens"),
-            usage.get("completion_tokens"),
-            usage.get("total_tokens"),
-        )
-    if values is None or any(type(value) is not int or value < 0 for value in values):
-        logger.warning(
-            "invalid LLM usage ignored (request_id=%s org_id=%s model=%s)",
-            request_id,
-            org_id,
-            model,
-        )
-        return None
-    return values  # type: ignore[return-value]
+    return parse_provider_usage(
+        chunk_json, request_id=request_id, org_id=org_id, model=model, log=logger
+    )
 
 
 async def _get_owned_conversation(
@@ -1147,140 +1115,17 @@ async def chat_completions(
             else None,
         )
 
-    full_output = ""
-
-    async def event_generator() -> AsyncGenerator[str, None]:
-        nonlocal full_output
-        provider_accepted = False
-        last_usage: tuple[int, int, int] | None = None
-
-        async def on_accepted() -> None:
-            nonlocal provider_accepted
-            provider_accepted = True
-            await quota.accept(org_id, quota_request_id)
-
-        try:
-            try:
-                async for chunk_json in llm_client.stream_chat(
-                    llm_request, on_accepted=on_accepted
-                ):
-                    if chunk_json:
-                        yield f"data: {chunk_json}\n\n"
-                        usage = _parse_provider_usage(
-                            chunk_json,
-                            request_id=quota_request_id,
-                            org_id=org_id,
-                            model=request.model,
-                        )
-                        if usage is not None:
-                            last_usage = usage
-                        try:
-                            data = json.loads(chunk_json)
-                            delta = data["choices"][0].get("delta", {}).get("content", "")
-                            full_output += delta
-                        except Exception:
-                            pass
-            except httpx.HTTPStatusError as exc:
-                # By the time the gateway's status is known, StreamingResponse
-                # has already sent 200 to the caller (conversation-runner) — the
-                # real HTTP status can't change now. Without this, the
-                # connection just dropped mid-stream with nothing in the body
-                # and nothing in our own logs: the runner's
-                # llm_call sees a truncated response and treats it as an empty
-                # completion instead of a real failure. Logging the gateway's
-                # actual error body here is the only place that's ever visible.
-                # `.text` is guarded, not just null-checked: on a streamed
-                # response httpx leaves the body unread and raises
-                # ResponseNotRead. That secondary exception used to kill this
-                # handler before either the log line or the error chunk below —
-                # so the stream ended silently and the runner recorded an empty
-                # assistant message (llm_client now pre-reads the body, this is
-                # the second line of defence so a diagnostic can never again
-                # throw over the failure it is describing).
-                try:
-                    body = exc.response.text if exc.response is not None else ""
-                except Exception:
-                    body = "<unread>"
-                logger.error(
-                    "LLM gateway error mid-stream (model=%s): %s — %s",
-                    request.model,
-                    exc,
-                    body[:2000],
-                )
-                # The gateway's own body goes to the runner too, not just to our
-                # logs: "Client error '404 Not Found'" alone never explains that
-                # the selected model can't do chat completions.
-                message = f"{exc} — {body[:2000]}" if body else str(exc)
-                yield f"data: {json.dumps({'error': {'message': message}})}\n\n"
-            else:
-                if last_usage is not None:
-                    # Guarded exactly like the cancel() below: by this point
-                    # every content chunk has already been delivered, so an
-                    # accounting failure (a QuotaInvariantError on a
-                    # conflicting repeat completion, a database still down
-                    # after _retry_transient) must not be allowed to escape.
-                    # Unguarded it skipped generation.end() — leaking the
-                    # Langfuse span — and the `[DONE]` line below, leaving the
-                    # runner with a truncated transport instead of a clean end
-                    # to a request that actually succeeded.
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(
-                                quota.complete(
-                                    org_id,
-                                    quota_request_id,
-                                    last_usage[0],
-                                    last_usage[1],
-                                    last_usage[2],
-                                )
-                            ),
-                            timeout=3.0,
-                        )
-                    except Exception:
-                        logger.error(
-                            "quota completion failed, tokens unaccounted "
-                            "(request_id=%s org_id=%s model=%s)",
-                            quota_request_id,
-                            org_id,
-                            request.model,
-                            exc_info=True,
-                        )
-                elif provider_accepted:
-                    # The stream ended cleanly but the provider never sent a
-                    # usage block (a gateway that drops stream_options, a model
-                    # that reports nothing). The request itself stays counted —
-                    # it was accepted — but its tokens never will be, and that
-                    # has to be visible somewhere. Gated on provider_accepted
-                    # so the DEBUG mock stream, which by design never reaches a
-                    # gateway and has its reservation cancelled below, stays
-                    # silent instead of warning once per local request.
-                    logger.warning(
-                        "LLM stream ended without usage, tokens unaccounted "
-                        "(request_id=%s org_id=%s model=%s)",
-                        quota_request_id,
-                        org_id,
-                        request.model,
-                    )
-            if generation:
-                generation.end(output={"completion": sanitize_content(full_output)})
-            yield "data: [DONE]\n\n"
-        finally:
-            if not provider_accepted:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(quota.cancel(org_id, quota_request_id)),
-                        timeout=3.0,
-                    )
-                except Exception:
-                    logger.warning(
-                        "quota reservation cleanup failed (request_id=%s org_id=%s model=%s)",
-                        quota_request_id,
-                        org_id,
-                        request.model,
-                        exc_info=True,
-                    )
-
-    return create_streaming_response(event_generator())
+    return create_streaming_response(
+        proxy_completion_events(
+            llm_request,
+            quota=quota,
+            org_id=org_id,
+            request_id=quota_request_id,
+            model=request.model,
+            generation=generation,
+            log=logger,
+        )
+    )
 
 
 @router.get("/conversations")

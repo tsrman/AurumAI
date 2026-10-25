@@ -447,6 +447,10 @@
       "images_generate": {
         "label": "Generate images",
         "description": "Create and edit images in chat with the organization's image models."
+      },
+      "agents_hermes": {
+        "label": "Use Hermes Agent",
+        "description": "Run the Hermes Agent system agent in its isolated sandbox."
       }
     }
   },

@@ -40,6 +40,8 @@ from src.routers import (
     web_sources,
     image_tools_internal,
     conversation_images,
+    hermes,
+    hermes_internal,
     workflow_runs_internal,
     workflows,
 )
@@ -125,6 +127,8 @@ app = create_app(
         (web_sources.router, "/v1", "web-sources"),
         (image_tools_internal.router, "/v1/internal", "internal-image-tools"),
         (conversation_images.router, "/v1", "conversation-images"),
+        (hermes.router, "/v1", "hermes"),
+        (hermes_internal.router, "/v1/internal", "internal-hermes"),
         (turns.router, "/v1", "turns"),
     ],
 )
