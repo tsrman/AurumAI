@@ -17,8 +17,12 @@ labels. skill-executor talks to Hermes only through `docker exec` of
 a JSON object.
 
 Ownership is in Docker labels, so a restarted executor re-adopts live sandboxes
-instead of reaping them; a reaper removes sandboxes past their idle or absolute
-lifetime and networks or volumes left without a sandbox.
+instead of reaping them. A sandbox past its idle or absolute lifetime is
+retired: stopped, its workspace snapshotted (src/hermes_snapshots.py), then
+removed; the session's next create restores the snapshot into a fresh sandbox.
+A sandbox whose snapshot fails stays stopped with its volume, is retried, and
+can be resumed, and is removed only when the snapshot retention runs out. The
+reaper also removes networks or volumes left without a sandbox.
 """
 
 from __future__ import annotations
@@ -31,15 +35,18 @@ import json
 import logging
 import secrets
 import tarfile
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 import aiodocker
 from aiodocker.exceptions import DockerError
 
 from src.config import Settings
+from src.hermes_snapshots import Snapshot, SnapshotError, SnapshotStore, to_thread_sanitize
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +63,8 @@ DISABLED_TOOLSETS = (
     "feishu_doc", "feishu_drive", "homeassistant", "image_gen", "kanban", "search",
     "spotify", "tts", "video", "video_gen", "web", "x_search", "yuanbao",
 )
+_CHUNK = 64 * 1024
+Outcome = Literal["existing", "created", "restored", "resumed"]
 
 
 class HermesSandboxError(Exception):
@@ -74,6 +83,10 @@ class HermesSandbox:
     volume: str
     created_at: float
     last_active: float = field(default_factory=time.time)
+    # "retiring" while it is being stopped and snapshotted.
+    state: Literal["running", "stopped", "retiring"] = "running"
+    stopped_at: float | None = None
+    snapshot_attempt_at: float = 0.0
 
 
 def resource_name(session_id: str) -> str:
@@ -137,12 +150,17 @@ def bounded_json_lines(data: bytes, limit: int) -> tuple[list[dict[str, Any]], b
 
 
 class DockerHermesSandboxes:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, store: SnapshotStore | None = None) -> None:
         self._settings = settings
+        self._store = store or SnapshotStore(settings)
         self._docker: aiodocker.Docker | None = None
         self._sandboxes: dict[str, HermesSandbox] = {}
-        self._create_lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
         self._ready = False
+        self._swept_at = 0.0
+
+    def _lock(self, session_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(session_id, asyncio.Lock())
 
     @property
     def docker(self) -> aiodocker.Docker:
@@ -181,11 +199,12 @@ class DockerHermesSandboxes:
             session_id = labels.get(SESSION_LABEL, "")
             if not session_id or session_id in self._sandboxes:
                 continue
-            self._sandboxes[session_id] = self._from_labels(container.id, labels)
+            running = container._container.get("State") in ("running", "restarting")
+            self._sandboxes[session_id] = self._from_labels(container.id, labels, running)
             adopted += 1
         return adopted
 
-    def _from_labels(self, container_id: str, labels: dict[str, str]) -> HermesSandbox:
+    def _from_labels(self, container_id: str, labels: dict[str, str], running: bool = True) -> HermesSandbox:
         session_id = labels[SESSION_LABEL]
         return HermesSandbox(
             session_id=session_id,
@@ -195,12 +214,21 @@ class DockerHermesSandboxes:
             network=resource_name(session_id),
             volume=resource_name(session_id),
             created_at=float(labels.get(CREATED_LABEL, "0") or 0),
+            state="running" if running else "stopped",
+            # Counted from adoption: a restart extends a stopped sandbox's retention.
+            stopped_at=None if running else time.time(),
         )
 
     def get(self, session_id: str) -> HermesSandbox:
         sandbox = self._sandboxes.get(session_id)
         if sandbox is None:
             raise HermesSandboxError("hermes_sandbox_not_found")
+        return sandbox
+
+    def get_running(self, session_id: str) -> HermesSandbox:
+        sandbox = self.get(session_id)
+        if sandbox.state != "running":
+            raise HermesSandboxError("hermes_sandbox_stopped")
         return sandbox
 
     def touch(self, session_id: str) -> None:
@@ -289,59 +317,129 @@ class DockerHermesSandboxes:
         }
 
     async def create(
-        self, *, session_id: str, org_id: str, conversation_id: str, token: str, model: str
-    ) -> tuple[HermesSandbox, bool]:
-        """The session's sandbox, created if it does not exist yet."""
+        self,
+        *,
+        session_id: str,
+        org_id: str,
+        conversation_id: str,
+        token: str,
+        model: str,
+        snapshot_sha256: str | None = None,
+        restore: bool = True,
+    ) -> tuple[HermesSandbox, Outcome]:
+        """The session's sandbox: the running one, a stopped one resumed, or a
+        new one, restored from `snapshot_sha256` or else the latest snapshot."""
         if not self._ready:
             await self.ready()
-        async with self._create_lock:
+        async with self._lock(session_id):
             existing = self._sandboxes.get(session_id)
             if existing is not None:
                 if (existing.org_id, existing.conversation_id) != (org_id, conversation_id):
                     raise HermesSandboxError("hermes_sandbox_owner_mismatch")
-                return existing, False
-            name = resource_name(session_id)
-            created = time.time()
-            labels = self._labels(session_id, org_id, conversation_id, created)
-            try:
-                await self._create_network(name, labels)
-                await self._connect_guard(name)
-                await self.docker.volumes.create({"Name": name, "Labels": labels})  # type: ignore[no-untyped-call]
-                container = await self.docker.containers.create(
-                    config=self._container_config(name, labels), name=name
-                )
-                api_key = secrets.token_urlsafe(32)
-                config = hermes_config(self._settings, model=model, token=token, api_key=api_key)
-                proxy = f"http://hermes:{token}@{self._settings.hermes_proxy_address}"
-                await container.put_archive(  # type: ignore[no-untyped-call]
-                    "/workspace",
-                    _tar(
-                        {
-                            ".hermes/config.yaml": json.dumps(config, indent=1).encode(),
-                            ".aurum/proxy": proxy.encode(),
-                        }
-                    ),
-                )
-                await container.start()
-            except Exception:
-                await self._remove(name)
-                raise
-            sandbox = HermesSandbox(
+                if existing.state == "running":
+                    return existing, "existing"
+                if time.time() - existing.created_at < self._settings.hermes_max_lifetime_seconds:
+                    return await self._resume(existing, token=token, model=model), "resumed"
+                # Past its lifetime: a snapshot and a fresh sandbox, as for a running one.
+                await self._retire(existing)
+            if snapshot_sha256 is not None and not self._store.enabled:
+                raise HermesSandboxError("hermes_snapshot_unavailable")
+            sandbox, restored = await self._provision(
                 session_id=session_id,
                 org_id=org_id,
                 conversation_id=conversation_id,
-                container_id=container.id,
-                network=name,
-                volume=name,
-                created_at=created,
+                token=token,
+                model=model,
+                snapshot_sha256=snapshot_sha256,
+                restore=restore,
             )
-            self._sandboxes[session_id] = sandbox
+            try:
+                await self._wait_healthy(sandbox)
+            except Exception:
+                self._sandboxes.pop(session_id, None)
+                await self._remove(sandbox.network)
+                raise
+        return sandbox, "restored" if restored else "created"
+
+    async def _secrets(self, container: Any, *, token: str, model: str) -> None:
+        api_key = secrets.token_urlsafe(32)
+        config = hermes_config(self._settings, model=model, token=token, api_key=api_key)
+        proxy = f"http://hermes:{token}@{self._settings.hermes_proxy_address}"
+        await container.put_archive(
+            "/workspace",
+            _tar({".hermes/config.yaml": json.dumps(config, indent=1).encode(), ".aurum/proxy": proxy.encode()}),
+        )
+
+    async def _provision(
+        self,
+        *,
+        session_id: str,
+        org_id: str,
+        conversation_id: str,
+        token: str,
+        model: str,
+        snapshot_sha256: str | None,
+        restore: bool,
+    ) -> tuple[HermesSandbox, bool]:
+        name = resource_name(session_id)
+        created = time.time()
+        labels = self._labels(session_id, org_id, conversation_id, created)
+        restored = False
         try:
-            await self._wait_healthy(sandbox)
+            await self._create_network(name, labels)
+            await self._connect_guard(name)
+            await self.docker.volumes.create({"Name": name, "Labels": labels})  # type: ignore[no-untyped-call]
+            container = await self.docker.containers.create(
+                config=self._container_config(name, labels), name=name
+            )
+            sha = snapshot_sha256
+            if sha is None and restore and self._store.enabled:
+                sha = await self._store.latest(org_id, conversation_id)
+            if sha is not None:
+                await self._restore(container, org_id, conversation_id, sha)
+                restored = True
+            # After the restore, so the platform's files are always the current ones.
+            await self._secrets(container, token=token, model=model)
+            await container.start()
+        except SnapshotError as exc:
+            await self._remove(name)
+            raise HermesSandboxError(exc.code) from None
+        except TimeoutError:
+            await self._remove(name)
+            raise HermesSandboxError("hermes_snapshot_timeout") from None
         except Exception:
-            await self.close(session_id)
+            await self._remove(name)
             raise
-        return sandbox, True
+        sandbox = HermesSandbox(
+            session_id=session_id,
+            org_id=org_id,
+            conversation_id=conversation_id,
+            container_id=container.id,
+            network=name,
+            volume=name,
+            created_at=created,
+        )
+        self._sandboxes[session_id] = sandbox
+        return sandbox, restored
+
+    async def _resume(self, sandbox: HermesSandbox, *, token: str, model: str) -> HermesSandbox:
+        """Start a stopped sandbox again with a fresh token and API key."""
+        try:
+            container = await self.docker.containers.get(sandbox.container_id)
+            await self._connect_guard(sandbox.network)
+            await self._secrets(container, token=token, model=model)
+            await container.start()
+        except DockerError:
+            raise HermesSandboxError("hermes_resume_failed") from None
+        resumed = replace(sandbox, state="running", stopped_at=None, last_active=time.time())
+        self._sandboxes[sandbox.session_id] = resumed
+        try:
+            await self._wait_healthy(resumed)
+        except Exception:
+            await self._stop_container(resumed)
+            self._sandboxes[sandbox.session_id] = sandbox
+            raise
+        return resumed
 
     async def _wait_healthy(self, sandbox: HermesSandbox) -> None:
         deadline = time.monotonic() + self._settings.hermes_start_timeout_seconds
@@ -386,7 +484,7 @@ class DockerHermesSandboxes:
             await stream.close()
 
     async def run(self, session_id: str, request: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        sandbox = self.get(session_id)
+        sandbox = self.get_running(session_id)
         key = hashlib.sha256(str(request["key"]).encode()).hexdigest()
         container = await self.docker.containers.get(sandbox.container_id)
         await container.put_archive(  # type: ignore[no-untyped-call]
@@ -397,20 +495,116 @@ class DockerHermesSandboxes:
             yield line
 
     async def events(self, session_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
-        sandbox = self.get(session_id)
+        sandbox = self.get_running(session_id)
         async for line in self._stream(sandbox, ["hermes-relay", "events", run_id]):
             yield line
 
     async def stop(self, session_id: str, run_id: str) -> None:
-        sandbox = self.get(session_id)
+        sandbox = self.get_running(session_id)
         await self._exec(sandbox, ["hermes-relay", "stop", run_id])
+
+    # Snapshots ---------------------------------------------------------------
+
+    def _archive_limit(self) -> int:
+        # Tar headers and padding on top of the content bound.
+        return self._settings.hermes_snapshot_max_bytes + 1536 * self._settings.hermes_snapshot_max_entries
+
+    def _tempdir(self) -> tempfile.TemporaryDirectory[str]:
+        return tempfile.TemporaryDirectory(prefix="hermes-snapshot-", dir=self._settings.hermes_snapshot_dir)
+
+    async def _workspace_archive(self, container_id: str, path: Path) -> None:
+        """Docker's archive of /workspace, written to `path` within the bound."""
+        limit, size = self._archive_limit(), 0
+        async with self.docker._query(
+            f"containers/{container_id}/archive", method="GET", params={"path": "/workspace"}, timeout=None
+        ) as response:
+            with path.open("xb") as target:
+                path.chmod(0o600)
+                async for block in response.content.iter_chunked(_CHUNK):
+                    size += len(block)
+                    if size > limit:
+                        raise SnapshotError("hermes_snapshot_too_large")
+                    target.write(block)
+
+    async def _snapshot(self, sandbox: HermesSandbox) -> Snapshot:
+        try:
+            async with asyncio.timeout(self._settings.hermes_snapshot_timeout_seconds):
+                with self._tempdir() as directory:
+                    raw, clean = Path(directory, "workspace.tar"), Path(directory, "snapshot.tar")
+                    await self._workspace_archive(sandbox.container_id, raw)
+                    snapshot = await to_thread_sanitize(raw, clean, strip="workspace", settings=self._settings)
+                    raw.unlink()
+                    await self._store.put(sandbox.org_id, sandbox.conversation_id, clean, snapshot, sandbox.session_id)
+                    return snapshot
+        except SnapshotError as exc:
+            raise HermesSandboxError(exc.code) from None
+        except TimeoutError:
+            raise HermesSandboxError("hermes_snapshot_timeout") from None
+        except (DockerError, OSError):
+            raise HermesSandboxError("hermes_snapshot_failed") from None
+
+    async def _restore(self, container: Any, org_id: str, conversation_id: str, sha256: str) -> None:
+        """Verify the snapshot, rebuild it as a clean archive and unpack that."""
+        async with asyncio.timeout(self._settings.hermes_snapshot_timeout_seconds):
+            with self._tempdir() as directory:
+                fetched, clean = Path(directory, "fetched.tar"), Path(directory, "restore.tar")
+                await self._store.fetch(org_id, conversation_id, sha256, fetched, self._archive_limit())
+                await to_thread_sanitize(fetched, clean, strip=None, settings=self._settings)
+                fetched.unlink()
+                with clean.open("rb") as archive:
+                    await container.put_archive("/workspace", archive)
+
+    async def snapshot(self, session_id: str) -> Snapshot:
+        """Snapshot a sandbox in place; it keeps running."""
+        if not self._store.enabled:
+            raise HermesSandboxError("hermes_snapshot_unavailable")
+        async with self._lock(session_id):
+            return await self._snapshot(self.get(session_id))
+
+    async def _stop_container(self, sandbox: HermesSandbox) -> None:
+        try:
+            container = await self.docker.containers.get(sandbox.container_id)
+            await container.stop(t=self._settings.hermes_stop_timeout_seconds)
+        except DockerError:
+            pass
+
+    async def _retire(self, sandbox: HermesSandbox) -> Snapshot | None:
+        """Stop, snapshot and remove; on a failed snapshot the sandbox stays
+        stopped with its volume. Called with the session's lock held."""
+        session_id = sandbox.session_id
+        self._sandboxes[session_id] = replace(sandbox, state="retiring")
+        await self._stop_container(sandbox)
+        snapshot = None
+        if self._store.enabled:
+            try:
+                snapshot = await self._snapshot(sandbox)
+            except Exception as exc:
+                # Never left "retiring": the reaper would skip it for good.
+                now = time.time()
+                self._sandboxes[session_id] = replace(
+                    sandbox, state="stopped", stopped_at=sandbox.stopped_at or now, snapshot_attempt_at=now
+                )
+                if isinstance(exc, HermesSandboxError):
+                    raise
+                raise HermesSandboxError("hermes_snapshot_failed") from exc
+        self._sandboxes.pop(session_id, None)
+        await self._remove(sandbox.network)
+        return snapshot
 
     # Removal and reaping ----------------------------------------------------
 
-    async def close(self, session_id: str) -> None:
-        """Idempotent; also removes what a crashed create left behind."""
-        self._sandboxes.pop(session_id, None)
-        await self._remove(resource_name(session_id))
+    async def close(self, session_id: str, *, snapshot: bool = False) -> Snapshot | None:
+        """Idempotent; also removes what a crashed create left behind. With
+        `snapshot`, a failed snapshot keeps the sandbox, stopped."""
+        async with self._lock(session_id):
+            sandbox = self._sandboxes.get(session_id)
+            if snapshot and sandbox is not None:
+                if not self._store.enabled:
+                    raise HermesSandboxError("hermes_snapshot_unavailable")
+                return await self._retire(sandbox)
+            self._sandboxes.pop(session_id, None)
+            await self._remove(resource_name(session_id))
+            return None
 
     async def _remove(self, name: str) -> None:
         try:
@@ -443,19 +637,54 @@ class DockerHermesSandboxes:
             except DockerError:
                 logger.warning("could not reconnect hermes-egress to %s", sandbox.network, exc_info=True)
 
-    async def reap(self) -> int:
-        now = time.time()
-        expired = [
-            sandbox.session_id
-            for sandbox in self._sandboxes.values()
-            if now - sandbox.created_at >= self._settings.hermes_max_lifetime_seconds
+    def _expired(self, sandbox: HermesSandbox, now: float) -> bool:
+        return (
+            now - sandbox.created_at >= self._settings.hermes_max_lifetime_seconds
             or now - sandbox.last_active >= self._settings.hermes_idle_ttl_seconds
-        ]
-        for session_id in expired:
-            logger.info("Reaping Hermes sandbox %s", session_id)
-            await self.close(session_id)
-        await self._reap_leftovers(now)
-        return len(expired)
+        )
+
+    async def reap(self) -> int:
+        """Retire expired sandboxes and retry stopped ones; returns how many went."""
+        settings = self._settings
+        reaped = 0
+        for session_id in list(self._sandboxes):
+            async with self._lock(session_id):
+                sandbox = self._sandboxes.get(session_id)
+                now = time.time()
+                if sandbox is None or sandbox.state == "retiring":
+                    continue
+                if sandbox.state == "stopped":
+                    if now - (sandbox.stopped_at or now) >= settings.hermes_snapshot_retention_seconds:
+                        logger.warning("Removing Hermes sandbox %s: no snapshot within the retention", session_id)
+                        self._sandboxes.pop(session_id, None)
+                        await self._remove(sandbox.network)
+                        reaped += 1
+                        continue
+                    if now - sandbox.snapshot_attempt_at < settings.hermes_snapshot_retry_seconds:
+                        continue
+                elif not self._expired(sandbox, now):
+                    continue
+                logger.info("Retiring Hermes sandbox %s", session_id)
+                try:
+                    await self._retire(sandbox)
+                    reaped += 1
+                except HermesSandboxError as exc:
+                    logger.warning("Hermes sandbox %s kept stopped: %s", session_id, exc.code)
+        await self._reap_leftovers(time.time())
+        await self._sweep_snapshots()
+        return reaped
+
+    async def _sweep_snapshots(self) -> None:
+        now = time.time()
+        if not self._store.enabled or now - self._swept_at < self._settings.hermes_snapshot_sweep_interval_seconds:
+            return
+        self._swept_at = now
+        try:
+            removed = await self._store.sweep(now - self._settings.hermes_snapshot_retention_seconds)
+            if removed:
+                logger.info("Removed %s Hermes snapshot objects past the retention", removed)
+        except Exception:
+            logger.warning("Hermes snapshot sweep failed", exc_info=True)
 
     async def _reap_leftovers(self, now: float) -> None:
         # A labelled container still running is a sandbox, adopted or not: only

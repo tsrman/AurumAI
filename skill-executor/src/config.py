@@ -95,6 +95,21 @@ class Settings(BaseSettings):
     # Networks and volumes left without their sandbox are removed after this.
     hermes_orphan_grace_seconds: int = 600
     hermes_event_line_max_bytes: int = 256 * 1024
+    hermes_stop_timeout_seconds: int = 10
+    # Workspace snapshots (src/hermes_snapshots.py) in the s3_* bucket. Off
+    # without an S3 endpoint; expired sandboxes are then removed outright.
+    hermes_snapshot_enabled: bool = True
+    hermes_snapshot_max_bytes: int = 1024 * 1024 * 1024
+    hermes_snapshot_max_entries: int = 200_000
+    hermes_snapshot_keep: int = 2
+    hermes_snapshot_retention_seconds: int = 7 * 86400
+    # A sandbox whose snapshot failed stays stopped, with its volume, and is
+    # retried at this interval until the retention above runs out.
+    hermes_snapshot_retry_seconds: int = 300
+    hermes_snapshot_timeout_seconds: float = 900.0
+    hermes_snapshot_sweep_interval_seconds: int = 3600
+    # Temporary archives (up to twice the snapshot bound); the system default if unset.
+    hermes_snapshot_dir: str | None = None
 
 
 settings = Settings()

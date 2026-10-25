@@ -2,7 +2,8 @@
 
 Off unless SKILL_EXECUTOR_HERMES_ENABLED; Docker only for now, so the
 Kubernetes runtime refuses explicitly. Run and event streams are NDJSON of the
-relay's lines, which callers treat as untrusted data.
+relay's lines, which callers treat as untrusted data. Snapshot metadata is
+returned to the caller, which phase 4 records in the session row.
 """
 
 import json
@@ -15,10 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
 from src.hermes_runtime import DockerHermesSandboxes, HermesSandbox, HermesSandboxError
+from src.hermes_snapshots import Snapshot
 
 router = APIRouter(prefix="/hermes")
 sandboxes = DockerHermesSandboxes(settings)
 _SESSION = r"^[0-9a-f]{32}$"
+# Both become parts of snapshot object keys.
+_OWNER = r"^[A-Za-z0-9-]{1,64}$"
 _STATUS = {
     "hermes_sandbox_not_found": 404,
     "hermes_sandbox_owner_mismatch": 409,
@@ -27,6 +31,13 @@ _STATUS = {
     "hermes_start_timeout": 504,
     "docker_too_old_for_isolated_networks": 503,
     "hermes_egress_guard_missing": 503,
+    "hermes_sandbox_stopped": 409,
+    "hermes_snapshot_unavailable": 409,
+    "hermes_snapshot_not_found": 404,
+    "hermes_snapshot_too_large": 507,
+    "hermes_snapshot_store_failed": 503,
+    "hermes_snapshot_timeout": 504,
+    "hermes_resume_failed": 502,
 }
 
 
@@ -34,10 +45,15 @@ class CreateSandboxRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: str = Field(pattern=_SESSION)
-    org_id: str = Field(min_length=1, max_length=64)
-    conversation_id: str = Field(min_length=1, max_length=64)
+    org_id: str = Field(pattern=_OWNER)
+    conversation_id: str = Field(pattern=_OWNER)
     token: str = Field(min_length=16, max_length=8192)
     model: str = Field(min_length=1, max_length=255)
+    # The snapshot to restore when a new sandbox is created; the latest one
+    # if unset, none with restore=false. A running or stopped sandbox keeps
+    # its own workspace.
+    snapshot_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    restore: bool = True
 
 
 class RunRequest(BaseModel):
@@ -66,7 +82,14 @@ def _view(sandbox: HermesSandbox) -> dict[str, Any]:
         "created_at": sandbox.created_at,
         "last_active": sandbox.last_active,
         "expires_at": sandbox.created_at + settings.hermes_max_lifetime_seconds,
+        "state": sandbox.state,
     }
+
+
+def _snapshot_view(snapshot: Snapshot | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    return {"sha256": snapshot.sha256, "size": snapshot.size, "created_at": snapshot.created_at}
 
 
 async def _ndjson(lines: AsyncIterator[dict[str, Any]]) -> AsyncIterator[bytes]:
@@ -81,18 +104,20 @@ async def _ndjson(lines: AsyncIterator[dict[str, Any]]) -> AsyncIterator[bytes]:
 async def create_sandbox(data: CreateSandboxRequest, response: Response) -> dict[str, Any]:
     _available()
     try:
-        sandbox, created = await sandboxes.create(
+        sandbox, outcome = await sandboxes.create(
             session_id=data.session_id,
             org_id=data.org_id,
             conversation_id=data.conversation_id,
             token=data.token,
             model=data.model,
+            snapshot_sha256=data.snapshot_sha256,
+            restore=data.restore,
         )
     except HermesSandboxError as exc:
         raise _error(exc) from None
-    if not created:
+    if outcome == "existing":
         response.status_code = 200
-    return _view(sandbox)
+    return {**_view(sandbox), "outcome": outcome}
 
 
 @router.get("/sandboxes/{session_id}")
@@ -108,7 +133,7 @@ async def get_sandbox(session_id: str) -> dict[str, Any]:
 async def start_run(session_id: str, data: RunRequest) -> StreamingResponse:
     _available()
     try:
-        sandboxes.get(session_id)
+        sandboxes.get_running(session_id)
     except HermesSandboxError as exc:
         raise _error(exc) from None
     return StreamingResponse(
@@ -123,7 +148,7 @@ async def run_events(session_id: str, run_id: str) -> StreamingResponse:
     if not run_id.replace("_", "").isalnum() or len(run_id) > 128:
         raise HTTPException(status_code=400, detail="Invalid run id")
     try:
-        sandboxes.get(session_id)
+        sandboxes.get_running(session_id)
     except HermesSandboxError as exc:
         raise _error(exc) from None
     return StreamingResponse(_ndjson(sandboxes.events(session_id, run_id)), media_type="application/x-ndjson")
@@ -141,10 +166,28 @@ async def stop_run(session_id: str, run_id: str) -> dict[str, str]:
     return {"status": "stopping"}
 
 
-@router.delete("/sandboxes/{session_id}", status_code=204)
-async def close_sandbox(session_id: str) -> Response:
+@router.post("/sandboxes/{session_id}/snapshot")
+async def snapshot_sandbox(session_id: str) -> dict[str, Any]:
+    _available()
+    try:
+        return _snapshot_view(await sandboxes.snapshot(session_id)) or {}
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+
+
+@router.delete("/sandboxes/{session_id}")
+async def close_sandbox(session_id: str, snapshot: bool = False) -> Response:
+    """With ?snapshot=true: stop, snapshot, then remove, answering with the
+    snapshot; a failed snapshot leaves the sandbox stopped and is an error."""
     _available()
     if not session_id.isalnum() or len(session_id) != 32:
         raise HTTPException(status_code=400, detail="Invalid session id")
-    await sandboxes.close(session_id)
-    return Response(status_code=204)
+    try:
+        taken = await sandboxes.close(session_id, snapshot=snapshot)
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+    if taken is None:
+        return Response(status_code=204)
+    return Response(
+        content=json.dumps({"snapshot": _snapshot_view(taken)}), media_type="application/json", status_code=200
+    )

@@ -38,16 +38,22 @@ class FakeContainer:
         self.id = f"id-{name}"
         self.name = name
         self.config = config or {}
-        self._container = {"Labels": (config or {}).get("Labels", {})}
+        self._container = {"Labels": (config or {}).get("Labels", {}), "State": "created"}
         self.archives: list[tuple[str, bytes]] = []
         self.started = False
+        self.stopped = False
         self.deleted = False
 
-    async def put_archive(self, path: str, data: bytes) -> None:
-        self.archives.append((path, data))
+    async def put_archive(self, path: str, data: Any) -> None:
+        self.archives.append((path, data if isinstance(data, bytes) else data.read()))
 
     async def start(self) -> None:
-        self.started = True
+        self.started, self.stopped = True, False
+        self._container["State"] = "running"
+
+    async def stop(self, t: int | None = None) -> None:
+        self.stopped = True
+        self._container["State"] = "exited"
 
     async def delete(self, force: bool = False) -> None:
         self.deleted = True
@@ -175,7 +181,7 @@ async def test_a_sandbox_gets_its_own_isolated_network_and_a_hardened_container(
 
     name = resource_name(SESSION)
     network = daemon.network_map[name]
-    assert created and sandbox.network == name
+    assert created == "created" and sandbox.network == name
     assert network.config["Internal"] is True
     assert network.config["Options"] == {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
     assert network.config["IPAM"]["Config"][0]["Subnet"].endswith("/28")
@@ -248,7 +254,7 @@ async def test_creating_again_returns_the_same_sandbox_but_never_another_owners(
     first, _ = await _create(sandboxes)
     again, created = await _create(sandboxes)
 
-    assert again == first and created is False
+    assert again == first and created == "existing"
     with pytest.raises(HermesSandboxError, match="owner_mismatch"):
         await sandboxes.create(session_id=SESSION, org_id="org-2", conversation_id="conv-1", token=TOKEN, model="m")
 

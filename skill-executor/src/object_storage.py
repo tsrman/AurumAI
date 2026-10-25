@@ -1,7 +1,8 @@
 """Read-only MinIO/S3 client — skill-executor only ever fetches bundles that
 business-backend already validated and stored (see
 business-backend/src/services/object_storage.py, business-backend/src/
-services/skill_bundle.py); it never writes here."""
+services/skill_bundle.py); it never writes here. Hermes workspace snapshots
+are the one thing skill-executor writes, through src/hermes_snapshots.py."""
 
 import asyncio
 from typing import Any

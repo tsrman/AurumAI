@@ -8,7 +8,11 @@
 # user, a read-only root filesystem, no secrets in the container's metadata,
 # no route to another sandbox or the host, re-adoption after an executor
 # restart, reconnection after the guard is recreated, and that closing or
-# idle expiry leaves no container, network or volume behind.
+# idle expiry leaves no container, network or volume behind. Phase 2c-ii adds
+# workspace snapshots in a disposable MinIO: an idle sandbox's workspace comes
+# back in a fresh sandbox without the old secrets, and a sandbox whose snapshot
+# cannot be stored stays stopped with its volume (also across an executor
+# restart), resumes, and is retired once the store is back.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000/58090, no other
 # aurum-ai-hermes-egress-guard container. Never point this at a shared stack.
@@ -21,6 +25,7 @@ JOURNAL=/tmp/hermes-egress-acceptance/fixture.json
 EXECUTOR=http://127.0.0.1:58090
 export HERMES_EGRESS_SERVICE_SECRET=hermes-egress-acceptance-service-secret
 export HERMES_EGRESS_MAX_MODE=packages HERMES_ENABLED=true SKILL_EXECUTOR_REAP_INTERVAL_SECONDS=5
+export SKILL_EXECUTOR_HERMES_SNAPSHOT_RETRY_SECONDS=5
 STACK=(docker compose -p "$PROJECT" --env-file /dev/null --project-directory "$ROOT_DIR" -f scripts/fixtures/hermes-egress-base.yml -f docker-compose.hermes.yml --profile hermes --profile hermes-sandbox)
 log() { printf '[hermes-sandbox] %s\n' "$*"; }
 fail() { log "FAIL: $*"; exit 1; }
@@ -60,9 +65,16 @@ journal() { python3 -c "import json,sys; print(json.load(open('$JOURNAL'))[sys.a
 inside() { docker exec "aurum-ai-hermes-$1" sh -c "$2"; }
 ip_of() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "aurum-ai-hermes-$1"; }
 create() {  # create <session hex>; prints the HTTP status
-  curl -s -o /dev/null -w '%{http_code}' -X POST "$EXECUTOR/hermes/sandboxes" -H 'Content-Type: application/json' \
-    -d "{\"session_id\":\"$1\",\"org_id\":\"$ORG\",\"conversation_id\":\"$CONVERSATION\",\"token\":\"$TOKEN\",\"model\":\"hermes-egress-test\"}"
+  create_json "$1" -o /dev/null -w '%{http_code}'
 }
+create_json() {  # create_json <session hex> [curl args]; prints the response
+  local session=$1; shift
+  curl -s "$@" -X POST "$EXECUTOR/hermes/sandboxes" -H 'Content-Type: application/json' \
+    -d "{\"session_id\":\"$session\",\"org_id\":\"$ORG\",\"conversation_id\":\"$CONVERSATION\",\"token\":\"$TOKEN\",\"model\":\"hermes-egress-test\"}"
+}
+outcome() { python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('outcome'))" "$1"; }
+state_of() { docker inspect -f '{{.State.Status}}' "aurum-ai-hermes-$1" 2>/dev/null || echo gone; }
+mc_() { docker exec "$PROJECT-minio-1" mc "$@"; }
 run_once() {  # run_once <session hex> <key>; prints the relay's result line
   curl -sN -X POST "$EXECUTOR/hermes/sandboxes/$1/runs" -H 'Content-Type: application/json' \
     -d "{\"key\":\"$2\",\"input\":\"Say hello.\",\"session_id\":\"$CONVERSATION\"}" | grep '"type":"result"' | tail -1
@@ -82,7 +94,7 @@ docker tag aurum-ai-postgres:latest aurum-ai-postgres:hermes-egress-test
 "${STACK[@]}" build migrate hermes-egress-guard skill-executor >/dev/null
 "${STACK[@]}" --profile build build hermes-sandbox >/dev/null
 log "starting the backend, hermes-egress and skill-executor"
-"${STACK[@]}" up -d --wait postgres redis temporal gateway keycloak >/dev/null
+"${STACK[@]}" up -d --wait postgres redis temporal gateway keycloak minio >/dev/null
 "${STACK[@]}" up -d backend >/dev/null
 for _ in $(seq 60); do curl -fsS http://127.0.0.1:58000/health >/dev/null 2>&1 && break; sleep 2; done
 "${STACK[@]}" up -d --wait hermes-egress-guard hermes-egress >/dev/null
@@ -146,10 +158,48 @@ docker volume inspect "aurum-ai-hermes-$A" >/dev/null 2>&1 || fail "the reaper r
 sleep 12
 expect_completed "$(run_once "$A" turn-4)"
 
-log "closing and idle expiry leave nothing behind"
+log "closing and idle expiry leave nothing behind, keeping the workspace in a snapshot"
+inside "$A" 'mkdir -p $HOME/project && echo kept > $HOME/project/kept.txt'
 curl -fsS -X DELETE "$EXECUTOR/hermes/sandboxes/$B" -o /dev/null || fail "closing B failed"
 gone "$B" || fail "closing B left resources behind"
 SKILL_EXECUTOR_HERMES_IDLE_TTL_SECONDS=15 "${STACK[@]}" up -d --force-recreate skill-executor >/dev/null
 for _ in $(seq 40); do gone "$A" && break; sleep 2; done
 gone "$A" || fail "idle sandbox A was not reaped"
+PREFIX="local/aurum-ai-business/hermes-sessions/$ORG/$CONVERSATION"
+SHA=$(mc_ cat "$PREFIX/latest.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha256'])") \
+  || fail "no snapshot pointer"
+mc_ cat "$PREFIX/$SHA.tar" > "$(dirname "$JOURNAL")/snapshot.tar"
+[[ "$(sha256sum < "$(dirname "$JOURNAL")/snapshot.tar" | cut -d' ' -f1)" == "$SHA" ]] || fail "the snapshot is not stored by its hash"
+grep -aq "$TOKEN" "$(dirname "$JOURNAL")/snapshot.tar" && fail "the session token is in the snapshot"
+tar -tf "$(dirname "$JOURNAL")/snapshot.tar" | grep -Eq '^(\.aurum|\.hermes/config\.yaml)' && fail "platform files are in the snapshot"
+rm -f "$(dirname "$JOURNAL")/snapshot.tar"
+
+log "the next create restores the workspace into a fresh sandbox"
+for _ in $(seq 30); do curl -fsS "$EXECUTOR/health" >/dev/null 2>&1 && break; sleep 1; done
+[[ "$(outcome "$(create_json "$A")")" == restored ]] || fail "sandbox A was not restored"
+[[ "$(inside "$A" 'cat $HOME/project/kept.txt')" == kept ]] || fail "the workspace did not come back"
+[[ "$(inside "$A" 'stat -c %u $HOME/project')" == 10001 ]] || fail "a restored directory is not the sandbox user's"
+expect_completed "$(run_once "$A" turn-5)"
+
+log "without the store, an idle sandbox stays stopped with its volume and resumes"
+"${STACK[@]}" stop minio >/dev/null
+for _ in $(seq 40); do [[ "$(state_of "$A")" == exited ]] && break; sleep 2; done
+[[ "$(state_of "$A")" == exited ]] || fail "idle sandbox A was not stopped: $(state_of "$A")"
+sleep 12
+[[ "$(state_of "$A")" == exited ]] || fail "sandbox A did not stay stopped without the store"
+docker volume inspect "aurum-ai-hermes-$A" >/dev/null 2>&1 || fail "the workspace of a failed snapshot was removed"
+docker restart "$PROJECT-skill-executor-1" >/dev/null
+for _ in $(seq 30); do curl -fsS "$EXECUTOR/health" >/dev/null 2>&1 && break; sleep 1; done
+sleep 12
+[[ "$(state_of "$A")" == exited ]] || fail "a restarted executor changed stopped sandbox A: $(state_of "$A")"
+docker volume inspect "aurum-ai-hermes-$A" >/dev/null 2>&1 || fail "a restarted executor removed a stopped workspace"
+[[ "$(outcome "$(create_json "$A")")" == resumed ]] || fail "stopped sandbox A was not resumed"
+[[ "$(inside "$A" 'cat $HOME/project/kept.txt')" == kept ]] || fail "the resumed workspace changed"
+expect_completed "$(run_once "$A" turn-6)"
+
+log "once the store is back, the stopped sandbox is snapshotted and removed"
+for _ in $(seq 40); do [[ "$(state_of "$A")" == exited ]] && break; sleep 2; done
+"${STACK[@]}" up -d --wait minio >/dev/null
+for _ in $(seq 40); do gone "$A" && break; sleep 2; done
+gone "$A" || fail "stopped sandbox A was not retired after the store came back"
 log "PASS"

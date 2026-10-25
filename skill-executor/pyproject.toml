@@ -46,7 +46,7 @@ strict = true
 # No upstream stubs/py.typed markers exist for these.
 
 [[tool.mypy.overrides]]
-module = ["aiodocker.*", "aioboto3.*"]
+module = ["aiodocker.*", "aioboto3.*", "botocore.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
