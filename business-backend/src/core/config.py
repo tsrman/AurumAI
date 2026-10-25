@@ -148,6 +148,14 @@ class Settings(BaseSettings):
     ARCHIVE_S3_REGION: str = "us-east-1"
     ARCHIVE_RAG_SERVICE_SECRET: SecretStr = SecretStr("")
     ARCHIVE_RAG_URL: str = "http://rag-archive:8111"
+    # Conversation image bytes in the platform bucket. Scope these credentials
+    # to the conversation-images/ prefix; without them, conversations that
+    # hold images stay unarchived.
+    ARCHIVE_IMAGES_S3_ENDPOINT: Optional[str] = None
+    ARCHIVE_IMAGES_S3_ACCESS_KEY: str = ""
+    ARCHIVE_IMAGES_S3_SECRET_KEY: SecretStr = SecretStr("")
+    ARCHIVE_IMAGES_S3_BUCKET: str = "aurum-ai-business"
+    ARCHIVE_IMAGES_S3_REGION: str = "us-east-1"
 
     # Skill bundle upload guardrails (see services/skill_bundle.py) —
     # deliberately small caps since bundles are admin-authored script

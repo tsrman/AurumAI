@@ -53,6 +53,16 @@ each Images API call is one request, plus the tokens the provider reports, and a
 exhausted quota stops the tool with `image_quota_exceeded`. Usage events record the
 kind of call, and Admin UI analytics shows images per model and per user.
 
+Conversations with images can now be archived: the operator-only archive copies
+each image's bytes into the archive bucket, verifies them, removes the platform copy
+before purging the rows and puts the bytes back on restore. The data worker needs
+separate platform-bucket credentials scoped to `conversation-images/*`
+(`APP_ARCHIVE_IMAGES_S3_*`); without them such conversations stay live. The archive
+format is now versioned (version 2 adds image counts and conversation images), which
+also restores verification and restore of archives created before image support:
+adding `interaction_turns.image_count` to the version-1 catalogue had made their
+parts unreadable.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

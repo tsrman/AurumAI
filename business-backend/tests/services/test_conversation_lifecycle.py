@@ -132,7 +132,9 @@ async def test_later_closed_root_never_erases_legacy_provenance_gap(db, test_org
     )
 
 @pytest.mark.asyncio
-async def test_conversations_with_images_are_not_archive_eligible(db, test_org, test_user):
+async def test_conversation_images_no_longer_block_archive_eligibility(db, test_org, test_user):
+    # Images are archived with their bytes; ArchiveService itself blocks them
+    # only while platform image storage is not configured.
     from src.models.conversation_image import ConversationImage
     from src.services.conversation_lifecycle import eligibility_blocker
 
@@ -156,7 +158,7 @@ async def test_conversations_with_images_are_not_archive_eligible(db, test_org, 
     identity = await db.scalar(
         select(ConversationIdentity).where(ConversationIdentity.id == conv.id)
     )
-    assert await eligibility_blocker(db, identity, conv, datetime.now(timezone.utc)) == (
+    assert await eligibility_blocker(db, identity, conv, datetime.now(timezone.utc)) != (
         "conversation_images"
     )
 

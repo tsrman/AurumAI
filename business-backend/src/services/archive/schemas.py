@@ -1,4 +1,4 @@
-"""Explicit v1 Parquet schemas. No inferred Arrow types or floating point money."""
+"""Explicit versioned Parquet schemas. No inferred Arrow types or floating point money."""
 
 import json
 import os
@@ -11,7 +11,7 @@ from uuid import UUID
 
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
-from src.services.archive.catalogue import COLUMNS
+from src.services.archive.catalogue import CURRENT_VERSION, catalogue
 
 
 class JsonNull(Enum):
@@ -35,8 +35,9 @@ def canonical(value: Any) -> str:
     )
 
 
-def schema_for(table: str) -> Any:
-    if table not in COLUMNS:
+def schema_for(table: str, version: int = CURRENT_VERSION) -> Any:
+    columns = catalogue(version)
+    if table not in columns:
         raise ArchiveFormatError("table_not_allowed")
     types = {
         "uuid": pa.string(),
@@ -49,22 +50,29 @@ def schema_for(table: str) -> Any:
         "float": pa.float64(),
     }
     fields = []
-    for name, kind, nullable in COLUMNS[table]:
+    for name, kind, nullable in columns[table]:
         datatype = (
             pa.decimal128(*map(int, kind.split(":")[1:]))
             if kind.startswith("decimal:")
             else types[kind]
         )
         fields.append(pa.field(name, datatype, nullable=nullable))
-    return pa.schema(fields, metadata={b"archive_version": b"1", b"table": table.encode()})
+    return pa.schema(
+        fields, metadata={b"archive_version": str(version).encode(), b"table": table.encode()}
+    )
 
 
-def encode_rows(table: str, rows: Iterable[Mapping[str, Any]], path: Path) -> None:
+def encode_rows(
+    table: str,
+    rows: Iterable[Mapping[str, Any]],
+    path: Path,
+    version: int = CURRENT_VERSION,
+) -> None:
     normalized = []
     size = 0
     for row in rows:
         result = {}
-        for name, kind, _ in COLUMNS[table]:
+        for name, kind, _ in catalogue(version)[table]:
             value = row.get(name)
             if value is not None:
                 if kind == "json":
@@ -90,7 +98,7 @@ def encode_rows(table: str, rows: Iterable[Mapping[str, Any]], path: Path) -> No
     os.close(descriptor)
     try:
         pq.write_table(
-            pa.Table.from_pylist(normalized, schema=schema_for(table)),
+            pa.Table.from_pylist(normalized, schema=schema_for(table, version)),
             path,
             compression="zstd",
             row_group_size=ROWS_PER_PART,
@@ -102,11 +110,13 @@ def encode_rows(table: str, rows: Iterable[Mapping[str, Any]], path: Path) -> No
         raise
 
 
-def read_rows(table: str, path: Path) -> Iterator[dict[str, Any]]:
+def read_rows(
+    table: str, path: Path, version: int = CURRENT_VERSION
+) -> Iterator[dict[str, Any]]:
     if path.stat().st_size > MAX_PART:
         raise ArchiveFormatError("part_too_large")
     parquet = pq.ParquetFile(path)
-    if not parquet.schema_arrow.equals(schema_for(table), check_metadata=True):
+    if not parquet.schema_arrow.equals(schema_for(table, version), check_metadata=True):
         raise ArchiveFormatError("schema_mismatch")
     if parquet.metadata.num_rows > ROWS_PER_PART:
         raise ArchiveFormatError("part_too_large")
@@ -114,7 +124,7 @@ def read_rows(table: str, path: Path) -> Iterator[dict[str, Any]]:
         if batch.nbytes > MAX_PART * 2:
             raise ArchiveFormatError("part_too_large")
         for row in batch.to_pylist():
-            for name, kind, _ in COLUMNS[table]:
+            for name, kind, _ in catalogue(version)[table]:
                 value = row[name]
                 if value is not None:
                     if isinstance(value, str) and len(value.encode()) > MAX_CELL:

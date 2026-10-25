@@ -464,7 +464,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       MAINTENANCE_TCP_ENDPOINTS: '[["postgres",5432],["temporal",7233]]'
-      MAINTENANCE_HTTP_ENDPOINTS: '["${APP_ARCHIVE_S3_ENDPOINT:-http://minio:9000}","${APP_ARCHIVE_RAG_URL:-http://rag-archive:8111}"]'
+      MAINTENANCE_HTTP_ENDPOINTS: '["${APP_ARCHIVE_S3_ENDPOINT:-http://minio:9000}","${APP_ARCHIVE_RAG_URL:-http://rag-archive:8111}","${APP_ARCHIVE_IMAGES_S3_ENDPOINT:-http://minio:9000}"]'
     networks: [default, rag-control-net]
     depends_on:
       postgres: {condition: service_healthy}
@@ -497,6 +497,12 @@ services:
       APP_ARCHIVE_S3_REGION: "${APP_ARCHIVE_S3_REGION:-us-east-1}"
       APP_ARCHIVE_RAG_URL: "${APP_ARCHIVE_RAG_URL:-http://rag-archive:8111}"
       APP_ARCHIVE_RAG_SERVICE_SECRET: "${APP_ARCHIVE_RAG_SERVICE_SECRET:-}"
+      # Conversation image bytes; empty keeps conversations with images live.
+      APP_ARCHIVE_IMAGES_S3_ENDPOINT: "${APP_ARCHIVE_IMAGES_S3_ENDPOINT:-}"
+      APP_ARCHIVE_IMAGES_S3_ACCESS_KEY: "${APP_ARCHIVE_IMAGES_S3_ACCESS_KEY:-}"
+      APP_ARCHIVE_IMAGES_S3_SECRET_KEY: "${APP_ARCHIVE_IMAGES_S3_SECRET_KEY:-}"
+      APP_ARCHIVE_IMAGES_S3_BUCKET: "${APP_ARCHIVE_IMAGES_S3_BUCKET:-aurum-ai-business}"
+      APP_ARCHIVE_IMAGES_S3_REGION: "${APP_ARCHIVE_IMAGES_S3_REGION:-us-east-1}"
     healthcheck:
       test: ["CMD", "python", "-m", "src.maintenance_worker", "data-health"]
       interval: 10s

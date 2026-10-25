@@ -57,6 +57,21 @@ spec:
               value: {{ .Values.dataLifecycle.archiveS3.region | quote }}
             - name: APP_ARCHIVE_RAG_URL
               value: {{ .Values.dataLifecycle.ragArchiveUrl | quote }}
+            {{- if .Values.dataLifecycle.imagesS3.enabled }}
+            {{- range $key := list "APP_ARCHIVE_IMAGES_S3_ACCESS_KEY" "APP_ARCHIVE_IMAGES_S3_SECRET_KEY" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.dataLifecycle.existingSecret }}
+                  key: {{ $key }}
+            {{- end }}
+            - name: APP_ARCHIVE_IMAGES_S3_ENDPOINT
+              value: {{ .Values.dataLifecycle.imagesS3.endpoint | quote }}
+            - name: APP_ARCHIVE_IMAGES_S3_BUCKET
+              value: {{ .Values.dataLifecycle.imagesS3.bucket | quote }}
+            - name: APP_ARCHIVE_IMAGES_S3_REGION
+              value: {{ .Values.dataLifecycle.imagesS3.region | quote }}
+            {{- end }}
             - name: APP_TEMPORAL_HOST
               value: {{ .Values.external.temporal.host | quote }}
             - name: APP_TEMPORAL_NAMESPACE
