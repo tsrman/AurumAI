@@ -63,6 +63,16 @@ also restores verification and restore of archives created before image support:
 adding `interaction_turns.image_count` to the version-1 catalogue had made their
 parts unreadable.
 
+Workflows now work with images: node agents can create and edit images (a later
+node can edit an earlier node's picture), the images appear under the workflow's
+final answer, image calls are billed to the run and node, and attached images reach
+the supervisor and every node for agents whose model accepts images.
+
+A chat message sent while the conversation was just starting a child workflow (for
+example a workflow run's orchestrator) could fail as "runner unavailable": the
+execution check saw the child start before Temporal recorded it. The chat stream
+now waits briefly for that start to settle and still blocks if it does not.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

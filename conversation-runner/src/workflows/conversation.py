@@ -904,6 +904,18 @@ class ConversationWorkflow:
                         run_id=run_id,
                         user_questions_enabled=message.get("user_questions_enabled") is True,
                         web_tools_enabled=message.get("web_tools_enabled") is True,
+                        image_generation_enabled=message.get("image_generation_enabled") is True,
+                        image_editing_enabled=message.get("image_editing_enabled") is True,
+                        recent_images=tuple(
+                            {
+                                key: str(item[key])
+                                for key in ("id", "prompt", "origin")
+                                if isinstance(item.get(key), str)
+                            }
+                            for item in (message.get("recent_images") or [])[:8]
+                            if isinstance(item, dict)
+                        ),
+                        image_ids=tuple(_message_image_ids(message)),
                     ),
                     id=f"{run_id}:orchestrator",
                 )
@@ -978,13 +990,18 @@ class ConversationWorkflow:
             )
             return
 
-        source_metadata = None
+        source_metadata: dict[str, Any] | None = None
         if result.source_ids or result.unsupported_source_ids:
             source_metadata = {
                 "__web_sources__": {
                     "sourceIds": list(result.source_ids),
                     "unsupportedSourceIds": list(result.unsupported_source_ids),
                 }
+            }
+        if result.image_ids:
+            source_metadata = {
+                **(source_metadata or {}),
+                "__images__": {"imageIds": list(result.image_ids)},
             }
         await workflow.execute_activity(
             persist_assistant_message,

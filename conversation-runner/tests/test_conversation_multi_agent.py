@@ -25,6 +25,18 @@ class StubMultiAgentWorkflow:
             await workflow.wait_condition(lambda: False)
         if input.run_id == "run-failed":
             return MultiAgentResult(status="failed", error_code="access_revoked")
+        if input.run_id == "run-images":
+            # Image settings and the user's attachments reach the run.
+            assert input.image_generation_enabled and not input.image_editing_enabled
+            assert input.image_ids == ("33333333-3333-4333-8333-333333333333",)
+            assert input.recent_images == ({"id": "earlier", "prompt": "a cat", "origin": "uploaded"},)
+            return MultiAgentResult(
+                status="completed",
+                answer="a fox",
+                model="provider/supervisor",
+                source_ids=("11111111-1111-4111-8111-111111111111",),
+                image_ids=("22222222-2222-4222-8222-222222222222",),
+            )
         if input.run_id == "run-web-race":
             return MultiAgentResult(
                 status="completed",
@@ -504,3 +516,29 @@ async def test_cancel_during_persist_still_closes_the_stream(monkeypatch) -> Non
     # ...but the stream is still closed exactly once.
     done = [data for event, data in events if event == "done"]
     assert done == [{"turn_id": "turn-persist-cancel", "evaluation_pending": False}]
+
+
+@pytest.mark.asyncio
+async def test_workflow_images_are_persisted_with_the_final_answer(monkeypatch) -> None:
+    monkeypatch.setattr("src.workflows.conversation.settings.evaluator_enabled", False)
+    _, _, persisted = await _run_conversation(
+        [
+            {
+                "role": "user",
+                "content": "draw a fox",
+                "turn_id": "turn-images",
+                "workflow_run_id": "run-images",
+                "image_generation_enabled": True,
+                "image_ids": ["33333333-3333-4333-8333-333333333333"],
+                "recent_images": [{"id": "earlier", "prompt": "a cat", "origin": "uploaded"}],
+            }
+        ]
+    )
+
+    assert persisted[0][4] == {
+        "__web_sources__": {
+            "sourceIds": ["11111111-1111-4111-8111-111111111111"],
+            "unsupportedSourceIds": [],
+        },
+        "__images__": {"imageIds": ["22222222-2222-4222-8222-222222222222"]},
+    }

@@ -62,9 +62,12 @@ export function Composer({
   const isDisabled = Boolean(disabled || blockedByActiveTurn);
   const { agents, myAgents, activeAgentId, conversations, models, activeModelId } = useAppShell();
   const visionModel = Boolean(models.find((model) => model.id === activeModelId)?.vision);
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
+  // A workflow's agents use their own models; the backend inlines images
+  // only for those marked as vision models.
+  const imagesAllowed = visionModel || Boolean(workflowId);
   const { isAuthenticated } = useAuth();
   const [text, setText] = useState("");
-  const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [settingsConversationId, setSettingsConversationId] = useState<
     string | null
   >(null);
@@ -114,7 +117,7 @@ export function Composer({
       for (const file of files) {
         const name = file.name.toLowerCase();
         if (IMAGE_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
-          if (!visionModel) {
+          if (!imagesAllowed) {
             rejections.push(t("imagesNotAccepted", { file: file.name }));
           } else if (file.size > MAX_IMAGE_BYTES) {
             rejections.push(t("imageTooLarge", { file: file.name }));
@@ -155,8 +158,6 @@ export function Composer({
                 ...prev,
                 { imageId: uploaded.imageId, name: file.name, previewUrl },
               ]);
-              // Workflows cannot receive images.
-              setWorkflowId(null);
             } catch (err) {
               failures.push(
                 t("attachFailedFor", {
@@ -193,7 +194,7 @@ export function Composer({
       isDisabled,
       t,
       errorMessage,
-      visionModel,
+      imagesAllowed,
       pendingImages.length,
     ]
   );
@@ -244,8 +245,12 @@ export function Composer({
     if (isStreaming || isDisabled) return;
     const trimmed = text.trim();
     if (pendingImages.length > 0) {
-      if (!visionModel) return;
-      onSend?.(trimmed, undefined, pendingImages.map((image) => image.imageId));
+      if (!imagesAllowed) return;
+      onSend?.(
+        trimmed,
+        workflowId ?? undefined,
+        pendingImages.map((image) => image.imageId)
+      );
       setPendingImages([]);
     } else if (!trimmed) {
       return;
@@ -259,7 +264,7 @@ export function Composer({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, onSend, isStreaming, isDisabled, workflowId, pendingImages, visionModel]);
+  }, [text, onSend, isStreaming, isDisabled, workflowId, pendingImages, imagesAllowed]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -268,7 +273,7 @@ export function Composer({
     }
   };
 
-  const imagesBlocked = pendingImages.length > 0 && !visionModel;
+  const imagesBlocked = pendingImages.length > 0 && !imagesAllowed;
   const canSend =
     !isStreaming &&
     !isDisabled &&
@@ -364,7 +369,7 @@ export function Composer({
               type="file"
               multiple
               aria-label={t("chooseFile")}
-              accept={(visionModel ? [...ACCEPTED_SUFFIXES, ...IMAGE_SUFFIXES] : ACCEPTED_SUFFIXES).join(",")}
+              accept={(imagesAllowed ? [...ACCEPTED_SUFFIXES, ...IMAGE_SUFFIXES] : ACCEPTED_SUFFIXES).join(",")}
               className="hidden"
               onChange={handleFileSelected}
             />
@@ -393,7 +398,7 @@ export function Composer({
             <WorkflowPickerMenu
               value={workflowId}
               onChange={setWorkflowId}
-              disabled={isDisabled || isStreaming || !isAuthenticated || pendingImages.length > 0}
+              disabled={isDisabled || isStreaming || !isAuthenticated}
             />
 
             <div className="flex-1" />

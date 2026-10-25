@@ -70,6 +70,69 @@ async function adminApi<T>(
   return ((await response.json()) as { data: T }).data;
 }
 
+async function adminCall<T>(
+  request: APIRequestContext,
+  token: string,
+  method: "GET" | "POST" | "PUT",
+  path: string,
+  data: unknown,
+  status: number
+): Promise<T> {
+  const response = await request.fetch(`${ADMIN_API}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+    data,
+  });
+  expect(response.status(), `${method} ${path}`).toBe(status);
+  return ((await response.json()) as { data: T }).data;
+}
+
+// One reused agent and workflow, so repeated runs do not pile up definitions.
+// Members see them only while this test grants them to the organization.
+const AGENT_NAME = "Images e2e artist";
+const WORKFLOW_NAME = "Images e2e workflow";
+
+async function imageWorkflow(
+  request: APIRequestContext,
+  token: string
+): Promise<{ agentId: string; workflowId: string }> {
+  const agents = await adminApi<{ id: string; name: string }[]>(request, token, "GET", "/v1/agent-definitions");
+  const agentId =
+    agents.find((agent) => agent.name === AGENT_NAME)?.id ??
+    (
+      await adminCall<{ id: string }>(request, token, "POST", "/v1/agent-definitions", {
+        name: AGENT_NAME,
+        modelId: CHAT_MODEL,
+        systemPrompt: "Create and refine pictures.",
+        temperature: 0,
+      }, 201)
+    ).id;
+  const draft = {
+    name: WORKFLOW_NAME,
+    description: "Image acceptance: one node draws, the next edits its picture.",
+    supervisorAgentDefinitionId: agentId,
+    autoRoutable: false,
+    maxParallelism: 1,
+    nodes: ["draw", "paint"].map((nodeKey) => ({
+      nodeKey,
+      displayName: nodeKey,
+      agentDefinitionId: agentId,
+      instruction: `MULTI_AGENT_IMAGE:${nodeKey}`,
+      requiresConfirmation: false,
+    })),
+    edges: [{ sourceNodeKey: "draw", targetNodeKey: "paint" }],
+  };
+  const workflows = await adminApi<{ id: string; name: string }[]>(request, token, "GET", "/v1/admin/workflows");
+  const existing = workflows.find((workflow) => workflow.name === WORKFLOW_NAME);
+  if (!existing) {
+    const created = await adminCall<{ id: string }>(request, token, "POST", "/v1/admin/workflows", draft, 201);
+    return { agentId, workflowId: created.id };
+  }
+  const current = await adminApi<{ version: number }>(request, token, "GET", `/v1/admin/workflows/${existing.id}`);
+  await adminApi(request, token, "PUT", `/v1/admin/workflows/${existing.id}`, { ...draft, version: current.version });
+  return { agentId, workflowId: existing.id };
+}
+
 /** A browser-session API call, so it carries the member's own token. */
 async function userApi(page: Page, path: string): Promise<{ status: number; body: unknown }> {
   return page.evaluate(async (url) => {
@@ -100,7 +163,7 @@ test.describe("Images: admin settings to chat generation, editing and attachment
   test.skip(!ENABLED, "E2E_IMAGES_UI is not enabled");
 
   test("generate, edit, attach and reload images with separately chosen models", async ({ browser, request }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(420_000);
     const token = await adminToken(request);
     const subjects = await adminApi<{ principalType: string; principalId: string }[]>(
       request, token, "GET", "/v1/admin/authorization/subjects"
@@ -118,6 +181,19 @@ test.describe("Images: admin settings to chat generation, editing and attachment
     ).map(({ principalType, principalId, permission }) => ({ principalType, principalId, permission }));
     const originalImages = await adminApi<ImageModels>(request, token, "GET", "/v1/admin/settings/images");
     const contexts: BrowserContext[] = [];
+    const { agentId, workflowId } = await imageWorkflow(request, token);
+    const workflowGrants: { resourceType: string; resourceId: string; grants: Grant[] }[] = [];
+    for (const [resourceType, resourceId] of [["workflow", workflowId], ["agent_definition", agentId]]) {
+      const grants = await adminApi<Grant[]>(
+        request, token, "GET",
+        `/v1/admin/authorization/grants?resourceType=${resourceType}&resourceId=${resourceId}`
+      );
+      workflowGrants.push({
+        resourceType,
+        resourceId,
+        grants: grants.map(({ principalType, principalId, permission }) => ({ principalType, principalId, permission })),
+      });
+    }
 
     try {
       // Start from no image models so the Admin UI choice is a real change.
@@ -137,6 +213,16 @@ test.describe("Images: admin settings to chat generation, editing and attachment
           { principalType: "organization", principalId: organization!.principalId, permission: "read" },
         ],
       });
+      for (const original of workflowGrants) {
+        await adminApi(request, token, "PUT", "/v1/admin/authorization/grants/reconcile", {
+          resourceType: original.resourceType,
+          resourceId: original.resourceId,
+          grants: [
+            ...original.grants.filter((grant) => grant.principalType !== "organization"),
+            { principalType: "organization", principalId: organization!.principalId, permission: "read" },
+          ],
+        });
+      }
 
       const adminContext = await browser.newContext();
       contexts.push(adminContext);
@@ -194,6 +280,9 @@ test.describe("Images: admin settings to chat generation, editing and attachment
 
       // An attached picture reaches the vision model inline, and later turns
       // still send it from the conversation history.
+      // The file input bypasses the button, so wait until a user could attach:
+      // right after a turn the composer still treats it as active.
+      await expect(member.getByRole("button", { name: "Attach file" })).toBeEnabled({ timeout: 30_000 });
       await member.getByLabel("Choose a file to attach").setInputFiles({
         name: "pixel.png",
         mimeType: "image/png",
@@ -226,11 +315,36 @@ test.describe("Images: admin settings to chat generation, editing and attachment
       // Later turns hydrate the conversation from history; the attachment stays.
       await expectLoadedImages(member, 1, "Attached");
 
-      // History rendering: every image after a full reload.
+      // A workflow: its first node draws, the next edits that picture, every
+      // agent receives the attachment, and both images join the final answer.
       await member.reload();
       await member.getByRole("button", { name: new RegExp("IMAGE_E2E_EDIT") }).first().click();
       await expectLoadedImages(member, 4);
-      await expectLoadedImages(member, 1, "Attached");
+      await member.getByRole("button", { name: "Choose workflow" }).click();
+      await member.getByRole("option", { name: new RegExp(`^${WORKFLOW_NAME}`) }).click();
+      // The file input bypasses the button, so wait until a user could attach:
+      // right after a turn the composer still treats it as active.
+      await expect(member.getByRole("button", { name: "Attach file" })).toBeEnabled({ timeout: 30_000 });
+      await member.getByLabel("Choose a file to attach").setInputFiles({
+        name: "workflow.png",
+        mimeType: "image/png",
+        buffer: UPLOAD_PNG,
+      });
+      await expect(member.getByRole("img", { name: "workflow.png" })).toBeVisible({ timeout: 30_000 });
+      await member.getByLabel("Message").fill("Draw a fox, then paint it");
+      await member.getByLabel("Send").click();
+      await expect(member.getByTestId("assistant-content").last()).toContainText(
+        "MULTI_AGENT_IMAGE_FINAL:draw,paint SEEN 1",
+        { timeout: 180_000 }
+      );
+      await expectLoadedImages(member, 6);
+      await expectLoadedImages(member, 2, "Attached");
+
+      // History rendering: every image after a full reload.
+      await member.reload();
+      await member.getByRole("button", { name: new RegExp("IMAGE_E2E_EDIT") }).first().click();
+      await expectLoadedImages(member, 6);
+      await expectLoadedImages(member, 2, "Attached");
 
       // Every image call is a counted request with the gateway's fixed usage.
       const today = new Date().toISOString().slice(0, 10);
@@ -239,7 +353,7 @@ test.describe("Images: admin settings to chat generation, editing and attachment
         `/v1/admin/analytics/usage?from=${today}&to=${today}&model=${encodeURIComponent(IMAGE_MODEL)}`
       );
       const imageRow = usage.byModel.find((row) => row.model === IMAGE_MODEL);
-      expect(imageRow?.images).toBeGreaterThanOrEqual(4);
+      expect(imageRow?.images).toBeGreaterThanOrEqual(6);
       expect(imageRow?.requests).toBe(imageRow?.images);
       expect(imageRow?.totalTokens).toBe(110 * (imageRow?.images ?? 0));
     } finally {
@@ -260,6 +374,9 @@ test.describe("Images: admin settings to chat generation, editing and attachment
         adminApi(request, token, "PUT", "/v1/admin/authorization/capabilities/organization", {
           capabilities: originalCapabilities,
         }),
+        ...workflowGrants.map((original) =>
+          adminApi(request, token, "PUT", "/v1/admin/authorization/grants/reconcile", original)
+        ),
       ]);
       const failures = restored.filter((result) => result.status === "rejected");
       if (failures.length) console.error(`image e2e restore failed for ${failures.length} setting(s)`);

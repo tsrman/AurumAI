@@ -1,5 +1,6 @@
 """Bounded exact Temporal provenance observer. History payloads are never persisted."""
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -290,6 +291,28 @@ async def observe_execution_tree(
     return complete
 
 
+# A workflow that has just been signalled may already have asked Temporal to
+# start a child (a workflow run's orchestrator) without the start recorded yet.
+# That settles within moments. Callers without their own retry (the chat
+# stream) wait for it instead of failing the turn; it still blocks if it does
+# not settle. The runner's registration keeps answering 503 and retrying.
+UNSETTLED_CHILD_ATTEMPTS = 8
+UNSETTLED_CHILD_DELAY_SECONDS = 0.25
+
+
+async def _settled_tree(
+    verifier: "ExecutionClosureVerifier", conversation_id: UUID, root_id: str, root_run: str
+) -> list[ExecutionIdentity]:
+    for attempt in range(UNSETTLED_CHILD_ATTEMPTS):
+        try:
+            return await verifier.inspect_tree(conversation_id, root_id, root_run)
+        except ClosureBlocked as exc:
+            if str(exc) != "child_start_unsettled" or attempt == UNSETTLED_CHILD_ATTEMPTS - 1:
+                raise
+        await asyncio.sleep(UNSETTLED_CHILD_DELAY_SECONDS)
+    raise ClosureBlocked("child_start_unsettled")
+
+
 async def register_execution(
     session: AsyncSession,
     client: Any,
@@ -299,6 +322,7 @@ async def register_execution(
     generation: int,
     workflow_id: str,
     run_id: UUID,
+    wait_for_child_start: bool = False,
 ) -> ConversationExecution:
     from sqlalchemy.dialects.postgresql import insert
     from src.services.conversation_lifecycle import lock_active_conversation
@@ -316,7 +340,11 @@ async def register_execution(
     root_payload = await verifier._input(events[0].workflow_execution_started_event_attributes)
     if root_payload.get("lifecycle_generation", 1) != generation:
         raise ClosureBlocked("execution_generation_mismatch")
-    tree = await verifier.inspect_tree(conversation_id, root_id, root_run)
+    tree = (
+        await _settled_tree(verifier, conversation_id, root_id, root_run)
+        if wait_for_child_start
+        else await verifier.inspect_tree(conversation_id, root_id, root_run)
+    )
     identity = next(
         (row for row in tree if row.workflow_id == workflow_id and row.run_id == run_id), None
     )

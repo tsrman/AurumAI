@@ -202,6 +202,7 @@ class ImageToolsService:
         kind = IMAGE_TOOL_KINDS[request.tool]
         turn = await self._context(session, subject.org_id, execution_id)
         await self._authorize_or_raise(session, subject, turn, execution_id)
+        correlation = await self._workflow_correlation(session, subject.org_id, execution_id, turn)
 
         generation_model, edit_model = await organization_image_models(session, subject.org_id)
         model = generation_model if kind == "image_generate" else edit_model
@@ -295,6 +296,7 @@ class ImageToolsService:
                     model,
                     usage_request,
                     kind=UsageEventKind(kind),
+                    **correlation,
                 )
             except QuotaExceededError as exc:
                 await self._fail_claim(
@@ -525,6 +527,30 @@ class ImageToolsService:
         if turn is None:
             raise ImageToolExecutionError("interaction_not_found")
         return turn
+
+    @staticmethod
+    async def _workflow_correlation(
+        session: AsyncSession, org_id: UUID, execution_id: UUID, turn: InteractionTurn
+    ) -> dict[str, Any]:
+        """Workflow images are billed to their run, phase and node, like the
+        node's own model calls."""
+        if turn.workflow_run_id is None:
+            return {}
+        phase, node_key = (
+            await session.execute(
+                select(InteractionExecution.phase, InteractionExecution.node_key).where(
+                    InteractionExecution.org_id == org_id,
+                    InteractionExecution.id == execution_id,
+                )
+            )
+        ).one()
+        if phase == "ordinary":
+            return {}
+        return {
+            "workflow_run_id": turn.workflow_run_id,
+            "workflow_phase": phase,
+            "workflow_node_key": node_key if phase == "node" else None,
+        }
 
     @staticmethod
     def _arguments_hash(args: dict[str, Any]) -> str:
