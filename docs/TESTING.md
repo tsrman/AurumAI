@@ -163,6 +163,7 @@ MCP/code need profiles `mcp` and `skills-exec` and a built `runner`/`skill-sandb
 | `./smoke-test-workflow-hitl-ui.sh` | Reject/cancel and real65-second dedicated test deadline |
 | `./smoke-test-workflow-loops.sh` | API-only loop cap/fallthrough/cancel and previous-iteration context |
 | `./smoke-test-archive-images.sh` | Disposable lifecycle project: data-worker archives/restores an old conversation with images; scoped image IAM |
+| `./smoke-test-hermes-egress.sh` | Disposable project with the real `docker-compose.hermes.yml`: a probe on the Hermes sandbox network has no DNS or routes of its own, reaches only the completion path, and gets internet egress per mode (`none`, `packages` with `pip`, `public` with `web.access`); a closed session cuts an open tunnel. Needs internet access |
 | `./smoke-test-authorization-ui.sh` | Five resource types, live revoke and both audiences |
 | `./smoke-test-images-ui.sh` | Admin image and vision models, chat generation, editing and image attachments, reload; deterministic gateway |
 | `./smoke-test-auth-lifecycle.sh` | UI logout/refresh/recovery and natural access expiry (up to15minutes) |

@@ -430,7 +430,7 @@
       },
       "web_access": {
         "label": "Access the web",
-        "description": "Search and read public web pages through the platform's isolated web service."
+        "description": "Search and read public web pages through the platform's isolated web service. Where the organization allows it, Hermes Agent sandboxes can also reach the public internet."
       },
       "workspace_agents_create": {
         "label": "Create agents",

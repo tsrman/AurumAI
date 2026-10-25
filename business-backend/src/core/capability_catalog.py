@@ -94,7 +94,9 @@ CAPABILITY_CATALOG = CapabilityCatalog(
         CapabilityDefinition(
             Capability.WEB_ACCESS,
             "Access the web",
-            "Search and read public web pages through the platform's isolated web service.",
+            "Search and read public web pages through the platform's isolated web service; "
+            "where the organization allows it, also lets Hermes Agent sandboxes reach the "
+            "public internet.",
         ),
         CapabilityDefinition(
             Capability.WORKSPACE_AGENTS_CREATE,

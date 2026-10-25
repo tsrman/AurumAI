@@ -2,7 +2,11 @@
 set -eu
 
 readonly bootstrap_rules=/etc/web-egress/bootstrap.nft
-readonly final_rules=/etc/web-egress/rules.nft
+if [ "${WEB_EGRESS_MODE:-}" = hermes ]; then
+    readonly final_rules=/etc/web-egress/hermes-rules.nft
+else
+    readonly final_rules=/etc/web-egress/rules.nft
+fi
 readonly bootstrap_generated=/run/web-egress-bootstrap.nft
 readonly final_generated=/run/web-egress-final.nft
 
@@ -33,8 +37,8 @@ FINAL_RULES = Path(sys.argv[2])
 BOOTSTRAP_GENERATED = Path(sys.argv[3])
 FINAL_GENERATED = Path(sys.argv[4])
 MODE = os.environ.get("WEB_EGRESS_MODE", "")
-if MODE not in {"web-tools", "searxng"}:
-    raise SystemExit("WEB_EGRESS_MODE must be web-tools or searxng")
+if MODE not in {"web-tools", "searxng", "hermes"}:
+    raise SystemExit("WEB_EGRESS_MODE must be web-tools, searxng or hermes")
 
 
 def port(name: str) -> int:
@@ -190,6 +194,88 @@ def install(path: Path, lines: list[str]) -> None:
     subprocess.run(["nft", "--check", "--file", str(path)], check=True)
     subprocess.run(["nft", "--file", str(path)], check=True)
 
+
+def install_bootstrap(dns: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]) -> None:
+    # A fresh namespace first receives a minimal DNS-only default-drop table.
+    # It remains in force while required peers resolve and if final
+    # validation fails.
+    if subprocess.run(
+        ["nft", "list", "table", "inet", "web_egress"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode != 0:
+        bootstrap = [f'include "{BOOTSTRAP_RULES}"']
+        emit_addresses(bootstrap, "dns_v4", tuple(value for value in dns if value.version == 4))
+        emit_addresses(bootstrap, "dns_v6", tuple(value for value in dns if value.version == 6))
+        for set_name, values in dns_listener_sockets(dns).items():
+            emit_addresses(bootstrap, set_name, values)
+        install(BOOTSTRAP_GENERATED, bootstrap)
+
+
+def canonical_networks(name: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    values = []
+    for item in os.environ.get(name, "").split(","):
+        candidate = item.strip()
+        if not candidate:
+            continue
+        try:
+            values.append(ipaddress.ip_network(candidate, strict=True))
+        except ValueError as exc:
+            raise SystemExit(f"{name} must contain canonical IPv4/IPv6 CIDRs") from exc
+    return tuple(values)
+
+
+def hermes() -> None:
+    """hermes-egress: sandbox CIDRs reach only the proxy ports; out go DNS for
+    the proxy's own resolution, the backend, explicit internal package mirrors
+    and, up to the operator maximum, public 443 (packages) or 80 and 443."""
+    ready_port = port("WEB_EGRESS_READY_PORT")
+    sandbox_ports = (port("HERMES_EGRESS_PLATFORM_PORT"), port("HERMES_EGRESS_PROXY_PORT"))
+    sandboxes = canonical_networks("HERMES_EGRESS_SANDBOX_CIDRS")
+    if not sandboxes:
+        raise SystemExit("HERMES_EGRESS_SANDBOX_CIDRS must name the sandbox networks")
+    max_mode = os.environ.get("HERMES_EGRESS_MAX_MODE", "")
+    public_ports = {"none": (), "packages": (443,), "public": (80, 443)}.get(max_mode)
+    if public_ports is None:
+        raise SystemExit("HERMES_EGRESS_MAX_MODE must be none, packages or public")
+    peers = [(os.environ.get("HERMES_EGRESS_BACKEND_HOST", "").strip(), port("HERMES_EGRESS_BACKEND_PORT"))]
+    for item in os.environ.get("HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS", "").split(","):
+        if item.strip():
+            host, sep, raw_port = item.strip().rpartition(":")
+            if not sep or not raw_port.isdigit() or not 0 < int(raw_port) < 65536:
+                raise SystemExit("HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS entries must be host:port")
+            peers.append((host, int(raw_port)))
+    operator = operator_networks()
+    dns = resolvers()
+    install_bootstrap(dns)
+    internal = [(value, peer_port) for host, peer_port in peers for value in addresses(host)]
+    host_gateways = gateways()
+    final = ["delete table inet web_egress", f'include "{FINAL_RULES}"']
+    emit_addresses(final, "local_tcp_ports", (ready_port,))
+    emit_addresses(final, "sandbox_tcp_ports", sandbox_ports)
+    emit_addresses(final, "public_tcp_ports", public_ports)
+    emit_addresses(final, "sandbox_v4", tuple(value for value in sandboxes if value.version == 4))
+    emit_addresses(final, "sandbox_v6", tuple(value for value in sandboxes if value.version == 6))
+    emit_addresses(final, "dns_v4", tuple(value for value in dns if value.version == 4))
+    emit_addresses(final, "dns_v6", tuple(value for value in dns if value.version == 6))
+    for set_name, values in dns_listener_sockets(dns).items():
+        emit_addresses(final, set_name, values)
+    emit_addresses(final, "host_gateway_v4", tuple(v for v in host_gateways if v.version == 4))
+    emit_addresses(final, "host_gateway_v6", tuple(v for v in host_gateways if v.version == 6))
+    emit_addresses(final, "operator_forbidden_v4", tuple(v for v in operator if v.version == 4))
+    emit_addresses(final, "operator_forbidden_v6", tuple(v for v in operator if v.version == 6))
+    emit_addresses(
+        final, "internal_tcp_v4", tuple(f"{v} . {p}" for v, p in internal if v.version == 4)
+    )
+    emit_addresses(
+        final, "internal_tcp_v6", tuple(f"{v} . {p}" for v, p in internal if v.version == 6)
+    )
+    install(FINAL_GENERATED, final)
+
+
+if MODE == "hermes":
+    hermes()
+    raise SystemExit(0)
 
 local_port = port("WEB_EGRESS_LOCAL_PORT")
 ready_port = port("WEB_EGRESS_READY_PORT")

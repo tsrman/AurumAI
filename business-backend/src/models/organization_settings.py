@@ -12,6 +12,10 @@ class OrganizationSettings(Base):
         CheckConstraint(
             "cardinality(vision_models) <= 100", name="ck_organization_settings_vision_models"
         ),
+        CheckConstraint(
+            "hermes_egress_mode IS NULL OR hermes_egress_mode IN ('none','packages','public')",
+            name="ck_organization_settings_hermes_egress_mode",
+        ),
     )
 
     org_id: Mapped[uuid.UUID] = mapped_column(
@@ -27,6 +31,8 @@ class OrganizationSettings(Base):
     vision_models: Mapped[list[str]] = mapped_column(
         ARRAY(String(255)), nullable=False, default=list, server_default="{}"
     )
+    # Internet a Hermes sandbox may reach; NULL means the default, packages.
+    hermes_egress_mode: Mapped[str | None] = mapped_column(Text)
     allowed_models: Mapped[list[str] | None] = mapped_column(
         ARRAY(String), default=lambda: ["gpt-4o", "claude-3-5-sonnet"]
     )

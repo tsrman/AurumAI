@@ -1,0 +1,4 @@
+include "/etc/web-egress/bootstrap.nft"
+add element inet web_egress dns_v4 { 127.0.0.11 }
+add element inet web_egress dns_listener_udp_v4 { 127.0.0.11 . 53001 }
+add element inet web_egress dns_listener_tcp_v4 { 127.0.0.11 . 40001 }

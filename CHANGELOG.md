@@ -103,6 +103,16 @@ out of the archive; the purge removes session rows. Opening and binding need the
 `agents.hermes` capability and the default-off `APP_HERMES_ENABLED` switch; nothing
 calls these routes yet.
 
+`docker-compose.hermes.yml` adds hermes-egress, the only way out of a future Hermes
+sandbox: the completion path and a `CONNECT` proxy with three internet modes
+(`none`, `packages` for the listed package indexes, `public` with `web.access`). The
+operator caps the mode with `HERMES_EGRESS_MAX_MODE`, organizations choose within it
+through `/v1/admin/settings/hermes`, and the proxy checks every tunnel with the
+backend and closes open ones once the session, turn or mode no longer allows them.
+The web-egress image gains a `hermes` guard mode; its web modes generate the same
+rules as before. `./smoke-test-hermes-egress.sh` accepts it at runtime. The
+`web.access` capability now also covers Hermes's public internet.
+
 A `publish images` workflow builds the service images on `v*` tags (or manual
 dispatch) and pushes them to GitHub Container Registry under the chart's image
 names.

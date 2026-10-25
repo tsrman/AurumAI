@@ -29,6 +29,12 @@ LLM gateway. The runner still uses the backend proxy/session boundary. Leave pub
 web and unsupported outbound MCP/provider features disabled. A DNS-successful URL
 is not authorization to cross the network boundary.
 
+Hermes Agent sandboxes reach package indexes only through hermes-egress. Offline,
+set `HERMES_EGRESS_MAX_MODE=packages`, point `HERMES_EGRESS_PACKAGE_HOSTS` at the
+internal mirror and list its exact `host:port` in
+`HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS`, the only way a private address is allowed;
+or keep `none`.
+
 Use [Helm](../charts/aurum-ai/README.md) or trusted-development Compose with
 explicit endpoints/secrets and appropriate runtime isolation. Production CIDR,
 namespace, RBAC and PID enforcement assumptions remain mandatory offline.
