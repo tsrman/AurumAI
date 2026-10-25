@@ -21,6 +21,7 @@ from src.services.interaction_maintenance import (
 )
 from src.services.interaction_outbox import run_interaction_outbox_dispatcher
 from src.services.workflow_run import workflow_run_service
+from src.services.hermes_egress import require_egress_secret
 from src.routers import (
     auth,
     chat,
@@ -41,6 +42,7 @@ from src.routers import (
     image_tools_internal,
     conversation_images,
     hermes,
+    hermes_egress_internal,
     hermes_internal,
     workflow_runs_internal,
     workflows,
@@ -104,6 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("business_backend_stopped")
 
 
+require_egress_secret()
 app = create_app(
     title=settings.APP_NAME,
     lifespan=lifespan,
@@ -129,6 +132,7 @@ app = create_app(
         (conversation_images.router, "/v1", "conversation-images"),
         (hermes.router, "/v1", "hermes"),
         (hermes_internal.router, "/v1/internal", "internal-hermes"),
+        (hermes_egress_internal.router, "/v1/internal", "internal-hermes-egress"),
         (turns.router, "/v1", "turns"),
     ],
 )

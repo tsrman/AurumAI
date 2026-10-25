@@ -33,7 +33,7 @@ from src.models.workflow_run import WorkflowRun
 from src.models.organization import Organization
 from src.models.organization_capability import OrganizationCapability
 from src.models.user import User
-from src.routers import hermes, hermes_internal
+from src.routers import hermes, hermes_egress_internal, hermes_internal
 from src.schemas.interaction import TurnLimits
 from src.services.quota import UsageReservation, get_quota_service
 from src.services.session_token import session_token_service
@@ -127,6 +127,7 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
     setup_exception_handlers(app)
     app.include_router(hermes.router, prefix="/v1")
     app.include_router(hermes_internal.router, prefix="/v1/internal")
+    app.include_router(hermes_egress_internal.router, prefix="/v1/internal")
     app.dependency_overrides[get_quota_service] = lambda: quota
 
     async def finish_turn() -> None:
@@ -136,6 +137,11 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
                 .where(InteractionTurn.id == turn_id)
                 .values(status="completed")
             )
+            await change.commit()
+
+    async def grant(capability: Capability) -> None:
+        async with sessions() as change:
+            change.add(OrganizationCapability(org_id=org_id, capability=capability.value))
             await change.commit()
 
     async def revoke(capability: Capability) -> None:
@@ -245,6 +251,7 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
             granted_models=granted_models,
             finish_turn=finish_turn,
             revoke=revoke,
+            grant=grant,
             internal=internal,
             open_session=open_session,
             expire_session=expire_session,

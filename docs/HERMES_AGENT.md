@@ -195,7 +195,14 @@ leaves through one platform component, `hermes-egress`, which follows the
 rules are in place).
 
 - On Docker, the sandbox runs on a dedicated internal network that has no NAT. The
-  sidecar is the only other member.
+  sidecar is the only platform member, but every sandbox shares the segment.
+  Docker bridges let containers on one network reach each other, and a container
+  holding `NET_RAW` (a Docker default) could spoof the sidecar's address and read
+  another sandbox's session token on the wire. Phase 2c must therefore run
+  sandboxes with every capability dropped and either give each sandbox its own
+  internal network that the sidecar joins (sandbox CIDRs from a pool) or accept the
+  shared segment as a Docker-only limitation that Kubernetes NetworkPolicies close.
+  Its acceptance probes reachability from one sandbox to another.
 - On Kubernetes, a NetworkPolicy keyed on the Hermes sandbox label allows egress
   only to the sidecar.
 - The existing `aurum-ai-skill-egress` network is never reused, and the backend
@@ -403,8 +410,8 @@ Each phase is a separate PR behind the flag:
    expiry with revocation and its conversation-only billing with the bound turn's
    workflow correlation.
 
-   `APP_HERMES_ENABLED` is not yet passed to the backend by Compose or the Helm
-   chart; phase 4 wires it. Like the runner route, the Hermes route always streams
+   Compose passes `APP_HERMES_ENABLED` with the `docker-compose.hermes.yml`
+   overlay; the Helm chart does not yet. Like the runner route, the Hermes route always streams
    and ignores `stream: false`.
 2. **Sandbox and network.** The `hermes-sandbox` image, its resources, durable
    sandbox ownership and re-adoption after an executor restart, snapshots, the
@@ -418,9 +425,14 @@ Each phase is a separate PR behind the flag:
      Opening rotates the token, and a long-lived sandbox reads its token once at
      start: phase 4 opens a session only when it provisions or restores a sandbox,
      and every turn only binds and unbinds;
-   - 2b: the `hermes-egress` network path: the two platform endpoints and the
-     forward proxy with its three modes, the organization setting and the
-     per-connection check;
+   - 2b, implemented for Docker Compose: `docker-compose.hermes.yml` with the
+     guard (a `hermes` mode of the web-egress image) and the stdlib proxy, the
+     backend's per-connection check and organization setting, accepted at runtime
+     by `./smoke-test-hermes-egress.sh`. The forward proxy accepts `CONNECT` only;
+     its journal is structured log lines. Docker's embedded DNS answers no external
+     names on the internal sandbox network (checked by the acceptance). Still
+     open: Kubernetes (Helm, NetworkPolicies, and no kube-dns for sandbox pods so
+     CoreDNS cannot become a DNS channel) and the Admin UI control (phase 4);
    - 2c: the sandbox image and long-lived sandboxes in `skill-executor`.
 3. **MCP bridge.** Knowledge, web, images and questions. MCP skills and code skills
    come later in the same phase if the scope allows.

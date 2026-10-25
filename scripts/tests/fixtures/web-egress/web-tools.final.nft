@@ -1,0 +1,10 @@
+delete table inet web_egress
+include "/etc/web-egress/rules.nft"
+add element inet web_egress local_tcp_ports { 8120, 8190 }
+add element inet web_egress dns_v4 { 127.0.0.11 }
+add element inet web_egress dns_listener_udp_v4 { 127.0.0.11 . 53001 }
+add element inet web_egress dns_listener_tcp_v4 { 127.0.0.11 . 40001 }
+add element inet web_egress host_gateway_v4 { 172.30.0.1 }
+add element inet web_egress operator_forbidden_v4 { 203.0.114.0/24 }
+add element inet web_egress ingress_tcp_v4 { 172.30.0.10 . 8120 }
+add element inet web_egress internal_tcp_v4 { 172.30.0.11 . 8080 }

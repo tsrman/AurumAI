@@ -5,7 +5,8 @@ session token and no cookie. The database session is admitted like a runner's:
 applied identity, a live user row and the conversation generation fence.
 """
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -28,13 +29,10 @@ def require_hermes_enabled() -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
 
 
-async def get_hermes_session_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-) -> UserInfo:
-    if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+def hermes_session_user(token: str) -> UserInfo:
+    """Identity of a verified Hermes token; raises 401 otherwise."""
     try:
-        payload = hermes_session_token_service.decode(credentials.credentials)
+        payload = hermes_session_token_service.decode(token)
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Hermes session token expired"
@@ -51,9 +49,16 @@ async def get_hermes_session_user(
     )
 
 
-async def get_hermes_db_session(
-    user: UserInfo = Depends(get_hermes_session_user),
-) -> AsyncGenerator[AsyncSession, None]:
+async def get_hermes_session_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> UserInfo:
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    return hermes_session_user(credentials.credentials)
+
+
+@asynccontextmanager
+async def hermes_db_session(user: UserInfo) -> AsyncIterator[AsyncSession]:
     async with async_session() as session:
         try:
             session.info["org_id"] = user.org_id
@@ -62,6 +67,13 @@ async def get_hermes_db_session(
             yield session
         finally:
             await _clear_org(session)
+
+
+async def get_hermes_db_session(
+    user: UserInfo = Depends(get_hermes_session_user),
+) -> AsyncGenerator[AsyncSession, None]:
+    async with hermes_db_session(user) as session:
+        yield session
 
 
 def hermes_conversation_id(user: UserInfo) -> UUID:

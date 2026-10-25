@@ -13,8 +13,9 @@ from src.middleware.rate_limit import _rate_limit_identity
 _AUDITED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # Login/refresh precede an organization context; Keycloak already records
-# their relevant identity events.
-_SKIPPED_PREFIXES = ("/v1/auth/",)
+# their relevant identity events. hermes-egress checks every sandbox
+# connection and keeps its own journal of them.
+_SKIPPED_PREFIXES = ("/v1/auth/", "/v1/internal/hermes/egress/")
 
 
 def _route_template(request: Request) -> str:

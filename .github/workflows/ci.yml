@@ -72,6 +72,10 @@ jobs:
           if grep -qE '^infra/(searxng|web-egress)/|^charts/aurum-ai/(values\.yaml|templates/(web-|searxng-))' <<<"$changed"; then
             changed="$changed"$'\nweb-tools/.web-infra-trigger'$'\nscripts/.web-infra-trigger'
           fi
+          # The Hermes egress overlay is checked by the deployment harness.
+          if grep -qx 'docker-compose.hermes.yml' <<<"$changed"; then
+            changed="$changed"$'\nscripts/.hermes-egress-trigger'
+          fi
           if grep -qE '^infra/(postgres|maintenance-egress)/|^charts/aurum-ai/templates/(identity-|data-worker-)|^keycloak/realm-export\.json$' <<<"$changed"; then
             changed="$changed"$'\nbusiness-backend/.partition-infra-trigger'$'\nscripts/.partition-infra-trigger'
           fi

@@ -165,8 +165,8 @@ Hermes Agent is being integrated in phases (see [the design](HERMES_AGENT.md)).
 `APP_HERMES_ENABLED=false` is its operator switch; while it is off, the Hermes routes
 answer 404. Users also need the `agents.hermes` capability (Admin UI → Groups), which
 provisioning never grants. The first phase adds only the backend side a Hermes
-sandbox will call; nothing starts a sandbox yet, and Compose and the Helm chart do
-not pass the switch to the backend until the phase that does.
+sandbox will call; nothing starts a sandbox yet. Compose passes the switch only with
+the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
 
 - `POST /v1/hermes/chat/completions` is an OpenAI-compatible completion route with
   native tools: `tools`, `tool_choice`, assistant `tool_calls`, `tool` messages and
@@ -189,6 +189,51 @@ not pass the switch to the backend until the phase that does.
   anything in the request. A token holds identity only and has its own audience that
   no other route accepts; a session and its tokens end after
   `APP_HERMES_SESSION_MAX_LIFETIME_SECONDS` (86400) even if nothing closes them.
+
+### Hermes sandbox egress
+
+`docker-compose.hermes.yml` (profile `hermes`) adds `hermes-egress`, the only way
+out of a Hermes sandbox. Sandboxes join `aurum-ai-hermes-sandbox`
+(`HERMES_SANDBOX_SUBNET`, default `172.31.250.0/24`), an internal network without
+NAT or external DNS where the egress guard is the only platform member. The backend
+never joins it. Sandboxes share this segment; sandbox isolation from one another
+arrives with the sandboxes themselves.
+
+- **Platform path.** `hermes-egress:8080` forwards exactly
+  `POST /v1/hermes/chat/completions`, one request per connection with a
+  `Content-Length` body.
+- **Internet.** `hermes-egress:3128` is a `CONNECT`-only proxy. A sandbox sets
+  `HTTPS_PROXY=http://hermes:<session token>@hermes-egress:3128`. For each tunnel
+  the proxy asks the backend (`POST /v1/internal/hermes/egress/authorize`,
+  authenticated with `HERMES_EGRESS_SERVICE_SECRET`) whether the session is open and
+  bound to an active turn, and which mode applies. It re-checks open tunnels every
+  `HERMES_EGRESS_RECHECK_SECONDS` (30) and closes those no longer allowed, and also
+  those it could not re-check three times in a row (backend unavailable).
+
+  | Mode | Reachable |
+  |---|---|
+  | `none` | nothing |
+  | `packages` | `HERMES_EGRESS_PACKAGE_HOSTS` on 443, and the TLS server name must match |
+  | `public` | any public host on 80 or 443; needs the user's `web.access` |
+
+  `HERMES_EGRESS_MAX_MODE` (default `packages`) caps the backend, the proxy and the
+  guard's public ports at once. Organizations choose within it through
+  `GET`/`PUT /v1/admin/settings/hermes` (`egressMode`, default `packages`); the
+  Admin UI control comes with the Hermes chat agent.
+- **What stays closed.** Private, loopback, link-local and platform ranges and
+  `WEB_EGRESS_FORBIDDEN_CIDRS` are refused after resolution, and the tunnel connects
+  to the checked address. An exact `host:port` in
+  `HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS` is the only private exception, meant for an
+  internal package mirror.
+- **Limits.** `HERMES_EGRESS_MAX_CONNECTIONS` (16 per session),
+  `HERMES_EGRESS_MAX_BYTES_PER_TURN` (2 GiB) and `HERMES_EGRESS_IDLE_TIMEOUT_SECONDS`
+  (300). Counters are kept in memory by each hermes-egress replica and reset when
+  it restarts.
+- **Journal.** Every decision and closed tunnel is a JSON line in the hermes-egress
+  log: session, turn, host, port, mode, outcome and bytes, never credentials or
+  traffic. The backend's rate limit and audit journal skip the per-connection check.
+
+The Helm chart does not deploy hermes-egress yet.
 
 ## Identity and data lifecycle
 

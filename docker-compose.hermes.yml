@@ -1,0 +1,125 @@
+# Hermes Agent sandbox egress (docs/HERMES_AGENT.md). Opt-in overlay:
+#   docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile hermes up -d
+#
+# Sandboxes join only `hermes-sandbox`, an internal network without NAT where
+# the hermes-egress guard namespace is the only platform member. Out of it go the
+# platform path (to the backend over `hermes-backend`) and, up to
+# HERMES_EGRESS_MAX_MODE, CONNECT tunnels to the internet over `hermes-public`.
+# The backend never joins `hermes-sandbox`. Sandboxes of every organization
+# share this one segment; see docs/HERMES_AGENT.md for what phase 2c must add.
+services:
+  backend:
+    environment:
+      APP_HERMES_ENABLED: "${HERMES_ENABLED:-false}"
+      # One variable for the backend's clamp and the guard's public ports.
+      APP_HERMES_EGRESS_MAX_MODE: "${HERMES_EGRESS_MAX_MODE:-packages}"
+      APP_HERMES_EGRESS_SERVICE_SECRET: "${HERMES_EGRESS_SERVICE_SECRET:?HERMES_EGRESS_SERVICE_SECRET must be set}"
+    networks:
+      hermes-backend:
+        aliases: ["hermes-backend"]
+
+  backend-admin:
+    environment:
+      APP_HERMES_ENABLED: "${HERMES_ENABLED:-false}"
+      APP_HERMES_EGRESS_MAX_MODE: "${HERMES_EGRESS_MAX_MODE:-packages}"
+
+  hermes-egress-guard:
+    build:
+      context: ./infra/web-egress
+    image: aurum-ai-web-egress:latest
+    profiles: ["hermes"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_ADMIN"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /run:rw,noexec,nosuid,size=1m
+    environment:
+      WEB_EGRESS_MODE: hermes
+      WEB_EGRESS_READY_PORT: "8192"
+      HERMES_EGRESS_PLATFORM_PORT: "8080"
+      HERMES_EGRESS_PROXY_PORT: "3128"
+      HERMES_EGRESS_SANDBOX_CIDRS: "${HERMES_SANDBOX_SUBNET:-172.31.250.0/24}"
+      HERMES_EGRESS_BACKEND_HOST: hermes-backend
+      HERMES_EGRESS_BACKEND_PORT: "8000"
+      HERMES_EGRESS_MAX_MODE: "${HERMES_EGRESS_MAX_MODE:-packages}"
+      HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS: "${HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS:-}"
+      WEB_EGRESS_FORBIDDEN_CIDRS: "${WEB_EGRESS_FORBIDDEN_CIDRS:-}"
+    networks:
+      hermes-sandbox:
+        aliases: ["hermes-egress"]
+      hermes-backend: {}
+      hermes-public:
+        gw_priority: 1
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/bin/web-egress-readiness", "--check", "--port", "8192"]
+      interval: 2s
+      timeout: 2s
+      start_period: 1s
+      retries: 5
+    depends_on:
+      backend:
+        condition: service_started
+        # A recreated backend has a new address; re-apply the exact exception.
+        restart: true
+    restart: unless-stopped
+
+  hermes-egress:
+    image: aurum-ai-web-egress:latest
+    profiles: ["hermes"]
+    network_mode: service:hermes-egress-guard
+    user: "65534:65534"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    environment:
+      HERMES_EGRESS_PLATFORM_PORT: "8080"
+      HERMES_EGRESS_PROXY_PORT: "3128"
+      HERMES_EGRESS_BACKEND_HOST: hermes-backend
+      HERMES_EGRESS_BACKEND_PORT: "8000"
+      HERMES_EGRESS_MAX_MODE: "${HERMES_EGRESS_MAX_MODE:-packages}"
+      HERMES_EGRESS_SERVICE_SECRET: "${HERMES_EGRESS_SERVICE_SECRET:?HERMES_EGRESS_SERVICE_SECRET must be set}"
+      HERMES_EGRESS_PACKAGE_HOSTS: "${HERMES_EGRESS_PACKAGE_HOSTS:-pypi.org,files.pythonhosted.org}"
+      HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS: "${HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS:-}"
+      HERMES_EGRESS_IDLE_TIMEOUT_SECONDS: "${HERMES_EGRESS_IDLE_TIMEOUT_SECONDS:-300}"
+      HERMES_EGRESS_RECHECK_SECONDS: "${HERMES_EGRESS_RECHECK_SECONDS:-30}"
+      HERMES_EGRESS_MAX_CONNECTIONS: "${HERMES_EGRESS_MAX_CONNECTIONS:-16}"
+      HERMES_EGRESS_MAX_BYTES_PER_TURN: "${HERMES_EGRESS_MAX_BYTES_PER_TURN:-2147483648}"
+      WEB_EGRESS_FORBIDDEN_CIDRS: "${WEB_EGRESS_FORBIDDEN_CIDRS:-}"
+    entrypoint:
+      - python3
+      - /usr/local/bin/web-egress-readiness
+      - --wait
+      - --port
+      - "8192"
+      - --
+      - python3
+      - /usr/local/bin/hermes-egress-proxy
+    # The image's own check is the guard's readiness port. The guard admits
+    # the proxy ports only from sandbox networks, so check the listener itself.
+    healthcheck:
+      test: ["CMD-SHELL", "ss -Hltn 'sport = :3128' | grep -q . && ss -Hltn 'sport = :8080' | grep -q ."]
+      interval: 2s
+      timeout: 2s
+      start_period: 2s
+      retries: 10
+    depends_on:
+      hermes-egress-guard:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+
+networks:
+  # skill-executor attaches Hermes sandboxes to this exact name (phase 2c).
+  hermes-sandbox:
+    name: aurum-ai-hermes-sandbox
+    internal: true
+    ipam:
+      config:
+        - subnet: "${HERMES_SANDBOX_SUBNET:-172.31.250.0/24}"
+  hermes-backend:
+    internal: true
+  hermes-public:
+    driver: bridge

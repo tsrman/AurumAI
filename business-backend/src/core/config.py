@@ -261,6 +261,12 @@ class Settings(BaseSettings):
     # tokens end at this absolute lifetime even if nothing closes them.
     HERMES_ENABLED: bool = False
     HERMES_SESSION_MAX_LIFETIME_SECONDS: int = Field(default=86400, ge=60, le=7 * 86400)
+    # The most internet a Hermes sandbox may get through hermes-egress; the same
+    # variable configures the egress guard. Organizations choose within it.
+    HERMES_EGRESS_MAX_MODE: Literal["none", "packages", "public"] = "packages"
+    # hermes-egress authenticates its per-connection checks with this secret;
+    # only the business API needs it (see hermes_egress.require_egress_secret).
+    HERMES_EGRESS_SERVICE_SECRET: SecretStr = SecretStr("")
     # Upper bounds for one native-tools completion request from a sandbox.
     HERMES_MAX_TOOLS: int = Field(default=128, ge=1, le=512)
     HERMES_MAX_MESSAGES: int = Field(default=1000, ge=1, le=10000)
