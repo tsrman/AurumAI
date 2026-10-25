@@ -25,7 +25,7 @@ def test_capability_tables_use_composite_keys_and_closed_capability_values() -> 
     assert next(iter(group_table.c.group_id.foreign_keys)).ondelete == "CASCADE"
 
     expected_check = {
-        "capability IN ('admin.users.read', 'admin.users.write', 'chat.send', "
+        "capability IN ('admin.users.read', 'admin.users.write', 'agents.hermes', 'chat.send', "
         "'images.generate', 'sharing.manage', 'web.access', 'workspace.agents.create', 'workspace.knowledge.create', "
         "'workspace.skills.create')"
     }

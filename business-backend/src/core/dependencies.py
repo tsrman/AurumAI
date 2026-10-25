@@ -21,6 +21,44 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+async def load_session_identity(user: UserInfo, session: AsyncSession) -> None:
+    """Admit a service-token identity: applied identity sync and a live user row."""
+    try:
+        user_id = UUID(user.user_id)
+        org_id = UUID(user.org_id or "")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid session identity",
+        ) from exc
+    # Rollback disables new background work, not existing security fences.
+    await ensure_session_identity_ready(session, user)
+    result = await session.execute(
+        select(User).where(User.id == user_id, User.org_id == org_id)
+    )
+    current_user = result.scalar_one_or_none()
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid session identity",
+        )
+    user.role = current_user.role or "member"
+
+
+async def fence_session_conversation(user: UserInfo, session: AsyncSession) -> None:
+    """Hold the token's conversation generation for the rest of the request."""
+    from src.services.conversation_lifecycle import lock_active_conversation
+    generation = user.raw_claims.get("generation", 1)
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
+        raise HTTPException(401, "Invalid session generation")
+    org, conversation = UUID(user.org_id or ""), UUID(user.raw_claims["conversation_id"])
+    await lock_active_conversation(session, org, conversation, generation=generation)
+    session.info["conversation_fence"] = (org, conversation, generation)
+    # Admission is a short transaction. Later database work reacquires
+    # this original generation through _AppSession.after_begin.
+    await session.commit()
+
+
 async def _set_org_and_sync(user: UserInfo, session: AsyncSession) -> None:
     # Setting session.info here (a plain dict, no I/O) rather than calling
     # set_config directly is what makes this survive a mid-request
@@ -30,26 +68,7 @@ async def _set_org_and_sync(user: UserInfo, session: AsyncSession) -> None:
     if user.org_id:
         session.info["org_id"] = user.org_id
     if user.raw_claims.get("type") == "session":
-        try:
-            user_id = UUID(user.user_id)
-            org_id = UUID(user.org_id or "")
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid session identity",
-            ) from exc
-        # Rollback disables new background work, not existing security fences.
-        await ensure_session_identity_ready(session, user)
-        result = await session.execute(
-            select(User).where(User.id == user_id, User.org_id == org_id)
-        )
-        current_user = result.scalar_one_or_none()
-        if current_user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid session identity",
-            )
-        user.role = current_user.role or "member"
+        await load_session_identity(user, session)
         return
     if settings.IDENTITY_SYNC_ENABLED:
         await ensure_identity_synced(session, user)
@@ -105,17 +124,7 @@ async def get_service_db_session(
         try:
             await _set_org_and_sync(user, session)
             if user.raw_claims.get("type") == "session":
-                from uuid import UUID
-                from src.services.conversation_lifecycle import lock_active_conversation
-                generation = user.raw_claims.get("generation", 1)
-                if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
-                    raise HTTPException(401, "Invalid session generation")
-                org, conversation = UUID(user.org_id or ""), UUID(user.raw_claims["conversation_id"])
-                await lock_active_conversation(session, org, conversation, generation=generation)
-                session.info["conversation_fence"] = (org, conversation, generation)
-                # Admission is a short transaction. Later database work reacquires
-                # this original generation through _AppSession.after_begin.
-                await session.commit()
+                await fence_session_conversation(user, session)
             yield session
         finally:
             await _clear_org(session)

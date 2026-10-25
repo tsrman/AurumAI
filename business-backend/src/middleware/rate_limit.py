@@ -8,6 +8,10 @@ from src.core.cache import redis_client
 from src.core.config import settings
 from src.core.keycloak import keycloak_client
 from src.middleware.error_handler import build_error_body
+from src.services.hermes_session_token import (
+    InvalidHermesSessionToken,
+    hermes_session_token_service,
+)
 from src.services.session_token import session_token_service
 
 
@@ -41,6 +45,13 @@ async def _rate_limit_identity(request: Request) -> tuple[str, str]:
         payload = session_token_service.decode(token)
         return str(payload.get("org_id") or "no-org"), str(payload["sub"])
     except (PyJWTError, KeyError):
+        pass
+
+    # A Hermes sandbox counts against its user's budget, like the runner.
+    try:
+        payload = hermes_session_token_service.decode(token)
+        return str(payload["org_id"]), str(payload["sub"])
+    except (PyJWTError, InvalidHermesSessionToken):
         return _fallback_identity(request)
 
 

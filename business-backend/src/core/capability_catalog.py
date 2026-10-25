@@ -6,6 +6,7 @@ from enum import StrEnum
 class Capability(StrEnum):
     ADMIN_USERS_READ = "admin.users.read"
     ADMIN_USERS_WRITE = "admin.users.write"
+    AGENTS_HERMES = "agents.hermes"
     CHAT_SEND = "chat.send"
     IMAGES_GENERATE = "images.generate"
     SHARING_MANAGE = "sharing.manage"
@@ -16,7 +17,7 @@ class Capability(StrEnum):
 
 
 CAPABILITY_VALUES_SQL = (
-    "'admin.users.read', 'admin.users.write', 'chat.send', 'images.generate', "
+    "'admin.users.read', 'admin.users.write', 'agents.hermes', 'chat.send', 'images.generate', "
     "'sharing.manage', 'web.access', 'workspace.agents.create', "
     "'workspace.knowledge.create', 'workspace.skills.create'"
 )
@@ -69,6 +70,11 @@ CAPABILITY_CATALOG = CapabilityCatalog(
             Capability.ADMIN_USERS_WRITE,
             "Manage users",
             "Manage organization user settings outside Keycloak group membership.",
+        ),
+        CapabilityDefinition(
+            Capability.AGENTS_HERMES,
+            "Use Hermes Agent",
+            "Run the Hermes Agent system agent in its isolated sandbox.",
         ),
         CapabilityDefinition(
             Capability.CHAT_SEND,

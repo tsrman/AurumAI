@@ -13,6 +13,7 @@ def test_default_catalog_exposes_the_approved_capabilities_in_stable_order() -> 
     assert CAPABILITY_CATALOG.keys() == (
         "admin.users.read",
         "admin.users.write",
+        "agents.hermes",
         "chat.send",
         "images.generate",
         "sharing.manage",
