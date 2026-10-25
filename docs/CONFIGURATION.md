@@ -250,11 +250,28 @@ build build hermes-sandbox`. skill-executor settings (`SKILL_EXECUTOR_` prefix):
 | `HERMES_CPUS`, `HERMES_MEMORY_BYTES`, `HERMES_PIDS_LIMIT`, `HERMES_TMP_MB` | 2, 2 GiB, 512, 256 |
 | `HERMES_IDLE_TTL_SECONDS`, `HERMES_MAX_LIFETIME_SECONDS` | 1800, 86400 |
 | `HERMES_START_TIMEOUT_SECONDS` | 60 |
+| `HERMES_SNAPSHOT_ENABLED` | `true` (needs `S3_ENDPOINT`) |
+| `HERMES_SNAPSHOT_MAX_BYTES`, `HERMES_SNAPSHOT_MAX_ENTRIES` | 1 GiB, 200000 |
+| `HERMES_SNAPSHOT_RETENTION_SECONDS`, `HERMES_SNAPSHOT_KEEP` | 604800 (7 days), 2 |
+| `HERMES_SNAPSHOT_RETRY_SECONDS`, `HERMES_SNAPSHOT_TIMEOUT_SECONDS` | 300, 900 |
+| `HERMES_SNAPSHOT_DIR` | the system temporary directory (needs twice the snapshot bound) |
 
-A restarted skill-executor re-adopts live sandboxes from their Docker labels and
-reconnects a recreated guard; its reaper removes sandboxes past their idle or
-absolute lifetime and networks or volumes left without a sandbox. Workspace
-volumes have no size limit with Docker's local volume driver.
+A restarted skill-executor re-adopts live and stopped sandboxes from their Docker
+labels and reconnects a recreated guard. A sandbox past its idle or absolute
+lifetime is stopped, its workspace is snapshotted, and then it is removed; the
+session's next create restores the latest snapshot (or `snapshot_sha256`) into a
+new sandbox. Snapshots go to the `S3_BUCKET` under
+`hermes-sessions/{org}/{conversation}/{sha256}.tar` with a `latest.json` pointer,
+and leave out the generated config, the proxy URL, relay state, logs, memory and
+skills. If a snapshot cannot be stored, the sandbox stays stopped with its volume,
+is retried every `HERMES_SNAPSHOT_RETRY_SECONDS`, can be resumed by the next create,
+and is removed only after the retention. Objects older than the retention are
+deleted hourly. skill-executor needs Get, Put, Delete and List on `hermes-sessions/*`
+besides reading skill bundles; Compose still gives it the MinIO root account, so
+scoping is the operator's. While snapshots are on, creating a new sandbox needs the
+store: if `latest.json` cannot be read, creation fails with
+`hermes_snapshot_store_failed` (503) instead of starting without the snapshot.
+Workspace volumes have no size limit yet.
 
 ## Identity and data lifecycle
 
