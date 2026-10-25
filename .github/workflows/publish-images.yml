@@ -34,6 +34,7 @@ jobs:
           - { name: aurum-ai-tool-worker, context: tool-worker }
           - { name: aurum-ai-skill-executor, context: skill-executor }
           - { name: aurum-ai-skill-sandbox, context: skill-sandbox }
+          - { name: aurum-ai-hermes-sandbox, context: hermes-sandbox }
           - { name: aurum-ai-rag-api, context: rag-api }
           - { name: aurum-ai-rag-worker, context: rag-worker }
           - { name: aurum-ai-web-tools, context: web-tools }

@@ -421,3 +421,48 @@ async def test_replayed_assistant_extras_are_dropped_not_rejected(hermes_env) ->
 
     assert response.status_code == 200
     assert requests[0]["messages"][1] == {"role": "assistant", "content": "hello"}
+
+
+async def test_an_unstreamed_request_gets_one_json_completion(hermes_env) -> None:
+    requests: list[dict[str, object]] = []
+    body = _body()
+    del body["stream"]
+    with patch(
+        "src.services.completion_stream.llm_client.stream_chat",
+        side_effect=scripted_stream(TOOL_CALL_CHUNKS, requests),
+    ):
+        response = await _post(hermes_env, await _token(hermes_env), body)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    completion = response.json()
+    assert completion["object"] == "chat.completion"
+    [choice] = completion["choices"]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "web_search", "arguments": '{"q":"x"}'}}
+        ],
+    }
+    assert completion["usage"]["total_tokens"] == 18
+    assert requests[0]["stream"] is True
+    [reservation] = hermes_env.quota.reservations
+    assert hermes_env.quota.completed == [(reservation["request_id"], 11, 7, 18)]
+
+
+async def test_an_unstreamed_request_reports_upstream_failure(hermes_env) -> None:
+    async def failing(request, *, on_accepted=None):  # noqa: ANN001, ANN202
+        response = httpx.Response(500, request=httpx.Request("POST", "http://gateway/v1/chat/completions"), text="boom")
+        raise httpx.HTTPStatusError("gateway failed", request=response.request, response=response)
+        yield ""  # pragma: no cover
+
+    body = _body()
+    del body["stream"]
+    with patch("src.services.completion_stream.llm_client.stream_chat", side_effect=failing):
+        response = await _post(hermes_env, await _token(hermes_env), body)
+
+    assert response.status_code == 502
+    assert "boom" in response.json()["error"]["message"]
+    assert hermes_env.quota.cancelled == [hermes_env.quota.reservations[0]["request_id"]]

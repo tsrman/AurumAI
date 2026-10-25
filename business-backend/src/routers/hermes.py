@@ -13,7 +13,7 @@ import uuid
 from typing import Any, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import UserInfo
@@ -26,7 +26,12 @@ from src.core.hermes_auth import (
 )
 from src.core.langfuse_client import get_langfuse, sanitize_native_messages
 from src.schemas.hermes import HermesCompletionRequest
-from src.services.completion_stream import proxy_completion_events, quota_exceeded_exception
+from src.services.completion_stream import (
+    UpstreamCompletionError,
+    collect_completion,
+    proxy_completion_events,
+    quota_exceeded_exception,
+)
 from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
 from src.services.hermes_completions import HermesRequestError, gateway_messages, has_images
 from src.services.hermes_sessions import authorize_token
@@ -43,13 +48,13 @@ def _denied(exc: HermesAccessDenied) -> NoReturn:
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": exc.code})
 
 
-@router.post("/hermes/chat/completions")
+@router.post("/hermes/chat/completions", response_model=None)
 async def hermes_chat_completions(
     request: HermesCompletionRequest,
     user: UserInfo = Depends(get_hermes_session_user),
     session: AsyncSession = Depends(get_hermes_db_session),
     quota: QuotaService = Depends(get_quota_service),
-) -> StreamingResponse:
+) -> StreamingResponse | JSONResponse:
     subject = authorization_subject(user)
     conversation_id = hermes_conversation_id(user)
     try:
@@ -117,14 +122,22 @@ async def hermes_chat_completions(
                 **{key: str(value) for key, value in correlation.items() if value is not None},
             },
         )
-    return create_streaming_response(
-        proxy_completion_events(
-            llm_request,
-            quota=quota,
-            org_id=subject.org_id,
-            request_id=request_id,
-            model=request.model,
-            generation=generation,
-            log=logger,
-        )
+    events = proxy_completion_events(
+        llm_request,
+        quota=quota,
+        org_id=subject.org_id,
+        request_id=request_id,
+        model=request.model,
+        generation=generation,
+        log=logger,
     )
+    if request.stream:
+        return create_streaming_response(events)
+    try:
+        completion = await collect_completion(events, model=request.model, request_id=request_id)
+    except UpstreamCompletionError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": {"message": exc.message, "type": "upstream_error"}},
+        )
+    return JSONResponse(content=completion)

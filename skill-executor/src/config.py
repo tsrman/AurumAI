@@ -75,5 +75,26 @@ class Settings(BaseSettings):
     s3_bucket: str = "aurum-ai-business"
     s3_region: str = "us-east-1"
 
+    # Hermes Agent sandboxes (docs/HERMES_AGENT.md), Docker only for now. Each
+    # sandbox gets its own internal network from this pool (isolated gateway
+    # mode, Docker 28+), joined only by the hermes-egress guard.
+    hermes_enabled: bool = False
+    hermes_sandbox_image: str = "aurum-ai-hermes-sandbox:latest"
+    hermes_guard_container: str = "aurum-ai-hermes-egress-guard"
+    hermes_subnet_pool: str = "172.31.0.0/16"
+    hermes_subnet_prefix: int = 28
+    hermes_platform_url: str = "http://hermes-egress:8080/v1/hermes"
+    hermes_proxy_address: str = "hermes-egress:3128"
+    hermes_cpus: float = 2.0
+    hermes_memory_bytes: int = 2 * 1024 * 1024 * 1024
+    hermes_pids_limit: int = 512
+    hermes_tmp_mb: int = 256
+    hermes_start_timeout_seconds: float = 60.0
+    hermes_idle_ttl_seconds: int = 1800
+    hermes_max_lifetime_seconds: int = 86400
+    # Networks and volumes left without their sandbox are removed after this.
+    hermes_orphan_grace_seconds: int = 600
+    hermes_event_line_max_bytes: int = 256 * 1024
+
 
 settings = Settings()

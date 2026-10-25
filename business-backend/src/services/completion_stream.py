@@ -230,3 +230,71 @@ async def proxy_completion_events(
                     model,
                     exc_info=True,
                 )
+
+
+class UpstreamCompletionError(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+async def collect_completion(
+    events: AsyncGenerator[str, None], *, model: str, request_id: uuid.UUID
+) -> dict[str, Any]:
+    """One `chat.completion` from a proxied stream, for callers that did not stream.
+
+    The stream itself runs unchanged, so quota accounting and tracing are the
+    same as for a streamed request.
+    """
+    content = ""
+    calls: dict[int, dict[str, Any]] = {}
+    finish_reason: str | None = None
+    usage: dict[str, Any] | None = None
+    error: str | None = None
+    async for event in events:
+        payload = event.removeprefix("data: ").strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+        if isinstance(chunk.get("error"), dict):
+            error = str(chunk["error"].get("message") or "upstream error")
+            continue
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            finish_reason = choice.get("finish_reason") or finish_reason
+            delta = choice.get("delta") or {}
+            if isinstance(delta.get("content"), str):
+                content += delta["content"]
+            for call in delta.get("tool_calls") or []:
+                if not isinstance(call, dict) or not isinstance(call.get("index"), int):
+                    continue
+                entry = calls.setdefault(
+                    call["index"],
+                    {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                entry["id"] += call.get("id") or ""
+                function = call.get("function") or {}
+                entry["function"]["name"] += function.get("name") or ""
+                entry["function"]["arguments"] += function.get("arguments") or ""
+    if error is not None:
+        raise UpstreamCompletionError(error)
+    message: dict[str, Any] = {"role": "assistant", "content": content}
+    if calls:
+        message["tool_calls"] = [call for _, call in sorted(calls.items())]
+        if not content:
+            message["content"] = None
+    return {
+        "id": f"chatcmpl-{request_id.hex}",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason or "stop"}],
+        **({"usage": usage} if usage is not None else {}),
+    }

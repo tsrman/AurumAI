@@ -96,3 +96,18 @@ services:
   backend-admin:
     image: aurum-ai-backend:hermes-egress-test
     profiles: ["unused"]
+  # Started only by ./smoke-test-hermes-sandbox.sh; the overlay adds its Hermes
+  # settings. It drives the host's Docker daemon, like the main stack's.
+  skill-executor:
+    build: ./skill-executor
+    image: aurum-ai-skill-executor:hermes-egress-test
+    profiles: ["hermes-sandbox"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DOCKER_HOST: "unix:///var/run/docker.sock"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "console"
+      SKILL_EXECUTOR_REAP_INTERVAL_SECONDS: "${SKILL_EXECUTOR_REAP_INTERVAL_SECONDS:-15}"
+      SKILL_EXECUTOR_HERMES_IDLE_TTL_SECONDS: "${SKILL_EXECUTOR_HERMES_IDLE_TTL_SECONDS:-1800}"
+      SKILL_EXECUTOR_HERMES_ORPHAN_GRACE_SECONDS: "${SKILL_EXECUTOR_HERMES_ORPHAN_GRACE_SECONDS:-600}"
+    ports: ["127.0.0.1:58090:8090"]

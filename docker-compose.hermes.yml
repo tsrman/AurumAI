@@ -1,12 +1,12 @@
 # Hermes Agent sandbox egress (docs/HERMES_AGENT.md). Opt-in overlay:
 #   docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile hermes up -d
 #
-# Sandboxes join only `hermes-sandbox`, an internal network without NAT where
-# the hermes-egress guard namespace is the only platform member. Out of it go the
-# platform path (to the backend over `hermes-backend`) and, up to
-# HERMES_EGRESS_MAX_MODE, CONNECT tunnels to the internet over `hermes-public`.
-# The backend never joins `hermes-sandbox`. Sandboxes of every organization
-# share this one segment; see docs/HERMES_AGENT.md for what phase 2c must add.
+# skill-executor gives every Hermes sandbox its own internal network, carved
+# from HERMES_SANDBOX_POOL in isolated gateway mode (Docker 28+), and connects
+# only the hermes-egress guard to it. Out of a sandbox go the platform path (to
+# the backend over `hermes-backend`) and, up to HERMES_EGRESS_MAX_MODE, CONNECT
+# tunnels to the internet over `hermes-public`. The backend never joins a
+# sandbox network, and sandboxes never share one.
 services:
   backend:
     environment:
@@ -23,10 +23,26 @@ services:
       APP_HERMES_ENABLED: "${HERMES_ENABLED:-false}"
       APP_HERMES_EGRESS_MAX_MODE: "${HERMES_EGRESS_MAX_MODE:-packages}"
 
+  skill-executor:
+    environment:
+      SKILL_EXECUTOR_HERMES_ENABLED: "${HERMES_ENABLED:-false}"
+      SKILL_EXECUTOR_HERMES_SANDBOX_IMAGE: "aurum-ai-hermes-sandbox:latest"
+      SKILL_EXECUTOR_HERMES_GUARD_CONTAINER: "aurum-ai-hermes-egress-guard"
+      SKILL_EXECUTOR_HERMES_SUBNET_POOL: "${HERMES_SANDBOX_POOL:-172.31.0.0/16}"
+
+  # Build-only, like skill-sandbox: skill-executor starts these containers.
+  hermes-sandbox:
+    build:
+      context: ./hermes-sandbox
+    image: aurum-ai-hermes-sandbox:latest
+    profiles: ["build"]
+
   hermes-egress-guard:
     build:
       context: ./infra/web-egress
     image: aurum-ai-web-egress:latest
+    # skill-executor connects this exact container to each sandbox network.
+    container_name: aurum-ai-hermes-egress-guard
     profiles: ["hermes"]
     cap_drop: ["ALL"]
     cap_add: ["NET_ADMIN"]
@@ -40,15 +56,13 @@ services:
       WEB_EGRESS_READY_PORT: "8192"
       HERMES_EGRESS_PLATFORM_PORT: "8080"
       HERMES_EGRESS_PROXY_PORT: "3128"
-      HERMES_EGRESS_SANDBOX_CIDRS: "${HERMES_SANDBOX_SUBNET:-172.31.250.0/24}"
+      HERMES_EGRESS_SANDBOX_CIDRS: "${HERMES_SANDBOX_POOL:-172.31.0.0/16}"
       HERMES_EGRESS_BACKEND_HOST: hermes-backend
       HERMES_EGRESS_BACKEND_PORT: "8000"
       HERMES_EGRESS_MAX_MODE: "${HERMES_EGRESS_MAX_MODE:-packages}"
       HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS: "${HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS:-}"
       WEB_EGRESS_FORBIDDEN_CIDRS: "${WEB_EGRESS_FORBIDDEN_CIDRS:-}"
     networks:
-      hermes-sandbox:
-        aliases: ["hermes-egress"]
       hermes-backend: {}
       hermes-public:
         gw_priority: 1
@@ -112,13 +126,6 @@ services:
     restart: unless-stopped
 
 networks:
-  # skill-executor attaches Hermes sandboxes to this exact name (phase 2c).
-  hermes-sandbox:
-    name: aurum-ai-hermes-sandbox
-    internal: true
-    ipam:
-      config:
-        - subnet: "${HERMES_SANDBOX_SUBNET:-172.31.250.0/24}"
   hermes-backend:
     internal: true
   hermes-public:

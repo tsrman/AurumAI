@@ -9,6 +9,8 @@ verify the exact inputs on an authorized connected build host first.
 - Preserve Python uv locks and exact distributions, including the target CPU/OS
   variants. RAG/Docling/PyTorch can require substantial disk/model artifacts.
 - Preserve npm locks and registry tarballs for both UIs and maintenance checks.
+- For Hermes Agent, mirror the hash-pinned distributions of
+  `hermes-sandbox/requirements.txt` or the built `aurum-ai-hermes-sandbox` image.
 - Mirror pinned base/application/infrastructure images and record actual digests.
 - Prepare pgvector/pg_partman5.5.0 prerequisites and current migration chains.
 - Obtain embedding/reranker/parser model revisions from their actual sources,

@@ -30,26 +30,35 @@ def _render(**env: str) -> dict[str, Any]:
     )
     result = subprocess.run(
         ["docker", "compose", "-f", "docker-compose.yml", "-f", str(OVERLAY), "--profile", "hermes",
-         "config", "--format", "json"],
+         "--profile", "skills-exec", "--profile", "build", "config", "--format", "json"],
         cwd=ROOT, env=environment, text=True, capture_output=True, check=False,
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
 
-def test_sandboxes_share_a_network_only_with_the_guard() -> None:
+def test_sandbox_networks_are_per_sandbox_and_never_declared_here() -> None:
     config = _render()
     services, networks = config["services"], config["networks"]
-    sandbox = networks["hermes-sandbox"]
+    guard = services["hermes-egress-guard"]
 
-    assert sandbox["name"] == "aurum-ai-hermes-sandbox"
-    assert sandbox["internal"] is True
+    assert "hermes-sandbox" not in networks
     assert networks["hermes-backend"]["internal"] is True
-    members = {name for name, service in services.items() if "hermes-sandbox" in service.get("networks", {})}
-    assert members == {"hermes-egress-guard"}
-    assert services["hermes-egress-guard"]["networks"]["hermes-sandbox"]["aliases"] == ["hermes-egress"]
+    assert guard["container_name"] == "aurum-ai-hermes-egress-guard"
+    assert set(guard["networks"]) == {"hermes-backend", "hermes-public"}
+    assert guard["environment"]["HERMES_EGRESS_SANDBOX_CIDRS"] == "172.31.0.0/16"
     assert set(services["backend"]["networks"]) >= {"hermes-backend"}
-    assert "hermes-sandbox" not in services["backend"]["networks"]
+
+
+def test_skill_executor_creates_sandboxes_from_the_guards_pool() -> None:
+    services = _render(HERMES_ENABLED="true", HERMES_SANDBOX_POOL="172.30.0.0/16")["services"]
+    executor = services["skill-executor"]["environment"]
+
+    assert executor["SKILL_EXECUTOR_HERMES_ENABLED"] == "true"
+    assert executor["SKILL_EXECUTOR_HERMES_GUARD_CONTAINER"] == "aurum-ai-hermes-egress-guard"
+    assert executor["SKILL_EXECUTOR_HERMES_SUBNET_POOL"] == "172.30.0.0/16"
+    assert services["hermes-egress-guard"]["environment"]["HERMES_EGRESS_SANDBOX_CIDRS"] == "172.30.0.0/16"
+    assert services["hermes-sandbox"]["profiles"] == ["build"]
 
 
 def test_guard_holds_net_admin_and_the_proxy_holds_nothing() -> None:
@@ -102,7 +111,8 @@ def test_acceptance_attaches_probes_like_a_sandbox_and_is_disposable() -> None:
     base = yaml.safe_load((ROOT / "scripts" / "fixtures" / "hermes-egress-base.yml").read_text())
 
     assert "PROJECT=hermes-egress-test" in script
-    assert "--network aurum-ai-hermes-sandbox" in script
+    assert '--network "$SANDBOX_NET"' in script
+    assert "gateway_mode_ipv4=isolated" in script
     assert 'down -v --remove-orphans' in script
     assert "docker-compose.hermes.yml" in script
     assert all("hermes-sandbox" not in service.get("networks", []) for service in base["services"].values())

@@ -74,6 +74,7 @@ updates:
       - "/tool-worker"
       - "/skill-executor"
       - "/skill-sandbox"
+      - "/hermes-sandbox"
       - "/rag-api"
       - "/rag-worker"
       - "/web-tools"
