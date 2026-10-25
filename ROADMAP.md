@@ -53,7 +53,8 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 ## Remaining product and verification work
 
 - Integrate Hermes Agent as a universal system agent within the existing
-  conversation runtime, tools and workflow orchestration.
+  conversation runtime, tools and workflow orchestration
+  ([design](docs/HERMES_AGENT.md)).
 - Loop wall-clock budgets; nested/overlapping loop bodies and confirmation nodes
   inside a loop remain outside the current graph contract.
 - Broader runtime/provider/load coverage, with fresh Kubernetes CNI/SSRF acceptance
