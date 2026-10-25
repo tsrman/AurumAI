@@ -9,9 +9,11 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from httpx import ASGITransport
 from jwt.exceptions import PyJWTError
 from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -21,14 +23,20 @@ from src.core import dependencies, hermes_auth
 from src.core.capability_catalog import Capability
 from src.core.config import settings
 from src.middleware.error_handler import setup_exception_handlers
+from src.models.agent_definition import AgentDefinition
 from src.models.conversation import Conversation
+from src.models.hermes_session import HermesSession
 from src.models.interaction import InteractionTurn
+from src.models.message import Message
+from src.models.workflow_definition import WorkflowDefinition
+from src.models.workflow_run import WorkflowRun
 from src.models.organization import Organization
 from src.models.organization_capability import OrganizationCapability
 from src.models.user import User
 from src.routers import hermes, hermes_internal
 from src.schemas.interaction import TurnLimits
 from src.services.quota import UsageReservation, get_quota_service
+from src.services.session_token import session_token_service
 
 MODEL = "provider/hermes-model"
 
@@ -140,6 +148,92 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
             )
             await change.commit()
 
+    runner_token = session_token_service.issue(str(conversation_id), str(user_id), str(org_id))
+
+    async def internal(method: str, path: str, **kwargs: Any) -> httpx.Response:
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            return await client.request(
+                method,
+                f"/v1/internal/hermes{path}",
+                headers={"Authorization": f"Bearer {runner_token}"},
+                **kwargs,
+            )
+
+    async def open_session(*, bind: bool = True, **correlation: Any) -> dict[str, Any]:
+        opened = await internal("POST", "/sessions")
+        assert opened.status_code == 201, opened.text
+        body = opened.json()
+        if bind:
+            bound = await internal(
+                "PUT",
+                f"/sessions/{body['sessionId']}/turn",
+                json={"turnId": str(turn_id), **correlation},
+            )
+            assert bound.status_code == 204, bound.text
+        return body
+
+    async def expire_session(session_id: str) -> None:
+        async with sessions() as change:
+            await change.execute(
+                update(HermesSession)
+                .where(HermesSession.id == uuid.UUID(session_id))
+                .values(expires_at=HermesSession.created_at)
+            )
+            await change.commit()
+
+    async def add_workflow_run(*, status: str = "running") -> uuid.UUID:
+        agent_id, definition_id, message_id, run_id = (uuid.uuid4() for _ in range(4))
+        async with sessions() as change:
+            change.add(
+                AgentDefinition(
+                    id=agent_id, org_id=org_id, name="Supervisor", model_id=MODEL, system_prompt="Plan"
+                )
+            )
+            await change.flush()
+            change.add(
+                WorkflowDefinition(
+                    id=definition_id,
+                    org_id=org_id,
+                    name="Hermes workflow",
+                    supervisor_agent_definition_id=agent_id,
+                )
+            )
+            change.add(
+                Message(
+                    id=message_id,
+                    org_id=org_id,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    user_id=user_id,
+                    role="user",
+                    content="Run",
+                )
+            )
+            await change.flush()
+            change.add(
+                WorkflowRun(
+                    id=run_id,
+                    org_id=org_id,
+                    workflow_definition_id=definition_id,
+                    workflow_definition_version=1,
+                    initiating_user_id=user_id,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    source_message_id=message_id,
+                    temporal_workflow_id=f"conversation-{conversation_id}:workflow:{turn_id}",
+                    status=status,
+                    execution_snapshot={"supervisor": {}, "nodes": []},
+                )
+            )
+            await change.flush()
+            await change.execute(
+                update(InteractionTurn)
+                .where(InteractionTurn.id == turn_id)
+                .values(workflow_run_id=run_id)
+            )
+            await change.commit()
+        return run_id
+
     try:
         yield SimpleNamespace(
             org_id=org_id,
@@ -151,9 +245,20 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
             granted_models=granted_models,
             finish_turn=finish_turn,
             revoke=revoke,
+            internal=internal,
+            open_session=open_session,
+            expire_session=expire_session,
+            add_workflow_run=add_workflow_run,
+            sessions=sessions,
         )
     finally:
         async with sessions() as cleanup:
+            await cleanup.execute(
+                update(InteractionTurn)
+                .where(InteractionTurn.org_id == org_id)
+                .values(workflow_run_id=None)
+            )
+            await cleanup.execute(delete(HermesSession).where(HermesSession.org_id == org_id))
             await cleanup.execute(delete(Organization).where(Organization.id == org_id))
             await cleanup.commit()
         await engine.dispose()

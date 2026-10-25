@@ -34,6 +34,7 @@ async def archive_fixture():
     async with sessions() as s:
         # Only this fixture's exact tenant; all external objects use its random UUID.
         for table in (
+            "hermes_sessions",
             "file_metadata",
             "conversation_executions",
             "conversation_operations",

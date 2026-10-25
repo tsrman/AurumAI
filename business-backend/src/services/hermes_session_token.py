@@ -3,14 +3,15 @@
 A Hermes sandbox gives the model a terminal, so its token must be useless
 outside the two Hermes endpoints: it has its own type and audience, which the
 runner's session decoder rejects, and it carries identity only. Whether it may
-be used right now (an active turn of its conversation, live capabilities and
-grants) is decided per request, never from the token.
+be used right now (its open session row on the same token version, the turn
+bound to it, live capabilities and grants) is decided per request, never from
+the token.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import jwt
 
@@ -18,11 +19,15 @@ from src.core.config import settings
 
 HERMES_SESSION_TOKEN_TYPE = "hermes_session"
 HERMES_SESSION_AUDIENCE = "hermes-session"
-_REQUIRED_CLAIMS = ("sub", "org_id", "conversation_id", "sid", "generation", "exp", "aud")
+_REQUIRED_CLAIMS = ("sub", "org_id", "conversation_id", "sid", "tv", "generation", "exp", "aud")
 
 
 class InvalidHermesSessionToken(Exception):
     pass
+
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,16 +45,18 @@ class HermesSessionTokenService:
         user_id: UUID,
         conversation_id: UUID,
         generation: int,
+        session_id: UUID,
+        token_version: int,
+        expires_at: datetime,
         now: datetime | None = None,
     ) -> IssuedHermesSessionToken:
         issued_at = now or datetime.now(timezone.utc)
-        expires_at = issued_at + timedelta(seconds=settings.HERMES_SESSION_TOKEN_TTL_SECONDS)
-        session_id = uuid4()
         payload: dict[str, Any] = {
             "sub": str(user_id),
             "org_id": str(org_id),
             "conversation_id": str(conversation_id),
             "sid": str(session_id),
+            "tv": token_version,
             "generation": generation,
             "type": HERMES_SESSION_TOKEN_TYPE,
             "aud": HERMES_SESSION_AUDIENCE,
@@ -73,13 +80,10 @@ class HermesSessionTokenService:
             raise
         except jwt.PyJWTError as exc:
             raise InvalidHermesSessionToken() from exc
-        generation = payload.get("generation")
         if (
             payload.get("type") != HERMES_SESSION_TOKEN_TYPE
             or "permissions" in payload
-            or not isinstance(generation, int)
-            or isinstance(generation, bool)
-            or generation < 1
+            or not all(_positive_int(payload.get(claim)) for claim in ("generation", "tv"))
         ):
             raise InvalidHermesSessionToken()
         try:

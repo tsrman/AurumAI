@@ -4,7 +4,8 @@ The runner's /v1/chat/completions keeps its text tool protocol. This route
 accepts OpenAI `tools`, assistant `tool_calls` and `tool` messages, streams the
 gateway's chunks (tool call deltas included) unchanged, and applies the same
 live capability, model grant, vision and quota checks. Only a Hermes session
-token is accepted, and only while its conversation has an active turn.
+token is accepted, and only while its open session is bound to an active turn;
+the call is billed to that turn's workflow correlation, never to the body's.
 """
 
 import logging
@@ -26,12 +27,9 @@ from src.core.hermes_auth import (
 from src.core.langfuse_client import get_langfuse, sanitize_native_messages
 from src.schemas.hermes import HermesCompletionRequest
 from src.services.completion_stream import proxy_completion_events, quota_exceeded_exception
-from src.services.hermes_access import (
-    HermesAccessDenied,
-    active_hermes_turn,
-    require_hermes_capabilities,
-)
+from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
 from src.services.hermes_completions import HermesRequestError, gateway_messages, has_images
+from src.services.hermes_sessions import authorize_token
 from src.services.image_uploads import vision_enabled
 from src.services.model_access import ensure_model_allowed
 from src.services.quota import QuotaExceededError, QuotaService, get_quota_service
@@ -56,9 +54,16 @@ async def hermes_chat_completions(
     conversation_id = hermes_conversation_id(user)
     try:
         await require_hermes_capabilities(session, subject)
-        await active_hermes_turn(session, subject, conversation_id)
+        hermes_session = await authorize_token(session, subject, user.raw_claims)
     except HermesAccessDenied as exc:
         _denied(exc)
+    # Read before the commit below expires the row.
+    hermes_session_id = hermes_session.id
+    correlation: dict[str, Any] = {
+        "workflow_run_id": hermes_session.workflow_run_id,
+        "workflow_phase": hermes_session.workflow_phase,
+        "workflow_node_key": hermes_session.workflow_node_key,
+    }
     await ensure_model_allowed(
         session, user.org_id, request.model, user_id=user.user_id, role=user.role
     )
@@ -83,10 +88,15 @@ async def hermes_chat_completions(
     }
     request_id = uuid.uuid4()
     try:
-        # Workflow correlation is deliberately absent: the sandbox cannot
-        # choose which run or node it bills until session rows bind it.
         await quota.reserve(
-            subject.org_id, subject.user_id, conversation_id, request.model, request_id
+            subject.org_id,
+            subject.user_id,
+            conversation_id,
+            request.model,
+            request_id,
+            workflow_run_id=correlation["workflow_run_id"],
+            workflow_phase=correlation["workflow_phase"],
+            workflow_node_key=correlation["workflow_node_key"],
         )
     except QuotaExceededError as exc:
         raise quota_exceeded_exception(exc) from exc
@@ -102,7 +112,10 @@ async def hermes_chat_completions(
                 "temperature": request.temperature,
                 "max_tokens": request.max_tokens,
             },
-            metadata={"hermes_session_id": user.raw_claims["sid"]},
+            metadata={
+                "hermes_session_id": str(hermes_session_id),
+                **{key: str(value) for key, value in correlation.items() if value is not None},
+            },
         )
     return create_streaming_response(
         proxy_completion_events(
