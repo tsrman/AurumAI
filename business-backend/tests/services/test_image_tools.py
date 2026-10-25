@@ -482,3 +482,33 @@ async def test_image_usage_lands_in_the_monthly_quota_counters(image_fixture: Im
             await db.execute(
                 delete(OrganizationUsageMonthly).where(OrganizationUsageMonthly.org_id == org_id)
             )
+
+
+@pytest.mark.parametrize(
+    ("phase", "node_key", "expected"),
+    [
+        ("node", "draw", {"workflow_phase": "node", "workflow_node_key": "draw"}),
+        ("supervisor_synthesize", None, {"workflow_phase": "supervisor_synthesize", "workflow_node_key": None}),
+        ("ordinary", None, None),
+    ],
+)
+async def test_workflow_image_spend_is_attributed_to_its_run_and_node(
+    phase: str, node_key: str | None, expected: dict[str, Any] | None
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    run_id = uuid4()
+    result = MagicMock()
+    result.one.return_value = (phase, node_key)
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    turn = SimpleNamespace(workflow_run_id=run_id)
+
+    correlation = await ImageToolsService._workflow_correlation(session, uuid4(), uuid4(), turn)  # type: ignore[arg-type]
+
+    assert correlation == ({} if expected is None else {"workflow_run_id": run_id, **expected})
+    chat_turn = SimpleNamespace(workflow_run_id=None)
+    session.execute.reset_mock()
+    assert await ImageToolsService._workflow_correlation(session, uuid4(), uuid4(), chat_turn) == {}  # type: ignore[arg-type]
+    session.execute.assert_not_awaited()

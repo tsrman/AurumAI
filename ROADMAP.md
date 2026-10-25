@@ -28,7 +28,8 @@ Detailed fresh verification belongs in the release report and CI.
   with separate organization models and an `images.generate` capability, and
   image attachments for chat models the organization marks as vision models;
   image calls count against the monthly quota and appear in usage analytics, and
-  conversations with images are archived and restored with their bytes.
+  conversations with images are archived and restored with their bytes; workflow
+  node agents create and edit images and receive attachments.
 - Guided workflow authoring with runnable examples, and starter tools
   (`install-platform.sh`, CSV statistics and JSON formatting code skills).
 - Service lint/types/tests, frontend tests/builds, migration checks, image builds
@@ -53,7 +54,6 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 
 - Integrate Hermes Agent as a universal system agent within the existing
   conversation runtime, tools and workflow orchestration.
-- Images inside workflow agents: image tools and attachments for agent nodes.
 - Loop wall-clock budgets; nested/overlapping loop bodies and confirmation nodes
   inside a loop remain outside the current graph contract.
 - Broader runtime/provider/load coverage, with fresh Kubernetes CNI/SSRF acceptance

@@ -12,6 +12,7 @@ from src.workflows.lifecycle import register_lifecycle_execution
 with workflow.unsafe.imports_passed_through():
     from src.workflows.activities import (
         create_user_question,
+        execute_image_tool,
         execute_web_tool,
         get_conversation_id,
         get_session_token,
@@ -21,9 +22,11 @@ with workflow.unsafe.imports_passed_through():
         register_interaction_execution,
     )
     from src.workflows.builtin_tools import (
+        IMAGE_TOOLS,
         ExecutionContext,
         builtin_instructions,
         enabled_builtin_tools,
+        image_tool_error_context,
         prepare_builtin_invocation,
         select_source_citations,
         web_tool_error_context,
@@ -83,6 +86,13 @@ class AgentInput:
     user_questions_enabled: bool = False
     web_tools_enabled: bool = False
     inherited_source_ids: tuple[str, ...] = ()
+    # Image tools, offered to workflow node agents only.
+    image_generation_enabled: bool = False
+    image_editing_enabled: bool = False
+    # Conversation images an edit may use: {"id", "prompt", "origin"}.
+    recent_images: tuple[dict[str, str], ...] = ()
+    # Images the user attached; the chat proxy inlines them for vision models.
+    image_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,6 +100,7 @@ class AgentResult:
     answer: str
     source_ids: tuple[str, ...] = ()
     unsupported_source_ids: tuple[str, ...] = ()
+    image_ids: tuple[str, ...] = ()
 
 
 def _build_agent_system_prompt(
@@ -98,6 +109,9 @@ def _build_agent_system_prompt(
     *,
     user_questions_enabled: bool = True,
     web_tools_enabled: bool = False,
+    image_generation_enabled: bool = False,
+    image_editing_enabled: bool = False,
+    recent_images: list[dict[str, str]] | None = None,
 ) -> str:
     sections = [
         agent.system_prompt.strip(),
@@ -107,6 +121,9 @@ def _build_agent_system_prompt(
         "agent",
         user_questions_enabled=user_questions_enabled,
         web_tools_enabled=web_tools_enabled,
+        image_generation_enabled=image_generation_enabled,
+        image_editing_enabled=image_editing_enabled,
+        recent_images=recent_images,
     )
     if builtin_prompt:
         sections.append(builtin_prompt)
@@ -134,7 +151,7 @@ def _build_agent_system_prompt(
 
 def _llm_request(
     input: AgentInput,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
 ) -> dict[str, Any]:
     request: dict[str, Any] = {
         "model": input.agent.model,
@@ -165,14 +182,25 @@ class AgentWorkflow:
         max_iterations = 3
         execution_context: ExecutionContext | None = None
         used_web_tool = False
+        used_image_tool = False
         available_source_ids = list(input.inherited_source_ids)
+        created_image_ids: list[str] = []
         web_protocol_enabled = input.web_tools_enabled and workflow.patched("web-tools-v1")
         question_protocol_enabled = (
             input.user_questions_enabled and workflow.patched("user-questions-v1")
         )
+        # Evaluated only when images are requested, so agent histories without
+        # them record no marker and replay unchanged.
+        image_tools_enabled = (
+            input.image_generation_enabled or input.image_editing_enabled
+        ) and workflow.patched("image-tools-v1")
+        image_generation = image_tools_enabled and input.image_generation_enabled
+        image_editing = image_tools_enabled and input.image_editing_enabled
         enabled_tools = enabled_builtin_tools(
             question_protocol_enabled,
             web_protocol_enabled,
+            image_generation_enabled=image_generation,
+            image_editing_enabled=image_editing,
         )
         available_skills = await workflow.execute_activity(
             list_available_skills,
@@ -188,7 +216,13 @@ class AgentWorkflow:
         executable_skill_ids = {
             str(skill.get("id", "")) for skill in filtered_skills
         }
-        messages: list[dict[str, str]] = [
+        goal_message: dict[str, Any] = {
+            "role": "user",
+            "content": f"Goal: {input.goal}\nContext: {input.context}",
+        }
+        if input.image_ids:
+            goal_message["image_ids"] = list(input.image_ids)
+        messages: list[dict[str, Any]] = [
             {
                 "role": "system",
                 "content": _build_agent_system_prompt(
@@ -196,9 +230,12 @@ class AgentWorkflow:
                     filtered_skills,
                     user_questions_enabled=question_protocol_enabled,
                     web_tools_enabled=web_protocol_enabled,
+                    image_generation_enabled=image_generation,
+                    image_editing_enabled=image_editing,
+                    recent_images=list(input.recent_images),
                 ),
             },
-            {"role": "user", "content": f"Goal: {input.goal}\nContext: {input.context}"},
+            goal_message,
         ]
         if input.output_schema:
             messages[0]["content"] += f"\nWhen the goal is complete, respond with your final answer as a valid JSON object matching this schema:\n{json.dumps(input.output_schema)}"
@@ -296,17 +333,9 @@ class AgentWorkflow:
                         start_to_close_timeout=timedelta(seconds=30),
                         retry_policy=_ACTIVITY_RETRY_POLICY,
                     )
-                if web_protocol_enabled:
-                    selection = select_source_citations(
-                        self.final_answer,
-                        available_source_ids,
-                    )
-                    return AgentResult(
-                        answer=self.final_answer,
-                        source_ids=selection.source_ids,
-                        unsupported_source_ids=selection.unsupported_source_ids,
-                    )
-                return self.final_answer
+                return self._result(
+                    web_protocol_enabled, image_tools_enabled, available_source_ids, created_image_ids
+                )
 
             messages.append({"role": "assistant", "content": raw})
             for call in tool_calls:
@@ -345,6 +374,40 @@ class AgentWorkflow:
                             start_to_close_timeout=timedelta(seconds=30),
                             retry_policy=_ACTIVITY_RETRY_POLICY,
                         )
+                    if builtin.name in IMAGE_TOOLS:
+                        used_image_tool = True
+                        try:
+                            image_result = await workflow.execute_activity(
+                                execute_image_tool,
+                                args=(
+                                    execution_context,
+                                    builtin.invocation_id,
+                                    builtin.name,
+                                    builtin.arguments,
+                                ),
+                                start_to_close_timeout=timedelta(minutes=6),
+                                retry_policy=_ACTIVITY_RETRY_POLICY,
+                            )
+                        except ActivityError as exc:
+                            error_type = application_error_type(exc)
+                            if error_type is None or not error_type.startswith("image_"):
+                                raise
+                            image_result = image_tool_error_context(builtin.name, error_type)
+                        created_image_ids.extend(
+                            image_id
+                            for image_id in image_result.get("image_ids", [])
+                            if isinstance(image_id, str)
+                        )
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Tool result for {builtin.name}: "
+                                    f"{json.dumps(image_result)}"
+                                ),
+                            }
+                        )
+                        continue
                     if builtin.name in {"web_search", "web_read"}:
                         used_web_tool = True
                         label = (
@@ -501,8 +564,8 @@ class AgentWorkflow:
                     {"role": "user", "content": f"Tool result for {skill_id}: {tool_result}"}
                 )
 
-        if used_web_tool:
-            # A web-capable model that spends all 50 rounds asking for more
+        if used_web_tool or used_image_tool:
+            # A web- or image-capable model that spends all 50 rounds asking for more
             # tools has not produced an answer. The summary call below runs
             # with publish_events=False, where hide_tool_call_tag is a no-op
             # (see llm_call in activities.py), so a <tool_call> the model
@@ -543,17 +606,32 @@ class AgentWorkflow:
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=_ACTIVITY_RETRY_POLICY,
             )
-        if web_protocol_enabled:
-            selection = select_source_citations(
-                self.final_answer,
-                available_source_ids,
-            )
-            return AgentResult(
-                answer=self.final_answer,
-                source_ids=selection.source_ids,
-                unsupported_source_ids=selection.unsupported_source_ids,
-            )
-        return self.final_answer
+        return self._result(
+            web_protocol_enabled, image_tools_enabled, available_source_ids, created_image_ids
+        )
+
+    def _result(
+        self,
+        web_protocol_enabled: bool,
+        image_tools_enabled: bool,
+        available_source_ids: list[str],
+        created_image_ids: list[str],
+    ) -> str | AgentResult:
+        # A bare string keeps the result shape of histories without web or
+        # image tools.
+        if not web_protocol_enabled and not image_tools_enabled:
+            return self.final_answer
+        selection = (
+            select_source_citations(self.final_answer, available_source_ids)
+            if web_protocol_enabled
+            else None
+        )
+        return AgentResult(
+            answer=self.final_answer,
+            source_ids=selection.source_ids if selection else (),
+            unsupported_source_ids=selection.unsupported_source_ids if selection else (),
+            image_ids=tuple(dict.fromkeys(created_image_ids)),
+        )
 
     @workflow.signal(name="question_available")
     async def question_available(self, question_id: str, version: int) -> None:

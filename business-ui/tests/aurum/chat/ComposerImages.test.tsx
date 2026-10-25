@@ -11,7 +11,21 @@ vi.mock("@/providers/AuthProvider", () => ({
 }));
 vi.mock("@/hooks/useModels", () => ({ useModels: () => ({ data: { data: models } }) }));
 vi.mock("@/hooks/useSettings", () => ({ useSettings: () => ({ data: undefined }) }));
-vi.mock("@/hooks/useWorkflows", () => ({ useWorkflows: () => ({ data: [], isLoading: false }) }));
+vi.mock("@/hooks/useWorkflows", () => ({
+  useWorkflows: () => ({
+    data: [
+      {
+        id: "workflow-1",
+        name: "Illustrate",
+        description: "Draw and refine",
+        version: 1,
+        maxParallelism: 1,
+        status: "active",
+      },
+    ],
+    isLoading: false,
+  }),
+}));
 vi.mock("@/hooks/useDocuments", () => ({
   useAttachFile: () => ({ mutateAsync: vi.fn() }),
   useDocuments: () => ({ data: undefined }),
@@ -103,4 +117,25 @@ test("at most four images go with one message", async () => {
 
   await waitFor(() => expect(uploadConversationImage).toHaveBeenCalledTimes(4));
   expect(await screen.findByRole("alert")).toHaveTextContent("At most 4 images per message");
+});
+
+
+test("a selected workflow takes images even when the chat model does not", async () => {
+  models = [{ id: "text-model", vision: false }];
+  uploadConversationImage.mockResolvedValue({ imageId: "image-1", contentType: "image/png" });
+  const onSend = vi.fn();
+  render(<Composer conversationId="conv-1" onSend={onSend} />, { wrapper: Wrapper });
+
+  fireEvent.click(screen.getByRole("button", { name: "Choose workflow" }));
+  fireEvent.click(screen.getByRole("option", { name: /Illustrate/ }));
+  const input = screen.getByLabelText("Choose a file to attach");
+  expect(input).toHaveAttribute("accept", expect.stringContaining(".png"));
+  fireEvent.change(input, { target: { files: [png()] } });
+  await screen.findByRole("img", { name: "cat.png" });
+  // The workflow stays selected after the upload.
+  expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent("Illustrate");
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "make it blue" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  expect(onSend).toHaveBeenCalledWith("make it blue", "workflow-1", ["image-1"]);
 });

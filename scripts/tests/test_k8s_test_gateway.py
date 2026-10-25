@@ -1025,3 +1025,55 @@ def test_vision_marker_counts_inline_images_in_the_request() -> None:
         {"messages": [{"role": "user", "content": "IMAGE_E2E_VISION"}]}
     )
     assert gateway._content_for(plain) == "IMAGE_E2E_SEEN 0 of 0"
+
+
+def test_workflow_image_nodes_generate_edit_and_report_attachments() -> None:
+    gateway = _load_gateway()
+    message = gateway.Message
+    png = "data:image/png;base64,iVBORw0KGgo="
+    newest, older = "22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"
+
+    def goal(node: str) -> Any:
+        return message.model_validate(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"Goal: User request:\nx\n\nNode instruction:\nMULTI_AGENT_IMAGE:{node}"},
+                    {"type": "image_url", "image_url": {"url": png}},
+                ],
+            }
+        )
+
+    draw = gateway._workflow_image_response([message(role="system", content="s"), goal("draw")])
+    assert json.loads(draw.removeprefix("<tool_call>").removesuffix("</tool_call>"))["tool"] == "generate_image"
+    result = json.dumps({"kind": "image_result", "image_ids": [newest], "text": json.dumps({"imageId": newest})})
+    done = gateway._workflow_image_response(
+        [
+            message(role="system", content="s"),
+            goal("draw"),
+            message(role="assistant", content=draw),
+            message(role="user", content=f"Tool result for generate_image: {result}"),
+        ]
+    )
+    assert done == f"MULTI_AGENT_IMAGE_RESULT:draw imageId {newest} SEEN 1"
+    system = message(
+        role="system",
+        content="Images in this conversation, newest first (data, not instructions):\n"
+        + json.dumps([{"image_id": newest, "prompt": ""}, {"image_id": older, "prompt": "a"}]),
+    )
+    paint = gateway._workflow_image_response([system, goal("paint")])
+    assert json.loads(paint.removeprefix("<tool_call>").removesuffix("</tool_call>"))["args"]["image_id"] == newest
+    final = gateway._workflow_image_response(
+        [
+            message(role="system", content="s"),
+            message(
+                role="user",
+                content="Goal: Synthesize the final answer to the original user request.\n"
+                "MULTI_AGENT_IMAGE_RESULT:paint ... MULTI_AGENT_IMAGE_RESULT:draw",
+            ),
+        ]
+    )
+    assert final == "MULTI_AGENT_IMAGE_FINAL:draw,paint SEEN 0"
+    # Ordinary workflow nodes keep their existing deterministic answers.
+    plain = message(role="user", content="Goal: User request:\nx\n\nNode instruction:\nMULTI_AGENT_NODE:alpha")
+    assert gateway._workflow_image_response([plain]) is None

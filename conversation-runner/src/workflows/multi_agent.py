@@ -62,6 +62,12 @@ class MultiAgentInput:
     run_id: str
     user_questions_enabled: bool = False
     web_tools_enabled: bool = False
+    # Image tools for node agents; supervisors never get them.
+    image_generation_enabled: bool = False
+    image_editing_enabled: bool = False
+    recent_images: tuple[dict[str, str], ...] = ()
+    # Images the user attached to the message that started the run.
+    image_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,7 @@ class MultiAgentResult:
     error_code: str | None = None
     source_ids: tuple[str, ...] = ()
     unsupported_source_ids: tuple[str, ...] = ()
+    image_ids: tuple[str, ...] = ()
 
 
 def _agent_result(value: Any) -> AgentResult:
@@ -87,17 +94,22 @@ def _agent_result(value: Any) -> AgentResult:
             "unsupported_source_ids",
             value.get("unsupportedSourceIds", ()),
         )
+        image_ids = value.get("image_ids", value.get("imageIds", ()))
         if (
             not isinstance(answer, str)
             or not isinstance(source_ids, (list, tuple))
             or not isinstance(unsupported, (list, tuple))
-            or any(not isinstance(item, str) for item in (*source_ids, *unsupported))
+            or not isinstance(image_ids, (list, tuple))
+            or any(
+                not isinstance(item, str) for item in (*source_ids, *unsupported, *image_ids)
+            )
         ):
             raise ValueError("invalid_agent_result")
         return AgentResult(
             answer=answer,
             source_ids=tuple(source_ids),
             unsupported_source_ids=tuple(unsupported),
+            image_ids=tuple(image_ids),
         )
     raise ValueError("invalid_agent_result")
 
@@ -448,6 +460,62 @@ async def _activity(name: str, args: tuple[Any, ...]) -> Any:
     )
 
 
+def _node_agent_input(
+    input: MultiAgentInput,
+    node_key: str,
+    node: MultiAgentNode,
+    user_request: str,
+    brief: str,
+    predecessor_outputs: list[dict[str, Any]],
+    previous_iteration: dict[str, Any] | None,
+    turn_id: str,
+    execution_iteration: int,
+    inherited_source_ids: tuple[str, ...],
+    produced_images: Sequence[str],
+) -> AgentInput:
+    """One builder for inline and confirmation-gated nodes, so both get the
+    same tools and context."""
+    images_enabled = input.image_generation_enabled or input.image_editing_enabled
+    # Earlier nodes' images first (newest first), so a later node can edit them.
+    recent_images = (
+        tuple(
+            {"id": image_id, "prompt": "", "origin": "generated"}
+            for image_id in reversed(produced_images)
+        )
+        + input.recent_images
+        if images_enabled
+        else ()
+    )
+    return AgentInput(
+        agent=node.agent,
+        goal=(
+            f"User request:\n{user_request}\n\n"
+            f"Node instruction:\n{node.instruction}\n\n"
+            f"Supervisor brief:\n{brief}"
+        ),
+        context={
+            "user_request": user_request,
+            "instruction": node.instruction,
+            "supervisor_brief": brief,
+            "predecessor_outputs": predecessor_outputs,
+            **({"previous_iteration": previous_iteration} if previous_iteration is not None else {}),
+        },
+        event_visibility="internal",
+        workflow_run_id=input.run_id,
+        workflow_phase="node",
+        workflow_node_key=node_key,
+        turn_id=turn_id,
+        execution_iteration=execution_iteration,
+        user_questions_enabled=input.user_questions_enabled,
+        web_tools_enabled=input.web_tools_enabled,
+        inherited_source_ids=inherited_source_ids,
+        image_generation_enabled=input.image_generation_enabled,
+        image_editing_enabled=input.image_editing_enabled,
+        recent_images=recent_images,
+        image_ids=input.image_ids,
+    )
+
+
 @workflow.defn(name="MultiAgentWorkflow")
 class MultiAgentWorkflow:
     def __init__(self) -> None:
@@ -456,6 +524,10 @@ class MultiAgentWorkflow:
         self._turn_id = ""
         self._node_names: dict[str, str] = {}
         self._decisions: dict[str, str] = {}
+        # Images per completed node (reset with a loop body) and every image
+        # the run produced, in creation order.
+        self._node_image_ids: dict[str, tuple[str, ...]] = {}
+        self._produced_images: list[str] = []
 
     @workflow.signal
     def submit_human_decision(self, node_key: str, decision: str) -> None:
@@ -520,8 +592,7 @@ class MultiAgentWorkflow:
         completed: dict[str, str],
         failed_error_codes: dict[str, str],
         execution_iteration: int,
-        user_questions_enabled: bool,
-        web_tools_enabled: bool,
+        input: MultiAgentInput,
         inherited_source_ids: tuple[str, ...],
         previous_iteration: dict[str, Any] | None,
     ) -> Any:
@@ -582,33 +653,18 @@ class MultiAgentWorkflow:
         )
         handle = await workflow.start_child_workflow(
             "AgentWorkflow",
-            AgentInput(
-                agent=node.agent,
-                goal=(
-                    f"User request:\n{user_request}\n\n"
-                    f"Node instruction:\n{node.instruction}\n\n"
-                    f"Supervisor brief:\n{briefs[node_key]}"
-                ),
-                context={
-                    "user_request": user_request,
-                    "instruction": node.instruction,
-                    "supervisor_brief": briefs[node_key],
-                    "predecessor_outputs": predecessor_outputs,
-                    **(
-                        {"previous_iteration": previous_iteration}
-                        if previous_iteration is not None
-                        else {}
-                    ),
-                },
-                event_visibility="internal",
-                workflow_run_id=run_id,
-                workflow_phase="node",
-                workflow_node_key=node_key,
-                turn_id=self._turn_id,
-                execution_iteration=execution_iteration,
-                user_questions_enabled=user_questions_enabled,
-                web_tools_enabled=web_tools_enabled,
-                inherited_source_ids=inherited_source_ids,
+            _node_agent_input(
+                input,
+                node_key,
+                node,
+                user_request,
+                briefs[node_key],
+                predecessor_outputs,
+                previous_iteration,
+                self._turn_id,
+                execution_iteration,
+                inherited_source_ids,
+                self._produced_images,
             ),
             id=f"{run_id}:node:{node_key}",
         )
@@ -660,6 +716,7 @@ class MultiAgentWorkflow:
             outcomes.pop(body_key, None)
             completed.pop(body_key, None)
             completed_source_ids.pop(body_key, None)
+            self._node_image_ids.pop(body_key, None)
             failed_error_codes.pop(body_key, None)
             output_sizes.pop(body_key, None)
             pending.add(body_key)
@@ -772,6 +829,7 @@ class MultiAgentWorkflow:
                     turn_id=self._turn_id,
                     user_questions_enabled=input.user_questions_enabled,
                     web_tools_enabled=input.web_tools_enabled,
+                    image_ids=input.image_ids,
                 ),
                 id=f"{run_id}:supervisor_prepare",
             )
@@ -834,8 +892,7 @@ class MultiAgentWorkflow:
                                 completed,
                                 failed_error_codes,
                                 execution_iterations[node_key],
-                                input.user_questions_enabled,
-                                input.web_tools_enabled,
+                                input,
                                 inherited_source_ids,
                                 previous_iteration,
                             )
@@ -893,33 +950,18 @@ class MultiAgentWorkflow:
                     )
                     handle = await workflow.start_child_workflow(
                         "AgentWorkflow",
-                        AgentInput(
-                            agent=node.agent,
-                            goal=(
-                                f"User request:\n{user_request}\n\n"
-                                f"Node instruction:\n{node.instruction}\n\n"
-                                f"Supervisor brief:\n{briefs[node_key]}"
-                            ),
-                            context={
-                                "user_request": user_request,
-                                "instruction": node.instruction,
-                                "supervisor_brief": briefs[node_key],
-                                "predecessor_outputs": predecessor_outputs,
-                                **(
-                                    {"previous_iteration": previous_iteration}
-                                    if previous_iteration is not None
-                                    else {}
-                                ),
-                            },
-                            event_visibility="internal",
-                            workflow_run_id=run_id,
-                            workflow_phase="node",
-                            workflow_node_key=node_key,
-                            turn_id=self._turn_id,
-                            execution_iteration=execution_iterations[node_key],
-                            user_questions_enabled=input.user_questions_enabled,
-                            web_tools_enabled=input.web_tools_enabled,
-                            inherited_source_ids=inherited_source_ids,
+                        _node_agent_input(
+                            input,
+                            node_key,
+                            node,
+                            user_request,
+                            briefs[node_key],
+                            predecessor_outputs,
+                            previous_iteration,
+                            self._turn_id,
+                            execution_iterations[node_key],
+                            inherited_source_ids,
+                            self._produced_images,
                         ),
                         id=f"{run_id}:node:{node_key}",
                     )
@@ -1001,6 +1043,8 @@ class MultiAgentWorkflow:
                     await self._publish_node_status(node_key, "completed")
                     completed[node_key] = output
                     completed_source_ids[node_key] = node_result.source_ids
+                    self._node_image_ids[node_key] = node_result.image_ids
+                    self._produced_images.extend(node_result.image_ids)
                     outcomes[node_key] = "completed"
                     await self._finalize_node_outcome(
                         run_id,
@@ -1087,6 +1131,7 @@ class MultiAgentWorkflow:
                     user_questions_enabled=input.user_questions_enabled,
                     web_tools_enabled=input.web_tools_enabled,
                     inherited_source_ids=inherited_source_ids,
+                    image_ids=input.image_ids,
                 ),
                 id=f"{run_id}:supervisor_synthesize",
             )
@@ -1105,6 +1150,14 @@ class MultiAgentWorkflow:
                 context_used=context_used,
                 source_ids=synthesis_result.source_ids,
                 unsupported_source_ids=synthesis_result.unsupported_source_ids,
+                # Images of the nodes whose outputs the answer is built from.
+                image_ids=tuple(
+                    dict.fromkeys(
+                        image_id
+                        for node_key in sorted(completed)
+                        for image_id in self._node_image_ids.get(node_key, ())
+                    )
+                ),
             )
         except asyncio.CancelledError:
             cancelled_keys = await self._cancel_active(run_id)

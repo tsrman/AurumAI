@@ -520,12 +520,15 @@ async def _maybe_classify_workflow(
 async def _require_sendable_uploads(
     session: AsyncSession, request: ChatRequest, conv: "Conversation"
 ) -> None:
-    if request.workflow_id is not None:
+    if not settings.IMAGES_ENABLED:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Workflows cannot receive images",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Images are disabled"
         )
-    if not await vision_enabled(session, conv.org_id, request.model):
+    # A workflow's agents use their own models; the chat proxy inlines the
+    # images only for those marked as vision models.
+    if request.workflow_id is None and not await vision_enabled(
+        session, conv.org_id, request.model
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="This model does not accept images",
@@ -563,9 +566,7 @@ async def chat_stream(
     turn_model = request.model
     effective_workflow_id = request.workflow_id
     auto_routed = False
-    # Workflows cannot use images yet, so a message with images is never
-    # routed to one.
-    if effective_workflow_id is None and not upload_ids:
+    if effective_workflow_id is None:
         effective_workflow_id = await _maybe_classify_workflow(session, quota, user, request)
         auto_routed = effective_workflow_id is not None
 
@@ -583,6 +584,19 @@ async def chat_stream(
         session.add(message)
         try:
             await session.flush()
+            if upload_ids:
+                try:
+                    claimed = await claim_uploads(
+                        session, conv.org_id, conv.id, turn_id, upload_ids
+                    )
+                except ImageUploadError as exc:
+                    # A lost race for the upload, not a workflow failure: no
+                    # fallback to ordinary chat.
+                    await session.rollback()
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT, detail="Image is not available"
+                    ) from exc
+                message.extra = {"image_ids": claimed}
             workflow_run = await workflow_run_service.create_authorized_run(
                 session,
                 authorization_subject(user),
@@ -790,7 +804,7 @@ async def chat_stream(
         if exact_run_id is None:
             raise RuntimeError("Exact workflow run unavailable")
         from src.services.execution_closure import register_execution
-        await register_execution(session, temporal_client, org_id=uuid.UUID(user.org_id or ""), conversation_id=uuid.UUID(conversation_id), generation=signal_operation.generation, workflow_id=f"conversation-{conversation_id}", run_id=uuid.UUID(exact_run_id))
+        await register_execution(session, temporal_client, org_id=uuid.UUID(user.org_id or ""), conversation_id=uuid.UUID(conversation_id), generation=signal_operation.generation, workflow_id=f"conversation-{conversation_id}", run_id=uuid.UUID(exact_run_id), wait_for_child_start=True)
         await settle_operation(session, signal_operation, workflow_id=f"conversation-{conversation_id}", run_id=uuid.UUID(exact_run_id))
         await session.commit()
     except Exception as exc:

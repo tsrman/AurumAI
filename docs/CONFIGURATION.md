@@ -138,7 +138,15 @@ short text note. Attached images also appear in the image list a later turn can 
 attachment before sending deletes it; an upload left unsent (for example when the tab
 closes) stays with the conversation, unused, and like any conversation image keeps
 it from being archived.
-Workflows cannot receive images yet, so a message with images is never routed to one.
+Workflows use images too. Their node agents get `generate_image` and `edit_image`
+under the same switch, capability and organization models (supervisors never do);
+a node can edit an image an earlier node created, and the images of the nodes the
+final answer is built from are shown under it. Image calls of a workflow are
+billed to its run, phase and node, and the per-turn limit of four images is shared
+by all of its nodes. Attached images go to the supervisor and to every node; a
+workflow accepts them whatever the composer model is, and each agent receives them
+only if its own model is marked as accepting images. Because every agent call sends
+them again, attachments cost more in a workflow than in a chat turn.
 
 Image tools share the organization's monthly quota with chat. Each Images API attempt
 reserves one request before the call (an exhausted quota fails the tool with

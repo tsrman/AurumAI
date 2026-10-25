@@ -69,6 +69,12 @@ _SOURCE_CITATION = re.compile(
     r"\[source:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\]"
 )
 _PREPARATION_SCHEMA_MARKER = "valid JSON object matching this schema:"
+# Workflow nodes whose instruction carries MULTI_AGENT_IMAGE:draw generate an
+# image; MULTI_AGENT_IMAGE:paint edits the newest image the node was offered.
+_MULTI_AGENT_IMAGE = re.compile(r"MULTI_AGENT_IMAGE:(draw|paint)")
+_MULTI_AGENT_IMAGE_RESULT = re.compile(r"MULTI_AGENT_IMAGE_RESULT:(draw|paint)")
+_IMAGE_ID = re.compile(r'"imageId":\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"')
+_LISTED_IMAGE = re.compile(r'"image_id":\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"')
 _ASK_RESULT_PREFIX = "Tool result for ask_user: "
 _QUESTION_MARKERS = ("ASK_CITY_THEN_FINAL", "ASK_TWICE", "ASK_LOOP", "ASK_OPTION")
 
@@ -712,7 +718,46 @@ def _image_response(messages: list[Message]) -> str | None:
     return "IMAGE_E2E_DONE " + ("edited" if tool == "edit_image" else "generated")
 
 
+def _workflow_image_response(messages: list[Message]) -> str | None:
+    goal = next((m for m in messages if m.role == "user"), None)
+    if goal is None:
+        return None
+    if "Synthesize the final answer to the original user request" in goal.content:
+        nodes = sorted(set(_MULTI_AGENT_IMAGE_RESULT.findall(goal.content)))
+        if not nodes:
+            return None
+        return f"MULTI_AGENT_IMAGE_FINAL:{','.join(nodes)} SEEN {goal.image_parts}"
+    node = _MULTI_AGENT_IMAGE.search(goal.content)
+    if node is None or "Node instruction:" not in goal.content:
+        return None
+    results = [
+        m.content for m in messages
+        if m.role == "user" and m.content.startswith(("Tool result for generate_image: ", "Tool result for edit_image: "))
+    ]
+    if results:
+        created = _IMAGE_ID.search(results[-1].replace('\\"', '"'))
+        if created is None:
+            return "MULTI_AGENT_IMAGE_ERROR:" + results[-1][:200]
+        return (
+            f"MULTI_AGENT_IMAGE_RESULT:{node[1]} imageId {created[1]} SEEN {goal.image_parts}"
+        )
+
+    def call(tool: str, args: dict[str, str]) -> str:
+        return "<tool_call>" + json.dumps({"tool": tool, "args": args}, separators=(",", ":")) + "</tool_call>"
+
+    if node[1] == "draw":
+        return call("generate_image", {"prompt": "IMAGE_E2E workflow fox", "size": "1024x1024"})
+    system = next((m.content for m in messages if m.role == "system"), "")
+    listed = _LISTED_IMAGE.search(system)
+    if listed is None:
+        return "MULTI_AGENT_IMAGE_NO_SOURCE"
+    return call("edit_image", {"image_id": listed[1], "prompt": "IMAGE_E2E paint it"})
+
+
 def _content_for(request: CompletionRequest) -> str:
+    workflow_images = _workflow_image_response(request.messages)
+    if workflow_images is not None:
+        return workflow_images
     images = _image_response(request.messages)
     if images is not None:
         return images

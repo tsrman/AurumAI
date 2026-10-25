@@ -64,7 +64,7 @@ def test_edit_takes_only_an_image_id() -> None:
         parse_builtin({"tool": "edit_image", "args": {"image_id": "/etc/passwd", "prompt": "x"}}, image_tools=tools)
 
 
-def test_instructions_only_in_ordinary_chat_and_per_capability() -> None:
+def test_instructions_for_chat_and_node_agents_per_capability() -> None:
     ordinary = builtin_instructions(
         "ordinary", user_questions_enabled=False, image_generation_enabled=True
     )
@@ -76,7 +76,14 @@ def test_instructions_only_in_ordinary_chat_and_per_capability() -> None:
         image_editing_enabled=True,
     )
     assert "edit_image" in both
-    for scope in ("agent", "supervisor_prepare", "supervisor_synthesize", "evaluator"):
+    # Node agents run in the "agent" scope; their images go to the final answer.
+    agent = builtin_instructions(
+        "agent", user_questions_enabled=False, image_generation_enabled=True
+    )
+    assert "generate_image" in agent and "workflow's final answer" in agent
+    assert "below your answer" not in agent
+    assert "image" not in builtin_instructions("agent", user_questions_enabled=False)
+    for scope in ("supervisor_prepare", "supervisor_synthesize", "evaluator"):
         assert "image" not in builtin_instructions(
             scope,  # type: ignore[arg-type]
             user_questions_enabled=False,
