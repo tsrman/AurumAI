@@ -10,6 +10,11 @@ normal UI/API; export and restore are operator procedures.
 creation/update/message/restore activity; an old but recently used conversation is
 not eligible. Audit payload uses record creation age.
 
+A conversation with an open, unexpired Hermes Agent session is not eligible
+(`hermes_session_open`). Session records are runtime state, not history: the purge
+removes the conversation's closed and expired ones, the archive does not carry them
+and a restore does not bring them back.
+
 `APP_ARCHIVE_SWEEP_INTERVAL_SECONDS=86400` controls discovery timing and
 `APP_ARCHIVE_BATCH_SIZE=100` is the built-in batch default. Values must be positive;
 operators can override them. Turning `APP_ARCHIVE_ENABLED` off prevents new jobs,

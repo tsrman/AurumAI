@@ -3,6 +3,7 @@
 import base64
 import json
 import struct
+import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -77,14 +78,22 @@ def _image_part(data: bytes, mime: str = "image/png") -> dict[str, object]:
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
 
 
-def _token(env, *, generation: int = 1, now: datetime | None = None) -> str:  # noqa: ANN001
-    return hermes_session_token_service.issue(
-        org_id=env.org_id,
-        user_id=env.user_id,
-        conversation_id=env.conversation_id,
-        generation=generation,
-        now=now,
-    ).token
+async def _token(env, **correlation: object) -> str:  # noqa: ANN001
+    return (await env.open_session(**correlation))["token"]
+
+
+def _forged(env, session_id: str, **overrides: object) -> str:  # noqa: ANN001
+    values: dict[str, object] = {
+        "org_id": env.org_id,
+        "user_id": env.user_id,
+        "conversation_id": env.conversation_id,
+        "generation": 1,
+        "session_id": uuid.UUID(session_id),
+        "token_version": 1,
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        **overrides,
+    }
+    return hermes_session_token_service.issue(**values).token  # type: ignore[arg-type]
 
 
 def _body(**overrides: object) -> dict[str, object]:
@@ -127,7 +136,7 @@ async def test_streams_native_tool_calls_unchanged_with_live_checks_and_quota(he
         "src.services.completion_stream.llm_client.stream_chat",
         side_effect=scripted_stream(TOOL_CALL_CHUNKS, requests),
     ):
-        response = await _post(hermes_env, _token(hermes_env), _body())
+        response = await _post(hermes_env, await _token(hermes_env), _body())
 
     assert response.status_code == 200
     data_lines = [line[6:] for line in response.text.splitlines() if line.startswith("data: ")]
@@ -153,7 +162,11 @@ async def test_streams_native_tool_calls_unchanged_with_live_checks_and_quota(he
     [reservation] = hermes_env.quota.reservations
     assert reservation["conversation_id"] == hermes_env.conversation_id
     assert reservation["model"] == MODEL
-    assert set(reservation) == {"org_id", "user_id", "conversation_id", "model", "request_id"}
+    assert (
+        reservation["workflow_run_id"],
+        reservation["workflow_phase"],
+        reservation["workflow_node_key"],
+    ) == (None, None, None)
     assert hermes_env.quota.completed == [(reservation["request_id"], 11, 7, 18)]
     [(org, model, _)] = hermes_env.granted_models
     assert (org, model) == (str(hermes_env.org_id), MODEL)
@@ -166,17 +179,42 @@ async def test_workflow_correlation_in_the_body_is_never_billed(hermes_env) -> N
         "src.services.completion_stream.llm_client.stream_chat",
         side_effect=scripted_stream(TOOL_CALL_CHUNKS, requests),
     ):
-        response = await _post(hermes_env, _token(hermes_env), body)
+        response = await _post(hermes_env, await _token(hermes_env), body)
 
     assert response.status_code == 200
-    assert "workflow_run_id" not in hermes_env.quota.reservations[0]
+    assert hermes_env.quota.reservations[0]["workflow_run_id"] is None
     assert "workflow_run_id" not in requests[0]
 
 
+@pytest.mark.parametrize(
+    ("phase", "node_key"), [("node", "research"), ("supervisor_synthesize", None)]
+)
+async def test_calls_are_billed_to_the_bound_workflow_correlation(
+    hermes_env, phase: str, node_key: str | None
+) -> None:
+    run_id = await hermes_env.add_workflow_run()
+    correlation = {"workflowRunId": str(run_id), "workflowPhase": phase}
+    if node_key is not None:
+        correlation["workflowNodeKey"] = node_key
+    requests: list[dict[str, object]] = []
+    with patch(
+        "src.services.completion_stream.llm_client.stream_chat",
+        side_effect=scripted_stream(TOOL_CALL_CHUNKS, requests),
+    ):
+        response = await _post(hermes_env, await _token(hermes_env, **correlation), _body())
+
+    assert response.status_code == 200
+    [reservation] = hermes_env.quota.reservations
+    assert reservation["workflow_run_id"] == run_id
+    assert reservation["workflow_phase"] == phase
+    assert reservation["workflow_node_key"] == node_key
+
+
 async def test_route_is_absent_while_the_operator_switch_is_off(hermes_env, monkeypatch) -> None:
+    token = await _token(hermes_env)
     monkeypatch.setattr(settings, "HERMES_ENABLED", False)
 
-    response = await _post(hermes_env, _token(hermes_env), _body())
+    response = await _post(hermes_env, token, _body())
 
     assert response.status_code == 404
 
@@ -197,17 +235,53 @@ async def test_only_hermes_session_tokens_are_accepted(hermes_env, kind: str) ->
 
 
 async def test_expired_token_is_rejected(hermes_env) -> None:
-    old = datetime.now(timezone.utc) - timedelta(seconds=settings.HERMES_SESSION_TOKEN_TTL_SECONDS + 5)
+    opened = await hermes_env.open_session()
+    token = _forged(
+        hermes_env, opened["sessionId"], expires_at=datetime.now(timezone.utc) - timedelta(seconds=5)
+    )
 
-    response = await _post(hermes_env, _token(hermes_env, now=old), _body())
+    response = await _post(hermes_env, token, _body())
 
     assert response.status_code == 401
     assert "expired" in response.text
 
 
+async def test_expired_session_revokes_its_tokens(hermes_env) -> None:
+    opened = await hermes_env.open_session()
+    await hermes_env.expire_session(opened["sessionId"])
+
+    response = await _post(hermes_env, opened["token"], _body())
+
+    assert response.status_code == 403
+    assert "hermes_session_revoked" in response.text
+
+
+async def test_closing_revokes_and_reopening_rotates_tokens(hermes_env) -> None:
+    first = await hermes_env.open_session()
+    second = await hermes_env.open_session()
+    rotated = await _post(hermes_env, first["token"], _body())
+    closed = await hermes_env.internal("POST", f"/sessions/{second['sessionId']}/close")
+    after_close = await _post(hermes_env, second["token"], _body())
+
+    assert second["sessionId"] == first["sessionId"]
+    assert rotated.status_code == 403 and "hermes_session_revoked" in rotated.text
+    assert closed.status_code == 204
+    assert after_close.status_code == 403 and "hermes_session_revoked" in after_close.text
+    assert hermes_env.quota.reservations == []
+
+
+async def test_a_forged_session_id_is_rejected(hermes_env) -> None:
+    await hermes_env.open_session()
+
+    response = await _post(hermes_env, _forged(hermes_env, str(uuid.uuid4())), _body())
+
+    assert response.status_code == 403
+    assert "hermes_session_revoked" in response.text
+
+
 @pytest.mark.parametrize("capability", [Capability.AGENTS_HERMES, Capability.CHAT_SEND])
 async def test_live_capability_revocation_denies_the_next_call(hermes_env, capability) -> None:
-    token = _token(hermes_env)
+    token = await _token(hermes_env)
     await hermes_env.revoke(capability)
 
     response = await _post(hermes_env, token, _body())
@@ -218,7 +292,16 @@ async def test_live_capability_revocation_denies_the_next_call(hermes_env, capab
 
 
 async def test_token_is_useless_between_turns(hermes_env) -> None:
-    token = _token(hermes_env)
+    opened = await hermes_env.open_session()
+    unbound = await hermes_env.internal("DELETE", f"/sessions/{opened['sessionId']}/turn")
+    between = await _post(hermes_env, opened["token"], _body())
+
+    assert unbound.status_code == 204
+    assert between.status_code == 403 and "hermes_turn_inactive" in between.text
+
+
+async def test_token_stops_when_the_bound_turn_ends(hermes_env) -> None:
+    token = await _token(hermes_env)
     await hermes_env.finish_turn()
 
     response = await _post(hermes_env, token, _body())
@@ -229,7 +312,9 @@ async def test_token_is_useless_between_turns(hermes_env) -> None:
 
 
 async def test_stale_conversation_generation_is_fenced(hermes_env) -> None:
-    response = await _post(hermes_env, _token(hermes_env, generation=2), _body())
+    opened = await hermes_env.open_session()
+
+    response = await _post(hermes_env, _forged(hermes_env, opened["sessionId"], generation=2), _body())
 
     assert response.status_code in (404, 409)
     assert hermes_env.quota.reservations == []
@@ -255,7 +340,7 @@ async def test_stale_conversation_generation_is_fenced(hermes_env) -> None:
     ],
 )
 async def test_malformed_or_unsafe_messages_are_rejected(hermes_env, message) -> None:
-    response = await _post(hermes_env, _token(hermes_env), _body(messages=[message]))
+    response = await _post(hermes_env, await _token(hermes_env), _body(messages=[message]))
 
     assert response.status_code == 400
     assert hermes_env.quota.reservations == []
@@ -265,8 +350,8 @@ async def test_tools_are_bounded_and_unique(hermes_env, monkeypatch) -> None:
     monkeypatch.setattr(settings, "HERMES_MAX_TOOLS", 1)
     two = [TOOLS[0], {**TOOLS[0], "function": {**TOOLS[0]["function"], "name": "other"}}]
 
-    too_many = await _post(hermes_env, _token(hermes_env), _body(tools=two))
-    duplicate = await _post(hermes_env, _token(hermes_env), _body(tools=[TOOLS[0], TOOLS[0]]))
+    too_many = await _post(hermes_env, await _token(hermes_env), _body(tools=two))
+    duplicate = await _post(hermes_env, await _token(hermes_env), _body(tools=[TOOLS[0], TOOLS[0]]))
 
     assert too_many.status_code == 400
     assert duplicate.status_code == 400
@@ -275,7 +360,7 @@ async def test_tools_are_bounded_and_unique(hermes_env, monkeypatch) -> None:
 async def test_invalid_image_bytes_are_rejected(hermes_env) -> None:
     body = _body(messages=[{"role": "user", "content": [_image_part(b"not an image")]}])
 
-    response = await _post(hermes_env, _token(hermes_env), body)
+    response = await _post(hermes_env, await _token(hermes_env), body)
 
     assert response.status_code == 422
     assert "hermes_invalid_image" in response.text
@@ -284,7 +369,7 @@ async def test_invalid_image_bytes_are_rejected(hermes_env) -> None:
 async def test_image_declared_with_another_type_is_rejected(hermes_env) -> None:
     body = _body(messages=[{"role": "user", "content": [_image_part(_png(), "image/webp")]}])
 
-    response = await _post(hermes_env, _token(hermes_env), body)
+    response = await _post(hermes_env, await _token(hermes_env), body)
 
     assert response.status_code == 422
 
@@ -310,7 +395,7 @@ async def test_images_reach_only_vision_models_and_only_the_newest(
         "src.services.completion_stream.llm_client.stream_chat",
         side_effect=scripted_stream(TOOL_CALL_CHUNKS, requests),
     ):
-        response = await _post(hermes_env, _token(hermes_env), body)
+        response = await _post(hermes_env, await _token(hermes_env), body)
 
     assert response.status_code == 200
     first, second = requests[0]["messages"]
@@ -332,7 +417,7 @@ async def test_replayed_assistant_extras_are_dropped_not_rejected(hermes_env) ->
         "src.services.completion_stream.llm_client.stream_chat",
         side_effect=scripted_stream(TOOL_CALL_CHUNKS, requests),
     ):
-        response = await _post(hermes_env, _token(hermes_env), body)
+        response = await _post(hermes_env, await _token(hermes_env), body)
 
     assert response.status_code == 200
     assert requests[0]["messages"][1] == {"role": "assistant", "content": "hello"}

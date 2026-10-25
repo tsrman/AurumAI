@@ -1,55 +1,153 @@
-"""Runner-only issuance of Hermes session tokens (docs/HERMES_AGENT.md).
+"""Runner-only management of Hermes sessions (docs/HERMES_AGENT.md).
 
-Only a runner session token can mint, for its own conversation, while that
-conversation has an active turn of the same user who holds both Hermes
-capabilities. A Hermes token cannot mint another: it is rejected by
-get_current_user_or_session before this handler runs.
+Only a runner session token can act, and only for its own conversation. Opening
+a session and binding it to a turn need the operator switch and both Hermes
+capabilities; unbinding and closing need neither, so revocation always works,
+also after Hermes is switched off. A Hermes token cannot reach these
+routes: get_current_user_or_session rejects it before any handler runs.
 """
 
+from typing import Literal, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import UserInfo, get_current_user_or_session
 from src.core.authorization_dependencies import authorization_subject
+from src.core.authorization_types import AuthorizationSubject
 from src.core.dependencies import get_service_db_session
 from src.core.hermes_auth import require_hermes_enabled
 from src.schemas.hermes import HermesSessionTokenResponse
-from src.services.hermes_access import (
-    HermesAccessDenied,
-    active_hermes_turn,
-    require_hermes_capabilities,
+from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
+from src.services.hermes_sessions import (
+    HermesSessionError,
+    bind_turn,
+    close_session,
+    open_session,
+    unbind_turn,
 )
-from src.services.hermes_session_token import hermes_session_token_service
 
-router = APIRouter(dependencies=[Depends(require_hermes_enabled)])
+router = APIRouter()
+
+_STATUS = {
+    "hermes_session_not_found": status.HTTP_404_NOT_FOUND,
+    "hermes_session_closed": status.HTTP_409_CONFLICT,
+    "hermes_session_conflict": status.HTTP_409_CONFLICT,
+    "hermes_correlation_invalid": status.HTTP_422_UNPROCESSABLE_CONTENT,
+}
 
 
-@router.post("/hermes/session-tokens", status_code=status.HTTP_201_CREATED)
-async def issue_hermes_session_token(
+class BindTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    turn_id: UUID = Field(alias="turnId")
+    workflow_run_id: UUID | None = Field(default=None, alias="workflowRunId")
+    workflow_phase: Literal["supervisor_prepare", "node", "supervisor_synthesize"] | None = Field(
+        default=None, alias="workflowPhase"
+    )
+    workflow_node_key: str | None = Field(
+        default=None, alias="workflowNodeKey", pattern=r"^[a-z][a-z0-9_-]{0,63}$"
+    )
+
+
+def _runner(user: UserInfo) -> tuple[AuthorizationSubject, UUID]:
+    if user.raw_claims.get("type") != "session":
+        raise HTTPException(status_code=403, detail="Only runner session tokens are allowed")
+    return authorization_subject(user), UUID(str(user.raw_claims["conversation_id"]))
+
+
+def _fail(exc: HermesAccessDenied | HermesSessionError) -> NoReturn:
+    code = exc.code
+    raise HTTPException(
+        status_code=_STATUS.get(code, status.HTTP_403_FORBIDDEN), detail={"code": code}
+    ) from None
+
+
+@router.post(
+    "/hermes/sessions",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_hermes_enabled)],
+)
+async def open_hermes_session(
     user: UserInfo = Depends(get_current_user_or_session),
     session: AsyncSession = Depends(get_service_db_session),
 ) -> HermesSessionTokenResponse:
-    if user.raw_claims.get("type") != "session":
-        raise HTTPException(status_code=403, detail="Only runner session tokens are allowed")
-    subject = authorization_subject(user)
-    conversation_id = UUID(str(user.raw_claims["conversation_id"]))
+    subject, conversation_id = _runner(user)
     try:
         await require_hermes_capabilities(session, subject)
-        await active_hermes_turn(session, subject, conversation_id)
-    except HermesAccessDenied as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail={"code": exc.code}
-        ) from None
-    issued = hermes_session_token_service.issue(
-        org_id=subject.org_id,
-        user_id=subject.user_id,
-        conversation_id=conversation_id,
-        generation=session.info["conversation_fence"][2],
-    )
+        row, issued = await open_session(
+            session,
+            subject,
+            conversation_id,
+            generation=session.info["conversation_fence"][2],
+        )
+    except (HermesAccessDenied, HermesSessionError) as exc:
+        _fail(exc)
+    await session.commit()
     return HermesSessionTokenResponse(
         token=issued.token,
-        sessionId=str(issued.session_id),
+        sessionId=str(row.id),
         expiresAt=issued.expires_at.isoformat(),
     )
+
+
+@router.put(
+    "/hermes/sessions/{session_id}/turn",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_hermes_enabled)],
+)
+async def bind_hermes_turn(
+    session_id: UUID,
+    data: BindTurnRequest,
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> Response:
+    subject, conversation_id = _runner(user)
+    try:
+        await require_hermes_capabilities(session, subject)
+        await bind_turn(
+            session,
+            subject,
+            conversation_id,
+            session_id,
+            turn_id=data.turn_id,
+            workflow_run_id=data.workflow_run_id,
+            workflow_phase=data.workflow_phase,
+            workflow_node_key=data.workflow_node_key,
+        )
+    except (HermesAccessDenied, HermesSessionError) as exc:
+        _fail(exc)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/hermes/sessions/{session_id}/turn", status_code=status.HTTP_204_NO_CONTENT)
+async def unbind_hermes_turn(
+    session_id: UUID,
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> Response:
+    subject, conversation_id = _runner(user)
+    try:
+        await unbind_turn(session, subject, conversation_id, session_id)
+    except HermesSessionError as exc:
+        _fail(exc)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/hermes/sessions/{session_id}/close", status_code=status.HTTP_204_NO_CONTENT)
+async def close_hermes_session(
+    session_id: UUID,
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> Response:
+    subject, conversation_id = _runner(user)
+    try:
+        await close_session(session, subject, conversation_id, session_id)
+    except HermesSessionError as exc:
+        _fail(exc)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

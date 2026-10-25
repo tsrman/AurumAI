@@ -9,12 +9,13 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import exists, select, or_
+from sqlalchemy import exists, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.archive_control import ConversationExecution, ConversationOperation
 from src.models.conversation import Conversation
 from src.models.data_identity import ConversationIdentity
+from src.models.hermes_session import HermesSession
 from src.models.interaction import InteractionOutbox, InteractionTurn, ToolOperation, UserQuestion
 from src.models.message import Message
 from src.models.llm_usage import LLMUsageEvent
@@ -232,6 +233,17 @@ async def eligibility_blocker(
             select(ToolOperation.id)
             .join(InteractionTurn, ToolOperation.turn_id == InteractionTurn.id)
             .where(*owner, ToolOperation.status.in_(["reserved", "running"])),
+        ),
+        (
+            # A live Hermes sandbox may still act for the conversation; an
+            # expired session cannot, and the purge removes it.
+            "hermes_session_open",
+            select(HermesSession.id).where(
+                HermesSession.org_id == identity.org_id,
+                HermesSession.conversation_id == identity.id,
+                HermesSession.state == "open",
+                HermesSession.expires_at > func.now(),
+            ),
         ),
         (
             "execution_not_closed",

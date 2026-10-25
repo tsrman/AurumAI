@@ -177,11 +177,18 @@ not pass the switch to the backend until the phase that does.
   apply as on the runner route, and requests count against the user's ordinary rate
   limit. `APP_HERMES_MAX_TOOLS` (128) and `APP_HERMES_MAX_MESSAGES` (1000) bound one
   request.
-- The route accepts only a Hermes session token. A runner obtains one for its own
-  conversation from `POST /v1/internal/hermes/session-tokens`. The token holds
-  identity only, has its own audience that no other route accepts, and works only
-  while its conversation has an active turn. Until session records can revoke it,
-  its lifetime is `APP_HERMES_SESSION_TOKEN_TTL_SECONDS` (900).
+- The route accepts only a Hermes session token, and only while its session is open,
+  unexpired and bound to an active turn. A runner manages the session of its own
+  conversation through internal routes: `POST /v1/internal/hermes/sessions` opens it
+  (or rotates the token of the open one, so earlier tokens stop working) and returns
+  a token; `PUT .../sessions/{id}/turn` binds it to the conversation's active turn,
+  with the turn's workflow run, phase and node when the turn runs a workflow;
+  `DELETE .../sessions/{id}/turn` unbinds it and `POST .../sessions/{id}/close` closes
+  it. Opening and binding need the Hermes capabilities, unbinding and closing never
+  do. Completions are billed to the bound turn's workflow correlation, never to
+  anything in the request. A token holds identity only and has its own audience that
+  no other route accepts; a session and its tokens end after
+  `APP_HERMES_SESSION_MAX_LIFETIME_SECONDS` (86400) even if nothing closes them.
 
 ## Identity and data lifecycle
 

@@ -189,28 +189,83 @@ apply.
 
 ### Network path
 
-This is the hardest boundary. The sandbox must reach exactly two platform
-endpoints and nothing else:
-
-- the model proxy;
-- the platform tools MCP endpoint.
-
-A new `hermes-egress` sidecar follows the `web-egress` pattern: nftables, a
-default-drop policy and readiness that proves the rules are in place.
+This is the hardest boundary. The sandbox has no route of its own: everything
+leaves through one platform component, `hermes-egress`, which follows the
+`web-egress` pattern (nftables, a default-drop policy and readiness that proves the
+rules are in place).
 
 - On Docker, the sandbox runs on a dedicated internal network that has no NAT. The
   sidecar is the only other member.
 - On Kubernetes, a NetworkPolicy keyed on the Hermes sandbox label allows egress
-  only to the sidecar. The sidecar allows only the backend paths above.
+  only to the sidecar.
 - The existing `aurum-ai-skill-egress` network is never reused, and the backend
   never joins a network that sandboxes join.
-- In v1 Hermes has no direct internet. Web access goes through the platform's
-  `web.search` and `web.read` tools, so the existing SSRF policy, deadlines and
-  citations apply.
+- The sandbox needs no DNS of its own: the platform endpoints and the egress proxy
+  are addressed by the sidecar's name, and the proxy resolves internet hosts. That
+  also closes DNS as an exfiltration channel.
+
+`hermes-egress` has two roles.
+
+1. **Platform endpoints.** A reverse proxy that forwards exactly two backend paths,
+   the model proxy and the platform tools MCP endpoint, and nothing else.
+2. **Internet egress.** A forward proxy (`HTTP_PROXY`/`HTTPS_PROXY` in the sandbox;
+   `CONNECT` for HTTPS) used by `pip`/`uv`, `git`, `curl` and Hermes's terminal
+   commands. Hermes works for hours and may need to install Python packages or
+   fetch a file, so a closed sandbox is not enough. Three modes:
+
+   | Mode | What the sandbox can reach |
+   |---|---|
+   | `none` | Nothing beyond the two platform endpoints. |
+   | `packages` | Also the package index hosts on the operator's list, by default `pypi.org` and `files.pythonhosted.org`. |
+   | `public` | Also any public host on ports 80 and 443. |
+
+   - **Who chooses.** The operator sets the maximum
+     (`APP_HERMES_EGRESS_MAX_MODE`, default `packages`) and the package host list.
+     The organization administrator picks a mode within that maximum, by default
+     `packages`. `public` also needs the user's live `web.access` capability.
+   - **Per connection.** The sandbox authenticates to the proxy with its Hermes
+     session token (`Proxy-Authorization`). For every new connection the proxy asks
+     the backend whether the session is open, unexpired, on its token version and
+     bound to an active turn, and which mode applies right now. The answer is cached
+     for a few seconds at most. Closing or rotating the session, ending the turn,
+     lowering the organization's mode or revoking `web.access` therefore stops new
+     connections. The proxy holds no platform secret beyond its own service
+     credential for that check.
+   - **What stays closed.** Every mode refuses private, loopback, link-local and
+     platform ranges plus `WEB_EGRESS_FORBIDDEN_CIDRS`. The proxy checks the
+     resolved address before connecting, and the nftables guard enforces the same
+     ranges underneath. A host on the operator's package list is the only exception,
+     and only when the operator lists it explicitly, for example an internal package
+     mirror in an air-gapped installation.
+   - **Limits.** Connection and idle timeouts, concurrent connections per session
+     and bytes per turn, all operator settings.
+   - **Journal.** Each decision is recorded with the session, host, port, mode,
+     outcome and byte counts. Paths and bodies of HTTPS traffic are never seen or
+     recorded.
+
+Search and reading pages stay platform tools: `web.search` and `web.read` through
+the MCP bridge keep their SSRF policy, deadlines and citations whatever the mode.
+Hermes's own web and browser toolsets stay disabled, since they would need provider
+keys inside the sandbox. In `public` mode the terminal can still download a page or
+clone a repository directly. Installed packages and downloaded files live in the
+workspace and survive between turns through the snapshot.
+
+The risk is stated in the admin UI next to the setting. In `packages` and `public`
+modes, a prompt injection can send whatever the sandbox holds (its files and what
+the conversation gave it) to a reachable host. In `packages` mode such a host is a
+package index, which is a narrow but real channel through uploads to it. That is
+why `public` needs `web.access` and an explicit organization choice.
 
 Acceptance needs runtime evidence, not only static tests. From inside the sandbox,
-probes to the internet, MinIO, PostgreSQL, Temporal, skill-executor and other
-backend paths must fail, and the two allowed calls must succeed.
+in each mode:
+
+- probes to MinIO, PostgreSQL, Temporal, skill-executor, other backend paths and
+  private ranges must fail;
+- the two platform calls must succeed;
+- in `none`, every internet probe fails;
+- in `packages`, `pip install` from the listed index works and other hosts fail;
+- in `public`, a public host works and a private one still fails;
+- a closed session or an ended turn stops new connections.
 
 ### Credentials in the sandbox
 
@@ -221,7 +276,8 @@ model and by any prompt injection.
   session opens, the backend mints a separate Hermes session token. It:
   - is bound to the `hermes_sessions` row: organization, user and conversation;
   - has the audience `hermes-session`;
-  - is accepted only by the native-tools proxy route and the MCP bridge;
+  - is accepted only by the native-tools proxy route, the MCP bridge and the
+    `hermes-egress` forward proxy, which checks it with the backend;
   - works only while a turn is active. The backend takes the current turn and,
     where relevant, the workflow run and node from the row, not from the token.
     Between turns every call fails with `hermes_turn_inactive`;
@@ -343,14 +399,9 @@ Each phase is a separate PR behind the flag:
    acceptance through the deterministic gateway follows with the chat agent in
    phase 4, the first caller of the route.
 
-   Implemented with two deliberate gaps, both closed by phase 2's
-   `hermes_sessions` rows (a new conversation-scoped table belongs with the archive
-   and lifecycle work of that phase):
-   - the token carries a session id (`sid`) but no row backs it yet, so it cannot be
-     revoked; it works only during an active turn of its conversation and expires
-     after `APP_HERMES_SESSION_TOKEN_TTL_SECONDS`;
-   - workflow run, phase and node correlation is never read from the request body,
-     so calls are billed to the conversation only.
+   Implemented. Phase 2's session records (below) later replaced its short token
+   expiry with revocation and its conversation-only billing with the bound turn's
+   workflow correlation.
 
    `APP_HERMES_ENABLED` is not yet passed to the backend by Compose or the Helm
    chart; phase 4 wires it. Like the runner route, the Hermes route always streams
@@ -358,6 +409,19 @@ Each phase is a separate PR behind the flag:
 2. **Sandbox and network.** The `hermes-sandbox` image, its resources, durable
    sandbox ownership and re-adoption after an executor restart, snapshots, the
    `hermes-egress` sidecar on Docker and Kubernetes, and runtime egress probes.
+   Split into three changes:
+   - 2a, implemented: `hermes_sessions` rows with FORCE RLS, one open session per
+     conversation, runner routes to open (rotating the token), bind a turn with its
+     workflow correlation, unbind and close; tokens carry a token version, and an
+     open unexpired session blocks archiving while the purge removes session rows.
+     Sandbox id, snapshot and capacity columns arrive with 2c;
+     Opening rotates the token, and a long-lived sandbox reads its token once at
+     start: phase 4 opens a session only when it provisions or restores a sandbox,
+     and every turn only binds and unbinds;
+   - 2b: the `hermes-egress` network path: the two platform endpoints and the
+     forward proxy with its three modes, the organization setting and the
+     per-connection check;
+   - 2c: the sandbox image and long-lived sandboxes in `skill-executor`.
 3. **MCP bridge.** Knowledge, web, images and questions. MCP skills and code skills
    come later in the same phase if the scope allows.
 4. **Chat agent.** The long-lived `HermesSessionWorkflow` with turn hand-off,
@@ -365,7 +429,8 @@ Each phase is a separate PR behind the flag:
    picker, the capability and flag, the UI and acceptance.
 5. **Memory and skill drafts.** Tables, hydrate and read-back, user settings and
    admin approval.
-6. **Workflow node.** A `hermes` node type, billing and replay tests.
+6. **Workflow node.** A `hermes` node type, billing and replay tests, and the
+   choice for parallel Hermes nodes (see the open questions).
 
 Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
 
@@ -391,3 +456,10 @@ Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
 - Whether code skills should be reachable through the bridge in v1, given that
   Hermes already has a terminal in its own sandbox.
 - Default resource limits, lifetime limits and the capacity caps.
+- Egress defaults: bytes per turn and concurrent connections, and whether the
+  default package list should also cover npm or Git hosts.
+- Parallel Hermes workflow nodes. A conversation has one open session with one
+  turn binding, so two Hermes nodes running at once in the same run would bill
+  and revoke through the same binding. Phase 6 either runs a conversation's Hermes
+  nodes one at a time or gives node sessions their own scope (a cheap change to
+  the one-open-session index).

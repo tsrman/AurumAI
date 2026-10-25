@@ -56,6 +56,7 @@ from src.services.archive.storage import (
     digest,
 )
 from src.models.conversation_image import ConversationImage
+from src.models.hermes_session import HermesSession
 
 Sessions = Callable[[], AsyncSession]
 
@@ -786,6 +787,16 @@ class ArchiveService:
                 != job.inventory
             ):
                 raise ArchiveBlocked("inventory_changed")
+            if job.conversation_id:
+                # Session records are runtime state, not history: they are not
+                # archived. Removed first, since an expired one may still name
+                # a turn the loop below purges.
+                await session.execute(
+                    delete(HermesSession).where(
+                        HermesSession.org_id == org,
+                        HermesSession.conversation_id == job.conversation_id,
+                    )
+                )
             for table in reversed(self._tables(job)):
                 query = selection(table, org, job.conversation_id, self._ids(job), version)
                 ids = query.with_only_columns(TABLES[table].c.id)

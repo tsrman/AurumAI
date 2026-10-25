@@ -47,7 +47,10 @@ EXPECTED_INTERNAL_ROUTES = {
         "/workflow-runs/{run_id}/nodes/{phase_key}",
         "PUT",
     ),
-    ("hermes_internal", "/hermes/session-tokens", "POST"),
+    ("hermes_internal", "/hermes/sessions", "POST"),
+    ("hermes_internal", "/hermes/sessions/{session_id}/turn", "PUT"),
+    ("hermes_internal", "/hermes/sessions/{session_id}/turn", "DELETE"),
+    ("hermes_internal", "/hermes/sessions/{session_id}/close", "POST"),
 }
 
 EXPECTED_HERMES_ROUTES = {("hermes", "/hermes/chat/completions", "POST")}
