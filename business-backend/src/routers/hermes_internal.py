@@ -20,11 +20,17 @@ from src.core.authorization_types import AuthorizationSubject
 from src.core.dependencies import get_service_db_session
 from src.core.hermes_auth import require_hermes_enabled
 from src.schemas.hermes import HermesSessionTokenResponse
-from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
+from src.services.hermes_access import (
+    HermesAccessDenied,
+    active_hermes_turn,
+    require_hermes_capabilities,
+)
+from src.services.session_manager import session_manager
 from src.services.hermes_sessions import (
     HermesSessionError,
     bind_turn,
     close_session,
+    current_session,
     open_session,
     unbind_turn,
 )
@@ -94,6 +100,52 @@ async def open_hermes_session(
         sessionId=str(row.id),
         expiresAt=issued.expires_at.isoformat(),
     )
+
+
+class CurrentSessionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(serialization_alias="sessionId")
+    expires_at: str = Field(serialization_alias="expiresAt")
+
+
+@router.get("/hermes/sessions/current", dependencies=[Depends(require_hermes_enabled)])
+async def current_hermes_session(
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> CurrentSessionResponse:
+    """The open session, without rotating its token; 404 when there is none."""
+    subject, conversation_id = _runner(user)
+    row = await current_session(session, subject, conversation_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "hermes_session_not_found"})
+    return CurrentSessionResponse(session_id=str(row.id), expires_at=row.expires_at.isoformat())
+
+
+@router.post("/hermes/turns/{turn_id}/touch", status_code=status.HTTP_204_NO_CONTENT)
+async def touch_hermes_turn(
+    turn_id: UUID,
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> Response:
+    """Keep the runner of a long Hermes turn: refresh its idle time and, when
+    stale, its token, as a chat request does. Only for the conversation's
+    active turn."""
+    subject, conversation_id = _runner(user)
+    try:
+        turn = await active_hermes_turn(session, subject, conversation_id)
+    except HermesAccessDenied as exc:
+        _fail(exc)
+    if turn.id != turn_id:
+        _fail(HermesAccessDenied("hermes_turn_inactive"))
+    await session.commit()
+    await session_manager.get_or_create(
+        str(conversation_id),
+        user.user_id,
+        user.org_id,
+        generation=int(user.raw_claims.get("generation", 1)),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put(

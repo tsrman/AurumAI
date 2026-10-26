@@ -12,6 +12,7 @@ from src.workflows.lifecycle import register_lifecycle_execution
 
 with workflow.unsafe.imports_passed_through():
     from src.workflows.activities import (
+        cancel_hermes_turn,
         create_user_question,
         execute_image_tool,
         execute_web_tool,
@@ -21,9 +22,11 @@ with workflow.unsafe.imports_passed_through():
         load_conversation_state,
         list_available_skills,
         get_session_token,
+        hand_off_hermes_turn,
         persist_assistant_message,
         publish_event,
         register_interaction_execution,
+        touch_hermes_turn,
     )
     from src.workflows.builtin_tools import (
         IMAGE_TOOLS,
@@ -127,6 +130,10 @@ def _build_skills_system_message(
     return "\n\n".join(section for section in sections if section)
 
 
+# Below the runner reaper's idle time and its token refresh interval.
+_HERMES_TOUCH_SECONDS = 300
+
+
 @dataclass
 class ConversationInput:
     conversation_id: str
@@ -155,6 +162,7 @@ class ConversationWorkflow:
         self._question_wait = QuestionWaitState()
         self.conversation_id = ""
         self._last_result = ""
+        self._hermes_results: dict[str, dict[str, Any]] = {}
 
     @workflow.run
     async def run(self, input: ConversationInput) -> str:
@@ -296,6 +304,10 @@ class ConversationWorkflow:
         self._append_message_once(message)
         if message.get("workflow_run_id") is not None:
             await self._run_multi_agent_turn(message)
+            return
+        # Evaluated only for Hermes turns, so other histories record no marker.
+        if message.get("hermes") is True and workflow.patched("hermes-v1"):
+            await self._run_hermes_turn(message)
             return
         model = str(message.get("model") or "gpt-4o-mini")
         turn_id = str(message.get("turn_id") or "")
@@ -1174,6 +1186,118 @@ class ConversationWorkflow:
                 retry_policy=_ACTIVITY_RETRY_POLICY,
             )
         return results
+
+    async def _run_hermes_turn(self, message: dict[str, Any]) -> None:
+        """Hand the turn to the conversation's Hermes session workflow on
+        tool-worker's queue and wait for its answer (docs/HERMES_AGENT.md)."""
+        turn_id = str(message.get("turn_id") or "")
+        model = str(message.get("model") or "")
+        await workflow.execute_activity(
+            publish_event,
+            args=("message-start", {"role": "assistant", "turn_id": turn_id}),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_ACTIVITY_RETRY_POLICY,
+        )
+        if self._cancelled:
+            return
+        info = workflow.info()
+        execution: ExecutionContext = await workflow.execute_activity(
+            register_interaction_execution,
+            args=(turn_id, info.workflow_id, info.run_id, info.task_queue, "ordinary", None, None, 1),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_ACTIVITY_RETRY_POLICY,
+        )
+        # PostgreSQL stays authoritative: every run gets the whole history.
+        history = [
+            {"role": item["role"], "content": item["content"]}
+            for item in self.messages[:-1]
+            if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
+        ]
+        await workflow.execute_activity(
+            hand_off_hermes_turn,
+            args=(
+                {
+                    "turn_id": turn_id,
+                    "execution_id": execution.execution_id,
+                    "model": model,
+                    "text": str(message.get("content") or ""),
+                    "history": history,
+                    "parent_workflow_id": info.workflow_id,
+                    "parent_task_queue": info.task_queue,
+                    "deadline_seconds": settings.hermes_turn_deadline_seconds,
+                },
+            ),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_ACTIVITY_RETRY_POLICY,
+        )
+        # Waited in slices: each one keeps this runner and its token alive,
+        # which chat requests do for other turns. The session's own deadline
+        # ends the run first; the total only covers a session that never answers.
+        waited = 0
+        while turn_id not in self._hermes_results and not self._cancelled:
+            if waited >= settings.hermes_turn_deadline_seconds + 900:
+                await workflow.execute_activity(
+                    cancel_hermes_turn,
+                    args=(turn_id,),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_ACTIVITY_RETRY_POLICY,
+                )
+                raise ApplicationError("hermes_turn_timeout")
+            try:
+                await workflow.wait_condition(
+                    lambda: turn_id in self._hermes_results or self._cancelled,
+                    timeout=timedelta(seconds=_HERMES_TOUCH_SECONDS),
+                )
+            except asyncio.TimeoutError:
+                waited += _HERMES_TOUCH_SECONDS
+                try:
+                    await workflow.execute_activity(
+                        touch_hermes_turn,
+                        args=(turn_id,),
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=RetryPolicy(maximum_attempts=3),
+                    )
+                except ActivityError:
+                    # The next slice tries again; the turn itself goes on.
+                    workflow.logger.warning(f"Could not keep the runner for Hermes turn {turn_id}")
+        if turn_id not in self._hermes_results:
+            await workflow.execute_activity(
+                cancel_hermes_turn,
+                args=(turn_id,),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_ACTIVITY_RETRY_POLICY,
+            )
+            return
+        result = self._hermes_results.pop(turn_id)
+        if self._cancelled or result.get("status") == "cancelled":
+            return
+        if result.get("status") != "completed" or not isinstance(result.get("output"), str):
+            raise ApplicationError(str(result.get("error") or "hermes_interrupted"))
+        answer = str(result["output"])
+        self.messages.append({"role": "assistant", "content": answer})
+        await workflow.execute_activity(
+            persist_assistant_message,
+            args=(answer, model, turn_id, None, None),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_ACTIVITY_RETRY_POLICY,
+        )
+        for event, data in (
+            ("message-end", {"role": "assistant", "content": answer, "turn_id": turn_id}),
+            ("done", {"turn_id": turn_id, "evaluation_pending": False}),
+        ):
+            await workflow.execute_activity(
+                publish_event,
+                args=(event, data),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_ACTIVITY_RETRY_POLICY,
+            )
+        self._last_result = answer
+
+    @workflow.signal(name="hermes_turn_result")
+    async def hermes_turn_result(self, result: dict[str, Any]) -> None:
+        turn_id = result.get("turn_id")
+        if isinstance(turn_id, str) and turn_id == self._active_turn_id:
+            self._hermes_results[turn_id] = result
 
     @workflow.signal(name="user_message")
     async def user_message(self, message: dict[str, Any]) -> None:

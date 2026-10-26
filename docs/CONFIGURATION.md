@@ -191,6 +191,16 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   anything in the request. A token holds identity only and has its own audience that
   no other route accepts; a session and its tokens end after
   `APP_HERMES_SESSION_MAX_LIFETIME_SECONDS` (86400) even if nothing closes them.
+- **Chat.** `POST /v1/chat/stream` with `"agent": "hermes"` (instead of a workflow)
+  runs the turn on Hermes Agent, on the organization's Hermes model: an organization
+  administrator sets it with `PUT /v1/admin/settings/hermes` (`{"model": ...}`, a
+  model the organization grants; `null` turns Hermes off for it). The request needs
+  `APP_HERMES_ENABLED` (404 otherwise), both Hermes capabilities (403) and the model
+  (409); images are refused for now. The runner hands the turn to the conversation's
+  `HermesSessionWorkflow` on tool-worker's queue (runner settings `HERMES_TASK_QUEUE`,
+  `HERMES_TURN_DEADLINE_SECONDS` 7200 and `HERMES_IDLE_SECONDS` 1800), so tool-worker
+  needs `TOOL_WORKER_SKILL_EXECUTOR_URL`. `GET /v1/internal/hermes/sessions/current`
+  returns the conversation's open session without rotating its token.
 - `POST /v1/hermes/mcp` is the platform tools' MCP endpoint (Streamable HTTP without
   a session: one JSON answer per POST, no server stream). It offers
   `knowledge_search` (only the files attached to the conversation), `web_search` and

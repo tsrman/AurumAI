@@ -160,6 +160,7 @@ services:
       TOOL_WORKER_TEMPORAL_NAMESPACE: default
       TOOL_WORKER_TASK_QUEUE: tools
       TOOL_WORKER_BACKEND_API_URL: http://backend:8000
+      TOOL_WORKER_SKILL_EXECUTOR_URL: http://skill-executor:8090
       TOOL_WORKER_OTEL_EXPORTER_OTLP_ENDPOINT: console
       LANGFUSE_ENABLED: "false"
     networks: [default]
@@ -171,4 +172,18 @@ services:
     profiles: ["hermes-sandbox"]
     environment:
       PORT: "3001"
+    networks: [default]
+  # A conversation runner in direct mode for one Hermes chat turn: the
+  # acceptance starts it with `run` and the conversation's identity.
+  conversation-runner:
+    build: ./conversation-runner
+    image: aurum-ai-runner:hermes-egress-test
+    profiles: ["hermes-sandbox"]
+    environment:
+      TEMPORAL_HOST: temporal:7233
+      REDIS_URL: redis://redis:6379/0
+      LLM_GATEWAY_URL: http://backend:8000
+      EVALUATOR_ENABLED: "false"
+      IDLE_TTL_SECONDS: "3600"
+      OTEL_EXPORTER_OTLP_ENDPOINT: console
     networks: [default]

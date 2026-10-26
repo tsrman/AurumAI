@@ -47,3 +47,8 @@ class ConversationWorkflow:
     @workflow.signal(name="question_available")
     async def question_available(self, question_id: str, version: int) -> None:
         pass
+
+    # Sent by tool-worker's HermesSessionWorkflow, never by the backend.
+    @workflow.signal(name="hermes_turn_result")
+    async def hermes_turn_result(self, result: dict[str, Any]) -> None:
+        pass

@@ -575,10 +575,59 @@ Each phase is a separate PR behind the flag:
        routes); it never reaches the sandbox, and it is in the workflow's
        history as it already is in the runner's skill calls;
      - skill runs have no per-turn budget; the ordinary rate limit bounds them.
-4. **Chat agent.** The long-lived `HermesSessionWorkflow` with turn hand-off,
-   reattach after a lost worker, idle snapshot, capacity caps, events, cancel,
-   questions to the user through Hermes's `clarify`, the picker, the capability and
-   flag, the UI and acceptance.
+4. **Chat agent.** Split into three changes:
+   - 4a, implemented: the runtime and the API. A chat request with
+     `agent: "hermes"` runs on the organization's Hermes model (set through
+     `PUT /v1/admin/settings/hermes`), needs the switch and both capabilities,
+     and is signalled to the runner as a Hermes turn. `ConversationWorkflow`
+     (behind `workflow.patched("hermes-v1")`, evaluated only for Hermes turns)
+     registers the turn's ordinary execution, hands the turn to the
+     conversation's `HermesSessionWorkflow` on tool-worker's queue, waits for
+     its result and persists the answer. Accepted at runtime by
+     `./smoke-test-hermes-sandbox.sh` with a conversation runner in direct mode
+     and the turn signalled through Temporal; the chat route itself is covered
+     by route tests. Deviations:
+     - Python workflow code cannot send another workflow an Update, so the turn
+       is handed over with signal-with-start (from a runner activity) and
+       answered with a `hermes_turn_result` signal; a cancelled turn is
+       signalled as well;
+     - the session workflow keeps the sandbox only as long as turns arrive:
+       after the idle time (`hermes_idle_seconds`, 30 minutes) it snapshots and
+       removes the sandbox and closes the session, revoking its token, and ends;
+       the next turn starts a new run. It continues-as-new after 50 turns.
+       Capacity, the absolute lifetime and re-adoption stay with skill-executor;
+     - a running sandbox keeps the token it read at its start, so the session
+       workflow reuses an open session whose sandbox runs (a new runner route
+       returns it without rotating the token), and otherwise opens one, which
+       rotates the token, and creates, restores or resumes the sandbox with it.
+       The sandbox id is the session row's id, which links the two;
+     - every backend call of the session workflow takes a fresh runner token
+       from the waiting runner (`get_session_token` on its task queue, bounded
+       at two minutes so a runner that is gone fails the turn instead of
+       hanging the session), since a runner token lives thirty minutes and a
+       turn for hours. The runner keeps itself and its token alive while it
+       waits: every five minutes it calls `POST
+       /v1/internal/hermes/turns/{turn}/touch`, which does what a chat request
+       does for other turns. An idle close whose runner has gone leaves the
+       session to expire;
+     - the run activity heartbeats on a timer, and the turn deadline covers
+       every attempt; a lost worker's retry attaches to the same run by its
+       key. A sandbox retired between preparing and running is prepared again
+       once. A cancelled turn reaches its run within seconds (tool-worker's
+       heartbeat throttle is five seconds), and a turn the session never
+       answers is cancelled after its deadline. The session remembers its last
+       hundred turns, so a repeated hand-off never runs one twice;
+     - the public stream carries the answer at the end; progress events and
+       their deduplication after a reattach come with the UI in 4b. Until then
+       a live stream ends after `EVENT_SUBSCRIBE_TIMEOUT` (120 s) without an
+       event, and a longer turn's answer appears through the turn routes or a
+       reload. Images in a Hermes turn are refused for now;
+   - 4b: the picker, the Hermes model and egress mode in the Admin UI, progress
+     events, and the Russian strings;
+   - 4c: questions to the user through Hermes's `clarify`, and deleting a
+     conversation's snapshots in the archive purge. Recording the snapshot
+     checksum in the session row gets harder now that skill-executor also
+     retires sandboxes on its own, since the backend never sees that sha.
 5. **Memory and skill drafts.** Tables, hydrate and read-back, user settings and
    admin approval.
 6. **Workflow node.** A `hermes` node type, billing and replay tests, and the

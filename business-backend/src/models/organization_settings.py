@@ -33,6 +33,8 @@ class OrganizationSettings(Base):
     )
     # Internet a Hermes sandbox may reach; NULL means the default, packages.
     hermes_egress_mode: Mapped[str | None] = mapped_column(Text)
+    # The chat model Hermes runs on; NULL means Hermes is not set up.
+    hermes_model: Mapped[str | None] = mapped_column(String(255))
     allowed_models: Mapped[list[str] | None] = mapped_column(
         ARRAY(String), default=lambda: ["gpt-4o", "claude-3-5-sonnet"]
     )

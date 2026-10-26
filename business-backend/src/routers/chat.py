@@ -63,6 +63,8 @@ from src.services.image_uploads import (
 )
 from src.services.object_storage import object_storage
 from src.services.model_access import ensure_model_allowed
+from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
+from src.services.hermes_egress import organization_hermes_model
 from src.services.authorization import authorization_service
 from src.services.session_manager import session_manager
 from src.services.llm_client import llm_client
@@ -485,6 +487,22 @@ async def _maybe_classify_workflow(
     return workflow_id
 
 
+async def _hermes_model(session: AsyncSession, user: UserInfo) -> str:
+    """The organization's Hermes model, once Hermes is on and allowed for the user."""
+    if not settings.HERMES_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hermes is not available")
+    try:
+        await require_hermes_capabilities(session, authorization_subject(user))
+    except HermesAccessDenied as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": exc.code}) from None
+    model = await organization_hermes_model(session, uuid.UUID(user.org_id or ""))
+    if model is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Hermes is not set up for this organization"
+        )
+    return model
+
+
 async def _require_sendable_uploads(
     session: AsyncSession, request: ChatRequest, conv: "Conversation"
 ) -> None:
@@ -528,13 +546,21 @@ async def chat_stream(
 
     conv = await _get_owned_conversation(session, conversation_id, user, write=True)
     upload_ids = user_message.image_ids
+    hermes = request.agent == "hermes"
+    turn_model = request.model
+    if hermes:
+        turn_model = await _hermes_model(session, user)
+        if upload_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Hermes does not take images yet",
+            )
     if upload_ids:
         await _require_sendable_uploads(session, request, conv)
 
-    turn_model = request.model
     effective_workflow_id = request.workflow_id
     auto_routed = False
-    if effective_workflow_id is None:
+    if effective_workflow_id is None and not hermes:
         effective_workflow_id = await _maybe_classify_workflow(session, quota, user, request)
         auto_routed = effective_workflow_id is not None
 
@@ -622,7 +648,7 @@ async def chat_stream(
         await ensure_model_allowed(
             session,
             user.org_id,
-            request.model,
+            turn_model,
             user_id=user.user_id,
             role=user.role,
         )
@@ -663,7 +689,7 @@ async def chat_stream(
             user_id=user.user_id,
             role="user",
             content=user_message.content,
-            model=request.model,
+            model=turn_model,
             turn_id=turn_id,
             extra={"image_ids": claimed_images} if claimed_images else {},
         )
@@ -749,17 +775,20 @@ async def chat_stream(
             "role": "user",
             "content": user_message.content,
             "turn_id": str(turn_id),
-            "user_questions_enabled": settings.USER_QUESTIONS_ENABLED,
-            "web_tools_enabled": web_tools_enabled,
-            "image_generation_enabled": image_generation_enabled,
-            "image_editing_enabled": image_editing_enabled,
+            # Hermes reaches web, images and questions through its own bridge.
+            "user_questions_enabled": settings.USER_QUESTIONS_ENABLED and not hermes,
+            "web_tools_enabled": web_tools_enabled and not hermes,
+            "image_generation_enabled": image_generation_enabled and not hermes,
+            "image_editing_enabled": image_editing_enabled and not hermes,
         }
+        if hermes:
+            signal_payload["hermes"] = True
         if recent_images:
             signal_payload["recent_images"] = recent_images
         if upload_ids:
             signal_payload["image_ids"] = [str(image_id) for image_id in dict.fromkeys(upload_ids)]
         if workflow_run is None:
-            signal_payload["model"] = request.model
+            signal_payload["model"] = turn_model
         else:
             signal_payload["workflow_run_id"] = str(workflow_run.id)
         signal_payload["lifecycle_operation_id"] = str(signal_operation.id)
@@ -797,7 +826,7 @@ async def chat_stream(
             pubsub,
             channel,
             timeout_seconds=settings.EVENT_SUBSCRIBE_TIMEOUT,
-            reset_timeout_on_message=workflow_run is not None,
+            reset_timeout_on_message=workflow_run is not None or hermes,
         ):
             event_turn_id = event.get("turn_id")
             if event_turn_id is not None and event_turn_id != str(turn_id):

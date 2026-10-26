@@ -136,6 +136,28 @@ async def open_session(
     return row, _issue(row, generation)
 
 
+async def current_session(
+    session: AsyncSession,
+    subject: AuthorizationSubject,
+    conversation_id: UUID,
+    *,
+    now: datetime | None = None,
+) -> HermesSession | None:
+    """The conversation's open, unexpired session, without a new token: a
+    running sandbox keeps the one it read when it started."""
+    row = await session.scalar(
+        select(HermesSession).where(
+            HermesSession.org_id == subject.org_id,
+            HermesSession.conversation_id == conversation_id,
+            HermesSession.user_id == subject.user_id,
+            HermesSession.state == "open",
+        )
+    )
+    if row is None or row.expires_at <= _now(now):
+        return None
+    return row
+
+
 async def bind_turn(
     session: AsyncSession,
     subject: AuthorizationSubject,
