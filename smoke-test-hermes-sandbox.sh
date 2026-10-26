@@ -19,7 +19,8 @@
 # of a stop when its snapshot cannot be stored. Phase 3 adds the MCP bridge:
 # Hermes generates an image through hermes-egress as a durable operation of the
 # bound execution, and between turns the sandbox can list the platform tools
-# but not call them.
+# but not call them. Phase 3b adds platform skills: Hermes runs a granted MCP
+# skill through tool-worker against the reference MCP server.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000/58090, no other
 # aurum-ai-hermes-egress-guard container. Never point this at a shared stack.
@@ -115,14 +116,14 @@ gone() {
 
 log "building images from this checkout"
 docker tag aurum-ai-postgres:latest aurum-ai-postgres:hermes-egress-test
-"${STACK[@]}" build migrate hermes-egress-guard skill-executor >/dev/null
+"${STACK[@]}" build migrate hermes-egress-guard skill-executor tool-worker mcp-everything >/dev/null
 "${STACK[@]}" --profile build build hermes-sandbox >/dev/null
 log "starting the backend, hermes-egress and skill-executor"
 "${STACK[@]}" up -d --wait postgres redis temporal gateway keycloak minio >/dev/null
 "${STACK[@]}" up -d backend >/dev/null
 for _ in $(seq 60); do curl -fsS http://127.0.0.1:58000/health >/dev/null 2>&1 && break; sleep 2; done
 "${STACK[@]}" up -d --wait hermes-egress-guard hermes-egress >/dev/null
-"${STACK[@]}" up -d skill-executor >/dev/null
+"${STACK[@]}" up -d skill-executor tool-worker mcp-everything >/dev/null
 for _ in $(seq 30); do curl -fsS "$EXECUTOR/health" >/dev/null 2>&1 && break; sleep 1; done
 TOKEN=$(fixture prepare)
 ORG=$(journal org); CONVERSATION=$(journal conversation)
@@ -154,6 +155,14 @@ expect_completed "$result"
   || fail "the image is not one completed operation of the bound execution"
 (( $(sql "SELECT count(*) FROM conversation_images WHERE conversation_id='$CONVERSATION'") == 1 )) \
   || fail "the generated image was not stored"
+
+log "Hermes runs a granted platform skill through tool-worker"
+SKILL=$(fixture skill)
+skills=$(mcp_from "$A" '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_skills","arguments":{}}}')
+[[ "$skills" == *"$SKILL"* && "$skills" != *mcp-everything* ]] || fail "the skill listing is wrong or shows its endpoint: $skills"
+result=$(run_once "$A" mcp-2 "HERMES_MCP:run_skill:$SKILL")
+expect_completed "$result"
+[[ "$result" == *HERMES_MCP_DONE:run_skill:*42* ]] || fail "the skill did not answer Hermes: $result"
 fixture end-turn
 listed=$(mcp_from "$A" '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
 [[ "$listed" == *generate_image* ]] || fail "the sandbox cannot list the platform tools between turns: $listed"

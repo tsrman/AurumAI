@@ -9,6 +9,8 @@ web-access   grant (on) or revoke (off) web.access
 end-turn     unbind the session from its turn
 bind         bind it to the turn again
 close        close the session
+skill        an MCP skill on the reference server (get-sum), granted to the
+             user; prints its id
 
 State lives in a private journal; nothing outside the fixture organization is
 touched. Run with the backend's environment (uv run in business-backend).
@@ -123,6 +125,21 @@ async def main(argv: list[str]) -> None:
                 "WHERE s.id=$1 AND t.conversation_id=s.conversation_id AND t.status='active'",
                 UUID(state["session"]),
             )
+        elif argv == ["skill"]:
+            skill = uuid4()
+            await db.execute(
+                "INSERT INTO skills(id,org_id,name,description,type,mcp_transport,mcp_endpoint,activity_name,"
+                "input_schema,created_at,updated_at) VALUES($1,$2,'hermes-sum','Returns the sum of two numbers',"
+                "'mcp','sse','http://mcp-everything:3001/sse','get-sum',$3,now(),now())",
+                skill, org,
+                json.dumps({"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}}),
+            )
+            await db.execute(
+                "INSERT INTO access_grants(id,org_id,resource_type,resource_id,principal_type,principal_id,permission,created_via) "
+                "VALUES($1,$2,'skill',$3,'user',$4,'read','provisioning')",
+                uuid4(), org, str(skill), UUID(state["user"]),
+            )
+            print(skill)
         elif argv == ["close"]:
             await db.execute(
                 "UPDATE hermes_sessions SET state='closed',closed_at=now(),active_turn_id=NULL,active_execution_id=NULL,"
@@ -130,7 +147,7 @@ async def main(argv: list[str]) -> None:
                 UUID(state["session"]),
             )
         else:
-            raise SystemExit("usage: prepare | mode M | web-access on|off | end-turn | bind | close")
+            raise SystemExit("usage: prepare | mode M | web-access on|off | end-turn | bind | close | skill")
     finally:
         await db.close()
 

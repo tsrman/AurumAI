@@ -70,7 +70,9 @@ DISABLED_TOOLSETS = (
     "spotify", "tts", "video", "video_gen", "web", "x_search", "yuanbao",
 )
 # The platform tools of the MCP bridge (business-backend's hermes_mcp).
-PLATFORM_TOOLS = ("knowledge_search", "web_search", "web_read", "generate_image", "edit_image")
+PLATFORM_TOOLS = (
+    "knowledge_search", "web_search", "web_read", "generate_image", "edit_image", "list_skills", "run_skill",
+)
 _CHUNK = 64 * 1024
 # Written by the platform into every workspace; a snapshot source without it
 # lost its workspace (see DockerHermesSandboxes._retire).

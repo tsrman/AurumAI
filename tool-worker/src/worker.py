@@ -11,6 +11,7 @@ from src.activities import (
     open_skill_session,
 )
 from src.config import settings
+from src.hermes_skill_workflow import HermesSkillCallWorkflow
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.task_queue,
+        workflows=[HermesSkillCallWorkflow],
         activities=[
             execute_skill,
             open_skill_session,

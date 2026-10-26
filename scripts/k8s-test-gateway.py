@@ -78,10 +78,14 @@ _IMAGE_ID = re.compile(r'"imageId":\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{
 _LISTED_IMAGE = re.compile(r'"image_id":\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"')
 _ASK_RESULT_PREFIX = "Tool result for ask_user: "
 # Hermes names the platform tools mcp__<server>__<tool>; the bridge is "aurum".
-_HERMES_MCP = re.compile(r"HERMES_MCP:(knowledge_search|generate_image)")
-_HERMES_MCP_ARGUMENTS = {
+_HERMES_MCP = re.compile(
+    r"HERMES_MCP:(knowledge_search|generate_image|run_skill)"
+    r"(?::([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}))?"
+)
+_HERMES_MCP_ARGUMENTS: dict[str, dict[str, Any]] = {
     "knowledge_search": {"query": "acceptance"},
     "generate_image": {"prompt": "a red square"},
+    "run_skill": {"arguments": {"a": 17, "b": 25}},
 }
 _QUESTION_MARKERS = ("ASK_CITY_THEN_FINAL", "ASK_TWICE", "ASK_LOOP", "ASK_OPTION")
 
@@ -797,12 +801,17 @@ def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | N
     tool = match.group(1)
     results = [message.content for message in request.messages if message.role == "tool"]
     if results:
-        return f"HERMES_MCP_DONE:{tool}:" + " ".join(results[-1].split())[:500]
+        return f"HERMES_MCP_DONE:{tool}:" + " ".join(results[-1].split())[:4000]
     name = f"mcp__aurum__{tool}"
     offered = {str((item.get("function") or {}).get("name")) for item in request.tools}
     if name not in offered:
         return "HERMES_MCP_NOT_OFFERED"
-    return {"name": name, "arguments": json.dumps(_HERMES_MCP_ARGUMENTS[tool])}
+    arguments = dict(_HERMES_MCP_ARGUMENTS[tool])
+    if tool == "run_skill":
+        if match.group(2) is None:
+            return "HERMES_MCP_NO_SKILL"
+        arguments["skill_id"] = match.group(2)
+    return {"name": name, "arguments": json.dumps(arguments)}
 
 
 async def _tool_call_sse(model: str, call: dict[str, Any]) -> AsyncIterator[str]:

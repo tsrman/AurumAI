@@ -549,7 +549,32 @@ Each phase is a separate PR behind the flag:
      - questions to the user move to phase 4: they wait in Hermes's `clarify`
        state, answered through the durable `user_questions` flow by the session
        workflow, not over a tool call bounded by its timeout;
-   - 3b: MCP skills and code skills, which also settles the open question below.
+   - 3b, implemented: platform skills. Two fixed tools, `list_skills` and
+     `run_skill`, since Hermes lists the bridge's tools only once. Accepted at
+     runtime by `./smoke-test-hermes-sandbox.sh`: Hermes runs a granted MCP skill
+     through tool-worker against the reference MCP server. Deviations:
+     - only MCP and tool skills qualify, and only those the user holds a grant
+       for (a Hermes token always acts as a member); a conversation's own
+       attachment search is `knowledge_search`. Code skills reach Hermes with
+       phase 5, hydrated into its skills and run in its own terminal, which
+       settles that open question; agent skills are not offered;
+     - the listing holds ids, names, descriptions and input schemas only, never
+       endpoints or credentials;
+     - a run is a `HermesSkillCallWorkflow` on tool-worker's queue that runs
+       `execute_skill`, as the runner's calls do; tool-worker remains the only
+       service that reaches skill endpoints. Its workflow id, derived like the
+       3a invocation ids, is the record instead of `tool_operations`: a
+       repeated request attaches to the same run, until Temporal's retention
+       ends it. A failed skill is a bare `skill_failed`; the bridge waits
+       `APP_HERMES_SKILL_TIMEOUT_SECONDS` (240) and then answers
+       `skill_timeout` while the run continues, so a retry attaches to it;
+     - tool-worker fetches the skill with a runner session token for the
+       conversation, which the bridge mints for each run with the Hermes
+       token's generation. That token is stronger than the Hermes token (thirty
+       minutes, whether a turn is active or not, and the runner's internal
+       routes); it never reaches the sandbox, and it is in the workflow's
+       history as it already is in the runner's skill calls;
+     - skill runs have no per-turn budget; the ordinary rate limit bounds them.
 4. **Chat agent.** The long-lived `HermesSessionWorkflow` with turn hand-off,
    reattach after a lost worker, idle snapshot, capacity caps, events, cancel,
    questions to the user through Hermes's `clarify`, the picker, the capability and
@@ -580,8 +605,8 @@ Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
 
 ## Open questions for review
 
-- Whether code skills should be reachable through the bridge in v1, given that
-  Hermes already has a terminal in its own sandbox.
+- Settled in 3b: code skills are not reachable through the bridge; they arrive
+  with phase 5's hydrated skills and run in Hermes's own terminal.
 - Default resource limits, lifetime limits and the capacity caps.
 - Egress defaults: bytes per turn and concurrent connections, and whether the
   default package list should also cover npm or Git hosts.
