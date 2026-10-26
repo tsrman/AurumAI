@@ -195,7 +195,9 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   a session: one JSON answer per POST, no server stream). It offers
   `knowledge_search` (only the files attached to the conversation), `web_search` and
   `web_read` while `APP_WEB_ENABLED` is on, and `generate_image` and `edit_image`
-  while `APP_IMAGES_ENABLED` is on. Hermes lists them once when its sandbox starts,
+  while `APP_IMAGES_ENABLED` is on, and `list_skills` and `run_skill` for the MCP and
+  tool skills granted to the user (code skills are not offered). Hermes lists them
+  once when its sandbox starts,
   so the listing needs only an open session on the token's version, also between
   turns; a call needs the bound turn too, and the live capabilities, grants, per-turn
   budgets and quota of the ordinary web and image tools. A call is an operation of
@@ -206,6 +208,11 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   user's ordinary rate limit (`APP_RATE_LIMIT_PER_MINUTE`, shared with the UI and the
   completions); over it they get HTTP 429, and after three failed calls in a row
   Hermes pauses the bridge's tools for 60 s. Requests are journaled like others.
+- A skill run is a `HermesSkillCallWorkflow` on tool-worker's queue
+  (`APP_HERMES_SKILL_TASK_QUEUE`, `tools`), which runs `execute_skill` as the runner's
+  skill calls do, so tool-worker must be running. The bridge waits
+  `APP_HERMES_SKILL_TIMEOUT_SECONDS` (240) for it; a repeated request attaches to the
+  same run. Skill runs have no per-turn budget beyond the rate limit.
 
 ### Hermes sandbox egress
 

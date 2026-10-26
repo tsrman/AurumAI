@@ -83,7 +83,11 @@ async def test_the_handshake_and_listing_work_between_turns(hermes_env) -> None:
     assert "mcp-session-id" not in {name.lower() for name in initialized.headers}
     assert notified.status_code == 202 and notified.content == b""
     assert pinged.json() == {"jsonrpc": "2.0", "id": "p", "result": {}}
-    assert [tool["name"] for tool in listed.json()["result"]["tools"]] == ["knowledge_search"]
+    assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
+        "knowledge_search",
+        "list_skills",
+        "run_skill",
+    ]
 
 
 async def test_an_unknown_protocol_version_gets_the_latest(hermes_env) -> None:
@@ -106,6 +110,8 @@ async def test_the_catalogue_follows_the_operator_switches(hermes_env, both_enab
         "web_read",
         "generate_image",
         "edit_image",
+        "list_skills",
+        "run_skill",
     ]
     search = tools[1]["inputSchema"]
     assert search["type"] == "object" and search["required"] == ["query"]

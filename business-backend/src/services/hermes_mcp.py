@@ -5,6 +5,7 @@ starts, and never again, so the list follows only the operator switches. Every
 call is authorized live instead, as an operation of the execution the session
 is bound to: the web and image tools reuse their durable operations, budgets
 and quota unchanged, and a repeated MCP request returns the stored result.
+Platform skills are listed and run through two fixed tools (hermes_skills).
 """
 
 import hashlib
@@ -26,6 +27,8 @@ from src.models.knowledge_base import KnowledgeBase
 from src.repositories.knowledge_base_repository import knowledge_base_repository
 from src.schemas.image_tools import EditImageRequest, GenerateImageRequest
 from src.schemas.web_tools import WebReadRequest, WebSearchRequest
+from src.services import hermes_skills
+from src.services.hermes_skills import ListSkillsRequest, RunSkillRequest, SkillToolError
 from src.services.image_tools import IMAGE_ERROR_CODES, ImageToolExecutionError, image_tools_service
 from src.services.rag_client import rag_client
 from src.services.web_tools import WebToolExecutionError, web_tools_service
@@ -123,6 +126,18 @@ TOOLS = (
         lambda: settings.IMAGES_ENABLED,
         "image_disabled",
     ),
+    BridgeTool(
+        "list_skills",
+        "List the platform skills you may run now: their skillId, description and "
+        "input schema.",
+        ListSkillsRequest,
+    ),
+    BridgeTool(
+        "run_skill",
+        "Run a platform skill from list_skills by its skillId, with arguments that "
+        "match its input schema. " + _UNTRUSTED,
+        RunSkillRequest,
+    ),
 )
 TOOL_NAMES = frozenset(tool.name for tool in TOOLS)
 _BY_NAME = {tool.name: tool for tool in TOOLS}
@@ -151,8 +166,13 @@ async def call_tool(
     name: str,
     arguments: dict[str, Any],
     request_id: str | int,
+    *,
+    generation: int,
 ) -> dict[str, Any]:
-    """Run one tool for the session's bound execution; raises BridgeToolError."""
+    """Run one tool for the session's bound execution; raises BridgeToolError.
+
+    `generation` is the conversation generation of the caller's token.
+    """
     tool = _BY_NAME[name]
     if not tool.enabled():
         raise BridgeToolError(tool.disabled_code)
@@ -166,6 +186,20 @@ async def call_tool(
     if isinstance(parsed, KnowledgeSearchRequest):
         return await _knowledge_search(session, subject, conversation_id, parsed)
     invocation = invocation_id(row.id, request_id, name, arguments)
+    try:
+        if isinstance(parsed, ListSkillsRequest):
+            return await hermes_skills.list_skills(session, subject)
+        if isinstance(parsed, RunSkillRequest):
+            return await hermes_skills.run_skill(
+                session,
+                subject,
+                parsed,
+                conversation_id=conversation_id,
+                generation=generation,
+                invocation=invocation,
+            )
+    except SkillToolError as exc:
+        raise BridgeToolError(exc.code) from None
     normalized = parsed.model_dump(mode="json")
     if name in {"web_search", "web_read"}:
         try:

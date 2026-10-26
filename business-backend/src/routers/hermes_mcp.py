@@ -125,7 +125,10 @@ async def _call(
     try:
         await require_hermes_capabilities(session, subject)
         row = await authorize_token(session, subject, user.raw_claims)
-        return _tool_result(await call_tool(session, subject, row, name, arguments, request_id))
+        result = await call_tool(
+            session, subject, row, name, arguments, request_id, generation=user.raw_claims["generation"]
+        )
+        return _tool_result(result)
     except (HermesAccessDenied, BridgeToolError) as exc:
         await session.rollback()
         return _tool_result({"error": exc.code}, is_error=True)

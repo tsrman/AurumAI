@@ -149,3 +149,26 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+  # Platform skills over the MCP bridge: tool-worker runs them, as for the
+  # runner, against the reference MCP server (sandbox acceptance only).
+  tool-worker:
+    build: ./tool-worker
+    image: aurum-ai-tool-worker:hermes-egress-test
+    profiles: ["hermes-sandbox"]
+    environment:
+      TOOL_WORKER_TEMPORAL_HOST: temporal:7233
+      TOOL_WORKER_TEMPORAL_NAMESPACE: default
+      TOOL_WORKER_TASK_QUEUE: tools
+      TOOL_WORKER_BACKEND_API_URL: http://backend:8000
+      TOOL_WORKER_OTEL_EXPORTER_OTLP_ENDPOINT: console
+      LANGFUSE_ENABLED: "false"
+    networks: [default]
+    depends_on:
+      temporal: {condition: service_healthy}
+  mcp-everything:
+    build: ./mcp/everything
+    image: aurum-ai-mcp-everything:hermes-egress-test
+    profiles: ["hermes-sandbox"]
+    environment:
+      PORT: "3001"
+    networks: [default]

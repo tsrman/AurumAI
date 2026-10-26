@@ -270,6 +270,10 @@ class Settings(BaseSettings):
     # Upper bounds for one native-tools completion request from a sandbox.
     HERMES_MAX_TOOLS: int = Field(default=128, ge=1, le=512)
     HERMES_MAX_MESSAGES: int = Field(default=1000, ge=1, le=10000)
+    # Platform skills over the MCP bridge run on tool-worker's queue; the bridge
+    # waits this long for one call (below Hermes's 600-second tool timeout).
+    HERMES_SKILL_TASK_QUEUE: str = "tools"
+    HERMES_SKILL_TIMEOUT_SECONDS: float = Field(default=240, gt=0, le=540)
 
     @field_validator("WEB_TOOLS_URL")
     @classmethod
