@@ -39,7 +39,9 @@ LOG = logging.getLogger("hermes-egress")
 MODES = ("none", "packages", "public")
 MAX_HEAD_BYTES = 16 * 1024
 HEAD_TIMEOUT_SECONDS = 30.0
-PLATFORM_ROUTES = frozenset({("POST", "/v1/hermes/chat/completions")})
+# The model proxy and the platform tools' MCP endpoint, which answers every
+# message with one JSON body and so needs nothing but POST.
+PLATFORM_ROUTES = frozenset({("POST", "/v1/hermes/chat/completions"), ("POST", "/v1/hermes/mcp")})
 HOP_BY_HOP = frozenset(
     {
         "connection",

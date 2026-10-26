@@ -1077,3 +1077,34 @@ def test_workflow_image_nodes_generate_edit_and_report_attachments() -> None:
     # Ordinary workflow nodes keep their existing deterministic answers.
     plain = message(role="user", content="Goal: User request:\nx\n\nNode instruction:\nMULTI_AGENT_NODE:alpha")
     assert gateway._workflow_image_response([plain]) is None
+
+
+def test_hermes_marker_calls_an_offered_platform_tool_natively_then_reports() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "mcp__aurum__generate_image", "parameters": {}}}]
+    user = {"role": "user", "content": "HERMES_MCP:generate_image"}
+
+    called = client.post("/v1/chat/completions", json={"messages": [user], "tools": tools})
+    chunks = [json.loads(line[6:]) for line in called.text.splitlines() if line.startswith("data: {")]
+    [call] = chunks[0]["choices"][0]["delta"]["tool_calls"]
+    assert call["function"] == {"name": "mcp__aurum__generate_image", "arguments": '{"prompt": "a red square"}'}
+    assert chunks[1]["choices"][0]["finish_reason"] == "tool_calls"
+
+    answered = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                user,
+                {"role": "assistant", "content": None, "tool_calls": [{"id": "call_hermes_mcp"}]},
+                {"role": "tool", "tool_call_id": "call_hermes_mcp", "content": '{"imageId":\n "x"}'},
+            ],
+            "tools": tools,
+        },
+    )
+    assert 'HERMES_MCP_DONE:generate_image:{\\"imageId\\": \\"x\\"}' in answered.text
+
+    unoffered = client.post("/v1/chat/completions", json={"messages": [user]})
+    assert "HERMES_MCP_NOT_OFFERED" in unoffered.text

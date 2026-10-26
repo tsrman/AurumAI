@@ -19,6 +19,12 @@ x-backend-env: &backend-env
   APP_LLM_GATEWAY_URL: http://gateway:8000
   APP_GATEWAY_API_KEY: hermes-egress-fixture-key
   APP_IDENTITY_SYNC_ENABLED: "false"
+  # A Hermes run generates an image over the MCP bridge (sandbox acceptance);
+  # the image lands in the disposable MinIO, which only that profile starts.
+  APP_IMAGES_ENABLED: "true"
+  APP_S3_ENDPOINT: http://minio:9000
+  APP_S3_ACCESS_KEY: minio
+  APP_S3_SECRET_KEY: hermes-snapshot-acceptance-secret
 
 services:
   postgres:
@@ -69,6 +75,7 @@ services:
       - ./scripts/k8s-test-gateway.py:/test-gateway.py:ro
     environment:
       TEST_GATEWAY_MODEL_ID: hermes-egress-test
+      TEST_GATEWAY_IMAGE_MODEL_ID: hermes-egress-image
   migrate:
     build: ./business-backend
     image: aurum-ai-backend:hermes-egress-test

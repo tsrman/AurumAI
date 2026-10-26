@@ -116,10 +116,41 @@ async def test_platform_forwards_exactly_one_parsed_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_platform_forwards_the_mcp_endpoint() -> None:
+    backend = Backend()
+    servers, port = await _platform(backend)
+    try:
+        reply = await _exchange(port, _request("/v1/hermes/mcp", b'{"jsonrpc":"2.0"}'))
+    finally:
+        for server in servers:
+            server.close()
+
+    assert reply.endswith(b"ok")
+    assert backend.received.startswith(b"POST /v1/hermes/mcp HTTP/1.1\r\n")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["GET", "DELETE", "HEAD"])
+async def test_platform_refuses_other_methods_on_the_mcp_endpoint(method: str) -> None:
+    backend = Backend()
+    servers, port = await _platform(backend)
+    try:
+        reply = await _exchange(port, f"{method} /v1/hermes/mcp HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+    finally:
+        for server in servers:
+            server.close()
+
+    assert reply.startswith(b"HTTP/1.1 404")
+    assert backend.received == b""
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "target",
     [
         "/v1/internal/hermes/sessions",
+        "/v1/hermes/mcp/",
+        "/v1/hermes/mcp?x=1",
         "/v1/hermes/chat%2Fcompletions",
         "/v1/hermes/chat/completions?x=1",
         "//v1/hermes/chat/completions",

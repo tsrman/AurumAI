@@ -181,14 +181,31 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   unexpired and bound to an active turn. A runner manages the session of its own
   conversation through internal routes: `POST /v1/internal/hermes/sessions` opens it
   (or rotates the token of the open one, so earlier tokens stop working) and returns
-  a token; `PUT .../sessions/{id}/turn` binds it to the conversation's active turn,
-  with the turn's workflow run, phase and node when the turn runs a workflow;
+  a token; `PUT .../sessions/{id}/turn` binds it to the conversation's active turn
+  and to the registered execution acting in it (`executionId`, whose phase and node
+  must match), with the turn's workflow run, phase and node when the turn runs a
+  workflow;
   `DELETE .../sessions/{id}/turn` unbinds it and `POST .../sessions/{id}/close` closes
   it. Opening and binding need the Hermes capabilities, unbinding and closing never
   do. Completions are billed to the bound turn's workflow correlation, never to
   anything in the request. A token holds identity only and has its own audience that
   no other route accepts; a session and its tokens end after
   `APP_HERMES_SESSION_MAX_LIFETIME_SECONDS` (86400) even if nothing closes them.
+- `POST /v1/hermes/mcp` is the platform tools' MCP endpoint (Streamable HTTP without
+  a session: one JSON answer per POST, no server stream). It offers
+  `knowledge_search` (only the files attached to the conversation), `web_search` and
+  `web_read` while `APP_WEB_ENABLED` is on, and `generate_image` and `edit_image`
+  while `APP_IMAGES_ENABLED` is on. Hermes lists them once when its sandbox starts,
+  so the listing needs only an open session on the token's version, also between
+  turns; a call needs the bound turn too, and the live capabilities, grants, per-turn
+  budgets and quota of the ordinary web and image tools. A call is an operation of
+  the bound execution, so a repeated request returns the stored result. A call the
+  bridge denies or cannot complete is a tool error with a bounded code
+  (`hermes_turn_inactive`, `web_limit`, `image_quota_exceeded`, ...), not an HTTP
+  error, which Hermes counts towards pausing the server. Requests count against the
+  user's ordinary rate limit (`APP_RATE_LIMIT_PER_MINUTE`, shared with the UI and the
+  completions); over it they get HTTP 429, and after three failed calls in a row
+  Hermes pauses the bridge's tools for 60 s. Requests are journaled like others.
 
 ### Hermes sandbox egress
 
@@ -200,8 +217,8 @@ never joins it. Sandboxes share this segment; sandbox isolation from one another
 arrives with the sandboxes themselves.
 
 - **Platform path.** `hermes-egress:8080` forwards exactly
-  `POST /v1/hermes/chat/completions`, one request per connection with a
-  `Content-Length` body.
+  `POST /v1/hermes/chat/completions` and `POST /v1/hermes/mcp`, one request per
+  connection with a `Content-Length` body.
 - **Internet.** `hermes-egress:3128` is a `CONNECT`-only proxy. A sandbox sets
   `HTTPS_PROXY=http://hermes:<session token>@hermes-egress:3128`. For each tunnel
   the proxy asks the backend (`POST /v1/internal/hermes/egress/authorize`,

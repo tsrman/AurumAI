@@ -236,6 +236,19 @@ def test_generated_config_disables_unneeded_toolsets() -> None:
     assert config["terminal"] == {"backend": "local"}
 
 
+def test_generated_config_reaches_the_platform_tools_through_the_egress() -> None:
+    config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
+
+    [(name, server)] = config["mcp_servers"].items()
+    assert name == "aurum"
+    assert server["url"] == "http://hermes-egress:8080/v1/hermes/mcp"
+    assert server["headers"] == {"Authorization": f"Bearer {TOKEN}"}
+    assert server["skip_preflight"] is True
+    assert server["tools"]["include"] == [
+        "knowledge_search", "web_search", "web_read", "generate_image", "edit_image"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_subnets_skip_used_ranges_and_retry_overlaps(runtime) -> None:
     sandboxes, daemon = runtime

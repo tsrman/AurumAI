@@ -43,6 +43,9 @@ class BindTurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     turn_id: UUID = Field(alias="turnId")
+    # The registered execution acting in the turn; its platform tool calls
+    # over the MCP bridge are operations of this execution.
+    execution_id: UUID = Field(alias="executionId")
     workflow_run_id: UUID | None = Field(default=None, alias="workflowRunId")
     workflow_phase: Literal["supervisor_prepare", "node", "supervisor_synthesize"] | None = Field(
         default=None, alias="workflowPhase"
@@ -113,6 +116,7 @@ async def bind_hermes_turn(
             conversation_id,
             session_id,
             turn_id=data.turn_id,
+            execution_id=data.execution_id,
             workflow_run_id=data.workflow_run_id,
             workflow_phase=data.workflow_phase,
             workflow_node_key=data.workflow_node_key,

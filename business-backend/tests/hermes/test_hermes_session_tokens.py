@@ -165,9 +165,9 @@ async def test_binding_needs_the_conversations_active_turn(hermes_env) -> None:
     body = await hermes_env.open_session(bind=False)
     path = f"/sessions/{body['sessionId']}/turn"
 
-    other = await hermes_env.internal("PUT", path, json={"turnId": str(uuid.uuid4())})
+    other = await hermes_env.internal("PUT", path, json=hermes_env.turn_body(turnId=str(uuid.uuid4())))
     await hermes_env.finish_turn()
-    finished = await hermes_env.internal("PUT", path, json={"turnId": str(hermes_env.turn_id)})
+    finished = await hermes_env.internal("PUT", path, json=hermes_env.turn_body())
 
     assert other.status_code == 403 and "hermes_turn_inactive" in other.text
     assert finished.status_code == 403 and "hermes_turn_inactive" in finished.text
@@ -176,7 +176,7 @@ async def test_binding_needs_the_conversations_active_turn(hermes_env) -> None:
 async def test_binding_a_closed_or_unknown_session_fails(hermes_env) -> None:
     body = await hermes_env.open_session(bind=False)
     await hermes_env.internal("POST", f"/sessions/{body['sessionId']}/close")
-    turn = {"turnId": str(hermes_env.turn_id)}
+    turn = hermes_env.turn_body()
 
     closed = await hermes_env.internal("PUT", f"/sessions/{body['sessionId']}/turn", json=turn)
     unknown = await hermes_env.internal("PUT", f"/sessions/{uuid.uuid4()}/turn", json=turn)
@@ -206,7 +206,7 @@ async def test_workflow_correlation_must_match_the_turns_live_run(hermes_env, ca
     response = await hermes_env.internal(
         "PUT",
         f"/sessions/{body['sessionId']}/turn",
-        json={"turnId": str(hermes_env.turn_id), **correlation},
+        json=hermes_env.turn_body(**correlation),
     )
 
     assert response.status_code == 422
@@ -221,9 +221,58 @@ async def test_switching_hermes_off_stops_opening_but_not_revocation(
     path = f"/sessions/{body['sessionId']}"
 
     opened = await hermes_env.internal("POST", "/sessions")
-    bound = await hermes_env.internal("PUT", f"{path}/turn", json={"turnId": str(hermes_env.turn_id)})
+    bound = await hermes_env.internal("PUT", f"{path}/turn", json=hermes_env.turn_body())
     unbound = await hermes_env.internal("DELETE", f"{path}/turn")
     closed = await hermes_env.internal("POST", f"{path}/close")
 
     assert (opened.status_code, bound.status_code) == (404, 404)
     assert (unbound.status_code, closed.status_code) == (204, 204)
+
+
+@pytest.mark.parametrize("case", ["unknown", "missing", "workflow_step_mismatch", "ordinary_in_workflow"])
+async def test_the_bound_execution_must_act_in_the_bound_step(hermes_env, case: str) -> None:
+    run_id = await hermes_env.add_workflow_run()
+    node = {"workflowRunId": str(run_id), "workflowPhase": "node", "workflowNodeKey": "research"}
+    other_node = await hermes_env.add_execution("node", "summary")
+    body = {
+        "unknown": hermes_env.turn_body(executionId=str(uuid.uuid4())),
+        "missing": {"turnId": str(hermes_env.turn_id)},
+        "workflow_step_mismatch": hermes_env.turn_body(**node, executionId=str(other_node)),
+        "ordinary_in_workflow": hermes_env.turn_body(**node),
+    }[case]
+    opened = await hermes_env.open_session(bind=False)
+
+    response = await hermes_env.internal("PUT", f"/sessions/{opened['sessionId']}/turn", json=body)
+
+    if case == "missing":
+        assert response.status_code == 400
+    else:
+        assert response.status_code == 422
+        assert "hermes_correlation_invalid" in response.text
+
+
+async def test_unbinding_and_closing_clear_the_execution(hermes_env) -> None:
+    from sqlalchemy import select
+
+    from src.models.hermes_session import HermesSession
+
+    opened = await hermes_env.open_session()
+    path = f"/sessions/{opened['sessionId']}"
+
+    async def execution() -> object:
+        async with hermes_env.sessions() as db:
+            return await db.scalar(
+                select(HermesSession.active_execution_id).where(
+                    HermesSession.id == uuid.UUID(opened["sessionId"])
+                )
+            )
+
+    bound = await execution()
+    await hermes_env.internal("DELETE", f"{path}/turn")
+    unbound = await execution()
+    await hermes_env.internal("PUT", f"{path}/turn", json=hermes_env.turn_body())
+    await hermes_env.internal("POST", f"{path}/close")
+
+    assert bound == hermes_env.execution_id
+    assert unbound is None
+    assert await execution() is None
