@@ -82,6 +82,10 @@ class HermesSandboxError(Exception):
         self.code = code
 
 
+class HermesSandboxDropped(HermesSandboxError):
+    """Retiring removed the sandbox without a snapshot; nothing is kept."""
+
+
 @dataclass(frozen=True)
 class HermesSandbox:
     session_id: str
@@ -98,8 +102,6 @@ class HermesSandbox:
     snapshot_attempt_at: float = 0.0
     # Over the soft workspace limit: no new runs until it is back under.
     workspace_full: bool = False
-    # Why its last snapshot failed, when it is kept stopped.
-    snapshot_error: str | None = None
 
 
 def resource_name(session_id: str) -> str:
@@ -384,7 +386,10 @@ class DockerHermesSandboxes:
                     finally:
                         self._release(org_id)
                 # Otherwise a snapshot and a fresh sandbox, as for a running one.
-                await self._retire(existing)
+                try:
+                    await self._retire(existing)
+                except HermesSandboxDropped:
+                    pass
             if snapshot_sha256 is not None and not self._store.enabled:
                 raise HermesSandboxError("hermes_snapshot_unavailable")
             # Before admission: a store that is down must not evict anyone.
@@ -442,6 +447,8 @@ class DockerHermesSandboxes:
                     if current is not None and current.state == "running":
                         try:
                             await self._retire(current)
+                        except HermesSandboxDropped:
+                            pass
                         except HermesSandboxError as exc:
                             # Stopped (or paused) anyway, so the slot is free.
                             logger.warning("Hermes sandbox %s kept stopped: %s", victim.session_id, exc.code)
@@ -698,7 +705,9 @@ class DockerHermesSandboxes:
 
     async def _retire(self, sandbox: HermesSandbox) -> Snapshot | None:
         """Stop, snapshot and remove; on a failed snapshot the sandbox stays
-        stopped with its volume. Called with the session's lock held."""
+        stopped with its volume. A workspace over the snapshot bound is removed
+        without one (it cannot shrink while stopped, and the last snapshot that
+        fit stays the latest). Called with the session's lock held."""
         session_id = sandbox.session_id
         self._sandboxes[session_id] = replace(sandbox, state="retiring")
         await self._stop_container(sandbox)
@@ -707,32 +716,36 @@ class DockerHermesSandboxes:
             try:
                 snapshot = await self._snapshot(sandbox)
             except HermesSandboxError as exc:
-                if exc.code != "hermes_workspace_lost":
-                    self._keep_stopped(sandbox, exc.code)
+                if exc.code not in ("hermes_workspace_lost", "hermes_snapshot_too_large"):
+                    self._keep_stopped(sandbox)
                     raise
-                # Nothing of the platform's left (a tmpfs workspace after a
-                # restart): a snapshot would replace the last good one.
-                logger.warning("Hermes sandbox %s lost its workspace; removed without a snapshot", session_id)
+                # Lost: nothing of the platform's left (a tmpfs workspace after
+                # a restart), and a snapshot would replace the last good one.
+                logger.warning("Hermes sandbox %s removed without a snapshot: %s", session_id, exc.code)
+                self._sandboxes.pop(session_id, None)
+                await self._remove(sandbox.network)
+                raise HermesSandboxDropped(exc.code) from None
             except Exception as exc:
                 # Never left "retiring": the reaper would skip it for good.
-                self._keep_stopped(sandbox, "hermes_snapshot_failed")
+                self._keep_stopped(sandbox)
                 raise HermesSandboxError("hermes_snapshot_failed") from exc
         self._sandboxes.pop(session_id, None)
         await self._remove(sandbox.network)
         return snapshot
 
-    def _keep_stopped(self, sandbox: HermesSandbox, error: str) -> None:
+    def _keep_stopped(self, sandbox: HermesSandbox) -> None:
         now = time.time()
         self._sandboxes[sandbox.session_id] = replace(
-            sandbox, state="stopped", stopped_at=sandbox.stopped_at or now, snapshot_attempt_at=now,
-            snapshot_error=error,
+            sandbox, state="stopped", stopped_at=sandbox.stopped_at or now, snapshot_attempt_at=now
         )
 
     # Removal and reaping ----------------------------------------------------
 
     async def close(self, session_id: str, *, snapshot: bool = False) -> Snapshot | None:
         """Idempotent; also removes what a crashed create left behind. With
-        `snapshot`, a failed snapshot keeps the sandbox, stopped."""
+        `snapshot`, a failed snapshot keeps the sandbox, stopped, except that
+        one over the bound or without a workspace is removed anyway and
+        raises HermesSandboxDropped."""
         async with self._lock(session_id):
             sandbox = self._sandboxes.get(session_id)
             if snapshot and sandbox is not None:
@@ -799,16 +812,13 @@ class DockerHermesSandboxes:
                         continue
                     if now - sandbox.snapshot_attempt_at < settings.hermes_snapshot_retry_seconds:
                         continue
-                    # A stopped workspace cannot shrink: retrying would stream
-                    # it again for nothing. It waits for the retention or a
-                    # DELETE without a snapshot (the last good one stays).
-                    if sandbox.snapshot_error == "hermes_snapshot_too_large":
-                        continue
                 elif not self._expired(sandbox, now):
                     continue
                 logger.info("Retiring Hermes sandbox %s", session_id)
                 try:
                     await self._retire(sandbox)
+                    reaped += 1
+                except HermesSandboxDropped:
                     reaped += 1
                 except HermesSandboxError as exc:
                     logger.warning("Hermes sandbox %s kept stopped: %s", session_id, exc.code)

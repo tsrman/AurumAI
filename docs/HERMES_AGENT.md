@@ -509,8 +509,8 @@ Each phase is a separate PR behind the flag:
          sandbox is paused instead of stopped when its snapshot fails and is
          never resumed, since its Hermes would keep the old token;
        - a workspace without the platform's own files (a tmpfs workspace after
-         a restart) is removed without a snapshot, so it never replaces the
-         last good one;
+         a restart), or one over the snapshot bound, is removed without a
+         snapshot, so the last snapshot that fit stays the latest;
        - eviction snapshots the victim while the capacity lock is held, so
          creations wait for it.
 3. **MCP bridge.** Knowledge, web, images and questions. MCP skills and code skills

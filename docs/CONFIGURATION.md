@@ -300,10 +300,9 @@ Workspace size, by `HERMES_WORKSPACE_MODE`:
   latest one.
 
 Keep `HERMES_WORKSPACE_MAX_BYTES` at or below `HERMES_SNAPSHOT_MAX_BYTES`. The
-soft limit can still be overshot between checks; a workspace over the snapshot
-bound is kept stopped without further attempts until the retention, and
-`DELETE /hermes/sandboxes/{id}` (without `?snapshot=true`) removes it, after which
-the next create restores the last snapshot that fit.
+soft limit can still be overshot between checks: a workspace over the snapshot
+bound when its sandbox is retired is removed without a snapshot, and the next
+create restores the last snapshot that fit.
 
 ## Identity and data lifecycle
 
