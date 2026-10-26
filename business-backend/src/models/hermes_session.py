@@ -3,7 +3,8 @@
 One open session per conversation. Its token is accepted only while the row is
 open, unexpired and on the same token version, and only during the turn the
 runner bound to it; the turn's workflow correlation is billed from here, never
-from the sandbox's requests. Closing clears the binding, so a closed row keeps
+from the sandbox's requests, and its platform tool calls are operations of the
+bound execution. Closing clears the binding, so a closed row keeps
 no reference to the conversation's turns or runs.
 """
 
@@ -41,6 +42,15 @@ class HermesSession(OrgScopedModel):
             name="fk_hermes_session_turn",
         ),
         ForeignKeyConstraint(
+            ["org_id", "active_turn_id", "active_execution_id"],
+            [
+                "interaction_executions.org_id",
+                "interaction_executions.turn_id",
+                "interaction_executions.id",
+            ],
+            name="fk_hermes_session_execution",
+        ),
+        ForeignKeyConstraint(
             ["org_id", "workflow_run_id"],
             ["workflow_runs.org_id", "workflow_runs.id"],
             name="fk_hermes_session_workflow_run",
@@ -51,6 +61,10 @@ class HermesSession(OrgScopedModel):
             "(state = 'open' AND closed_at IS NULL) OR (state = 'closed' AND closed_at IS NOT NULL "
             "AND active_turn_id IS NULL AND workflow_run_id IS NULL)",
             name="ck_hermes_session_closed",
+        ),
+        CheckConstraint(
+            "(active_turn_id IS NULL) = (active_execution_id IS NULL)",
+            name="ck_hermes_session_execution",
         ),
         CheckConstraint(
             "active_turn_id IS NOT NULL OR workflow_run_id IS NULL",
@@ -78,6 +92,7 @@ class HermesSession(OrgScopedModel):
     state: Mapped[str] = mapped_column(Text, server_default="open", nullable=False)
     token_version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     active_turn_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    active_execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     workflow_phase: Mapped[str | None] = mapped_column(Text)
     workflow_node_key: Mapped[str | None] = mapped_column(Text)

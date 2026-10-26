@@ -1,8 +1,8 @@
 """Hermes Agent session records (docs/HERMES_AGENT.md).
 
 A runner opens a session for its conversation and gets a token, binds it to the
-active turn (with the turn's workflow correlation, when the turn runs a
-workflow), unbinds it when the turn ends and closes it when the sandbox goes
+active turn and the execution acting in it (with the turn's workflow
+correlation, when the turn runs a workflow), unbinds it when the turn ends and closes it when the sandbox goes
 away. Opening again rotates the token version; closing bumps it as well, so
 every earlier token of the session stops working at once.
 """
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.authorization_types import AuthorizationSubject
 from src.core.config import settings
 from src.models.hermes_session import HermesSession
-from src.models.interaction import InteractionTurn
+from src.models.interaction import InteractionExecution, InteractionTurn
 from src.models.workflow_run import WorkflowRun, WorkflowRunStatus
 from src.services.hermes_access import HermesAccessDenied, active_hermes_turn
 from src.services.hermes_session_token import (
@@ -76,13 +76,18 @@ def _issue(row: HermesSession, generation: int) -> IssuedHermesSessionToken:
     )
 
 
-def _close(row: HermesSession, now: datetime) -> None:
-    row.state = "closed"
-    row.closed_at = now
+def _clear_binding(row: HermesSession) -> None:
     row.active_turn_id = None
+    row.active_execution_id = None
     row.workflow_run_id = None
     row.workflow_phase = None
     row.workflow_node_key = None
+
+
+def _close(row: HermesSession, now: datetime) -> None:
+    row.state = "closed"
+    row.closed_at = now
+    _clear_binding(row)
     row.token_version += 1
 
 
@@ -138,6 +143,7 @@ async def bind_turn(
     session_id: UUID,
     *,
     turn_id: UUID,
+    execution_id: UUID,
     workflow_run_id: UUID | None = None,
     workflow_phase: str | None = None,
     workflow_node_key: str | None = None,
@@ -170,7 +176,22 @@ async def bind_turn(
             or str(run_status) in _TERMINAL_RUN_STATES
         ):
             raise HermesSessionError("hermes_correlation_invalid")
+    execution = await session.scalar(
+        select(InteractionExecution).where(
+            InteractionExecution.org_id == subject.org_id,
+            InteractionExecution.turn_id == turn.id,
+            InteractionExecution.id == execution_id,
+        )
+    )
+    # The execution acts in the bound step: an ordinary turn's, or the
+    # workflow phase and node the binding is billed to.
+    if execution is None or (execution.phase, execution.node_key) != (
+        workflow_phase or "ordinary",
+        workflow_node_key,
+    ):
+        raise HermesSessionError("hermes_correlation_invalid")
     row.active_turn_id = turn.id
+    row.active_execution_id = execution.id
     row.workflow_run_id = workflow_run_id
     row.workflow_phase = workflow_phase
     row.workflow_node_key = workflow_node_key
@@ -185,10 +206,7 @@ async def unbind_turn(
     session_id: UUID,
 ) -> None:
     row = await _owned(session, subject, conversation_id, session_id)
-    row.active_turn_id = None
-    row.workflow_run_id = None
-    row.workflow_phase = None
-    row.workflow_node_key = None
+    _clear_binding(row)
     await session.flush()
 
 
@@ -213,8 +231,14 @@ async def authorize_token(
     claims: dict[str, Any],
     *,
     now: datetime | None = None,
+    require_turn: bool = True,
 ) -> HermesSession:
-    """The session a token may act for right now, bound to a still-active turn."""
+    """The session a token may act for right now, bound to a still-active turn.
+
+    Without `require_turn`, an open session on the token's version is enough:
+    for requests that read nothing and act on nothing, such as the MCP
+    handshake Hermes makes when its sandbox starts.
+    """
     try:
         row = await _owned(
             session,
@@ -231,6 +255,8 @@ async def authorize_token(
         or row.token_version != claims.get("tv")
     ):
         raise HermesAccessDenied("hermes_session_revoked")
+    if not require_turn:
+        return row
     if row.active_turn_id is None:
         raise HermesAccessDenied("hermes_turn_inactive")
     status = await session.scalar(

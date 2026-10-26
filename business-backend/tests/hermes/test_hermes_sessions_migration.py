@@ -84,3 +84,38 @@ async def test_inconsistent_rows_are_refused(db, test_org, test_user, values) ->
 
     with pytest.raises(IntegrityError):
         await db.flush()
+
+
+async def test_a_binding_names_an_execution_of_the_bound_turn(db, test_org, test_user) -> None:
+    from src.models.interaction import InteractionExecution, InteractionTurn
+    from src.schemas.interaction import TurnLimits
+
+    conversation = await _conversation(db, test_org, test_user)
+    turns = [
+        InteractionTurn(
+            org_id=test_org.id,
+            conversation_id=conversation.id,
+            owner_id=test_user.id,
+            limits=TurnLimits().model_dump(),
+            status=status,
+        )
+        for status in ("completed", "active")
+    ]
+    db.add_all(turns)
+    await db.flush()
+    other = InteractionExecution(
+        org_id=test_org.id,
+        turn_id=turns[0].id,
+        workflow_id="other",
+        run_id=uuid.uuid4(),
+        task_queue="tools",
+        phase="ordinary",
+    )
+    db.add(other)
+    await db.flush()
+
+    for values in ({"active_turn_id": turns[1].id}, {"active_turn_id": turns[1].id, "active_execution_id": other.id}):
+        async with db.begin_nested():
+            db.add(_session(test_org, test_user, conversation, **values))
+            with pytest.raises(IntegrityError):
+                await db.flush()

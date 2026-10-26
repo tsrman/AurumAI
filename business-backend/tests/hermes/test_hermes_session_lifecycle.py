@@ -50,11 +50,19 @@ async def _add_session(sessions, args: dict, *, state: str, expired: bool, turn:
     async with sessions() as db:
         await db.execute(
             text(
-                "INSERT INTO hermes_sessions(id,org_id,user_id,conversation_id,state,active_turn_id,expires_at,closed_at) "
-                "VALUES(:id,:o,:u,:c,:state,:turn,now() + make_interval(hours => :h),"
+                "INSERT INTO hermes_sessions(id,org_id,user_id,conversation_id,state,active_turn_id,"
+                "active_execution_id,expires_at,closed_at) "
+                "VALUES(:id,:o,:u,:c,:state,:turn,:execution,now() + make_interval(hours => :h),"
                 " CASE WHEN :state='closed' THEN now() END)"
             ),
-            dict(args, id=uuid4(), state=state, turn=args["t"] if turn else None, h=-1 if expired else 1),
+            dict(
+                args,
+                id=uuid4(),
+                state=state,
+                turn=args["t"] if turn else None,
+                execution=args["e"] if turn else None,
+                h=-1 if expired else 1,
+            ),
         )
         await db.commit()
 

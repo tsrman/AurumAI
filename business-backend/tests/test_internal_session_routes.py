@@ -53,7 +53,10 @@ EXPECTED_INTERNAL_ROUTES = {
     ("hermes_internal", "/hermes/sessions/{session_id}/close", "POST"),
 }
 
-EXPECTED_HERMES_ROUTES = {("hermes", "/hermes/chat/completions", "POST")}
+EXPECTED_HERMES_ROUTES = {
+    ("hermes", "/hermes/chat/completions", "POST"),
+    ("hermes_mcp", "/hermes/mcp", "POST"),
+}
 
 
 def _dependency_calls(dependencies: Iterable[Any]) -> set[Any]:

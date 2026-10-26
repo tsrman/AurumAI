@@ -195,6 +195,9 @@ apply.
   - `agent.disabled_toolsets`: browser, computer use, web and search, cron and
     kanban, messaging integrations, media generation and `clarify` (questions to
     the user arrive with phase 4).
+  - `mcp_servers.aurum`: the platform tools at
+    `http://hermes-egress:8080/v1/hermes/mcp` with the session token, the bridge's
+    tools only, no preflight probe and no sampling.
   - `approvals.mode: off`: the sandbox is the boundary, and Hermes's hardline
     command patterns still apply.
   - The API server listens on 127.0.0.1 only; skill-executor reaches it through
@@ -513,11 +516,44 @@ Each phase is a separate PR behind the flag:
          snapshot, so the last snapshot that fit stays the latest;
        - eviction snapshots the victim while the capacity lock is held, so
          creations wait for it.
-3. **MCP bridge.** Knowledge, web, images and questions. MCP skills and code skills
-   come later in the same phase if the scope allows.
+3. **MCP bridge.** Split into two changes:
+   - 3a, implemented: `POST /v1/hermes/mcp` with knowledge search, `web.search`,
+     `web.read`, image generation and editing; hermes-egress forwards it, and the
+     generated Hermes config connects to it. Accepted at runtime by
+     `./smoke-test-hermes-sandbox.sh`: Hermes generates an image through
+     hermes-egress as a completed operation of the bound execution, and between
+     turns the sandbox lists the tools but cannot call them. Deviations:
+     - binding a turn also names the registered execution acting in it (a new
+       `hermes_sessions.active_execution_id`, kept inside the bound turn by a
+       foreign key; its phase and node must match the binding's). Web and image
+       calls are durable operations of that execution and reuse the existing
+       services unchanged: live capabilities, per-turn budgets, quota, sources
+       and images. The invocation id is derived from the session, the JSON-RPC
+       id, the tool and a hash of the arguments, so a reused id with the same
+       arguments returns the stored result;
+     - Hermes connects to the bridge and lists its tools once, when the sandbox
+       starts, which is usually between turns. The handshake, `ping` and
+       `tools/list` therefore need only an open session on the token's version,
+       not an active turn, and the catalogue is fixed (it follows only the
+       operator switches); every call is authorized live. This narrows "between
+       turns every call fails" to calls that read or do something;
+     - the bridge is Streamable HTTP without a session, written as a small
+       JSON-RPC route rather than the MCP SDK's server: one JSON answer per POST,
+       no `Mcp-Session-Id`, so the client never opens the server stream that
+       hermes-egress would refuse. Calls the bridge denies or cannot complete
+       are tool errors with bounded codes, not HTTP errors, which Hermes counts
+       towards pausing the server; the ordinary rate limit still answers 429;
+     - knowledge search covers only the files attached to the conversation, as
+       for an ordinary chat agent; the Hermes agent definition's knowledge bases
+       follow with phase 4;
+     - questions to the user move to phase 4: they wait in Hermes's `clarify`
+       state, answered through the durable `user_questions` flow by the session
+       workflow, not over a tool call bounded by its timeout;
+   - 3b: MCP skills and code skills, which also settles the open question below.
 4. **Chat agent.** The long-lived `HermesSessionWorkflow` with turn hand-off,
-   reattach after a lost worker, idle snapshot, capacity caps, events, cancel, the
-   picker, the capability and flag, the UI and acceptance.
+   reattach after a lost worker, idle snapshot, capacity caps, events, cancel,
+   questions to the user through Hermes's `clarify`, the picker, the capability and
+   flag, the UI and acceptance.
 5. **Memory and skill drafts.** Tables, hydrate and read-back, user settings and
    admin approval.
 6. **Workflow node.** A `hermes` node type, billing and replay tests, and the

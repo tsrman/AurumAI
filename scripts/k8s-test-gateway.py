@@ -1,7 +1,8 @@
 """Deterministic OpenAI-compatible gateway for the local Kubernetes smoke test.
 
 Routing decisions are reconstructed from current messages, as a real gateway
-would see them. A test-only metadata barrier synchronizes admitted web turns.
+would see them. For Hermes Agent, which uses native function calling, a
+HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge. A test-only metadata barrier synchronizes admitted web turns.
 It never performs an outbound request and never stores prompts in barrier state.
 """
 
@@ -76,6 +77,12 @@ _MULTI_AGENT_IMAGE_RESULT = re.compile(r"MULTI_AGENT_IMAGE_RESULT:(draw|paint)")
 _IMAGE_ID = re.compile(r'"imageId":\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"')
 _LISTED_IMAGE = re.compile(r'"image_id":\s*"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})"')
 _ASK_RESULT_PREFIX = "Tool result for ask_user: "
+# Hermes names the platform tools mcp__<server>__<tool>; the bridge is "aurum".
+_HERMES_MCP = re.compile(r"HERMES_MCP:(knowledge_search|generate_image)")
+_HERMES_MCP_ARGUMENTS = {
+    "knowledge_search": {"query": "acceptance"},
+    "generate_image": {"prompt": "a red square"},
+}
 _QUESTION_MARKERS = ("ASK_CITY_THEN_FINAL", "ASK_TWICE", "ASK_LOOP", "ASK_OPTION")
 
 
@@ -89,6 +96,9 @@ class Message(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _flatten_parts(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("content") is None:
+            # An assistant message that only calls tools.
+            return {**value, "content": ""}
         if not isinstance(value, dict) or not isinstance(value.get("content"), list):
             return value
         parts = [part for part in value["content"] if isinstance(part, dict)]
@@ -106,6 +116,7 @@ class CompletionRequest(BaseModel):
     model: str = MODEL_ID
     messages: list[Message]
     stream: bool = True
+    tools: list[dict[str, Any]] = []
 
 
 app = FastAPI(title="AurumAI deterministic Kubernetes test gateway")
@@ -778,6 +789,37 @@ def _content_for(request: CompletionRequest) -> str:
     return _outer_response(request.messages)
 
 
+def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """A native tool call to the marked platform tool, then its result as text."""
+    match = _HERMES_MCP.search(_last_user_message(request.messages))
+    if match is None:
+        return None
+    tool = match.group(1)
+    results = [message.content for message in request.messages if message.role == "tool"]
+    if results:
+        return f"HERMES_MCP_DONE:{tool}:" + " ".join(results[-1].split())[:500]
+    name = f"mcp__aurum__{tool}"
+    offered = {str((item.get("function") or {}).get("name")) for item in request.tools}
+    if name not in offered:
+        return "HERMES_MCP_NOT_OFFERED"
+    return {"name": name, "arguments": json.dumps(_HERMES_MCP_ARGUMENTS[tool])}
+
+
+async def _tool_call_sse(model: str, call: dict[str, Any]) -> AsyncIterator[str]:
+    completion_id = "chatcmpl-k8s-" + hashlib.sha256(call["name"].encode()).hexdigest()[:32]
+    delta = {
+        "role": "assistant",
+        "tool_calls": [{"index": 0, "id": "call_hermes_mcp", "type": "function", "function": call}],
+    }
+    for choice in (
+        {"index": 0, "delta": delta, "finish_reason": None},
+        {"index": 0, "delta": {}, "finish_reason": "tool_calls"},
+    ):
+        chunk = {"id": completion_id, "object": "chat.completion.chunk", "created": 0, "model": model, "choices": [choice]}
+        yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 async def _sse(model: str, content: str) -> AsyncIterator[str]:
     digest = hashlib.sha256(f"{model}\0{content}".encode()).hexdigest()[:32]
     completion_id = f"chatcmpl-k8s-{digest}"
@@ -866,6 +908,11 @@ async def chat_completions(request: CompletionRequest) -> StreamingResponse:
         # running status before calling the gateway, giving the harness a
         # deterministic window for revoke/cancel. Never log prompt or key.
         await asyncio.sleep(float(os.getenv("TEST_GATEWAY_BARRIER_SECONDS", "3")))
+    hermes = _hermes_mcp_response(request)
+    if isinstance(hermes, dict):
+        return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")
+    if hermes is not None:
+        return StreamingResponse(_sse(request.model, hermes), media_type="text/event-stream")
     return StreamingResponse(
         _sse(request.model, _content_for(request)),
         media_type="text/event-stream",

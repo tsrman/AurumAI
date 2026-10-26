@@ -69,6 +69,8 @@ DISABLED_TOOLSETS = (
     "feishu_doc", "feishu_drive", "homeassistant", "image_gen", "kanban", "search",
     "spotify", "tts", "video", "video_gen", "web", "x_search", "yuanbao",
 )
+# The platform tools of the MCP bridge (business-backend's hermes_mcp).
+PLATFORM_TOOLS = ("knowledge_search", "web_search", "web_read", "generate_image", "edit_image")
 _CHUNK = 64 * 1024
 # Written by the platform into every workspace; a snapshot source without it
 # lost its workspace (see DockerHermesSandboxes._retire).
@@ -122,6 +124,21 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
         # The sandbox is the boundary; Hermes's hardline patterns still apply.
         "approvals": {"mode": "off"},
         "agent": {"disabled_toolsets": list(DISABLED_TOOLSETS)},
+        # Hermes connects when it starts and lists the tools once. The bridge
+        # answers POST only, so there is no preflight probe, and a rare ping
+        # keeps idle sandboxes from calling the backend between turns.
+        "mcp_servers": {
+            "aurum": {
+                "url": f"{settings.hermes_platform_url}/mcp",
+                "headers": {"Authorization": f"Bearer {token}"},
+                "skip_preflight": True,
+                "timeout": 600,
+                "connect_timeout": 30,
+                "keepalive_interval": 1800,
+                "sampling": {"enabled": False},
+                "tools": {"include": list(PLATFORM_TOOLS), "resources": False, "prompts": False},
+            }
+        },
         "platforms": {
             "api_server": {
                 "enabled": True,

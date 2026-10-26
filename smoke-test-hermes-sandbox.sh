@@ -16,7 +16,10 @@
 # the organization cap (the least recently used idle sandbox is retired), the
 # soft workspace limit from Docker's volume usage, and the tmpfs workspace:
 # files written after the start, a kernel-enforced size, and a pause instead
-# of a stop when its snapshot cannot be stored.
+# of a stop when its snapshot cannot be stored. Phase 3 adds the MCP bridge:
+# Hermes generates an image through hermes-egress as a durable operation of the
+# bound execution, and between turns the sandbox can list the platform tools
+# but not call them.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000/58090, no other
 # aurum-ai-hermes-egress-guard container. Never point this at a shared stack.
@@ -87,9 +90,18 @@ executor_with() {  # executor_with VAR=value...; recreates skill-executor with t
 }
 state_of() { docker inspect -f '{{.State.Status}}' "aurum-ai-hermes-$1" 2>/dev/null || echo gone; }
 mc_() { docker exec "$PROJECT-minio-1" mc "$@"; }
-run_once() {  # run_once <session hex> <key>; prints the relay's result line
+run_once() {  # run_once <session hex> <key> [input]; prints the relay's result line
   curl -sN -X POST "$EXECUTOR/hermes/sandboxes/$1/runs" -H 'Content-Type: application/json' \
-    -d "{\"key\":\"$2\",\"input\":\"Say hello.\",\"session_id\":\"$CONVERSATION\"}" | grep '"type":"result"' | tail -1
+    -d "{\"key\":\"$2\",\"input\":\"${3:-Say hello.}\",\"session_id\":\"$CONVERSATION\"}" | grep '"type":"result"' | tail -1
+}
+sql() { docker exec "$PROJECT-postgres-1" psql -U postgres -d aurum_ai -tAc "$1"; }
+MCP_PROBE='import json, sys, urllib.request
+token = json.load(open("/workspace/.hermes/config.yaml"))["mcp_servers"]["aurum"]["headers"]["Authorization"]
+request = urllib.request.Request("http://hermes-egress:8080/v1/hermes/mcp", sys.argv[1].encode(),
+                                 {"Authorization": token, "Content-Type": "application/json"})
+print(urllib.request.urlopen(request, timeout=30).read().decode())'
+mcp_from() {  # mcp_from <session hex> <JSON-RPC message>; the bridge's answer to the sandbox's own token
+  docker exec "aurum-ai-hermes-$1" python3 -c "$MCP_PROBE" "$2"
 }
 expect_completed() {
   python3 -c "import json,sys; r=json.loads(sys.argv[1]); sys.exit(0 if r['status']=='completed' and r['output'] else 1)" "$1" \
@@ -132,6 +144,22 @@ expect_completed "$(run_once "$A" turn-1)"
 billed=$(docker exec "$PROJECT-postgres-1" psql -U postgres -d aurum_ai -tAc \
   "SELECT count(*) FROM llm_usage_events WHERE conversation_id='$CONVERSATION' AND status<>'cancelled'")
 (( billed >= 1 )) || fail "no billed model call"
+
+log "Hermes calls platform tools over the MCP bridge, as operations of the bound execution"
+result=$(run_once "$A" mcp-1 HERMES_MCP:generate_image)
+expect_completed "$result"
+[[ "$result" == *HERMES_MCP_DONE:generate_image:*imageId* ]] || fail "the image tool did not answer Hermes: $result"
+[[ "$(sql "SELECT count(*) FROM tool_operations o JOIN hermes_sessions s ON s.active_execution_id=o.execution_id
+  WHERE o.org_id='$ORG' AND o.kind='image_generate' AND o.status='completed'")" == 1 ]] \
+  || fail "the image is not one completed operation of the bound execution"
+(( $(sql "SELECT count(*) FROM conversation_images WHERE conversation_id='$CONVERSATION'") == 1 )) \
+  || fail "the generated image was not stored"
+fixture end-turn
+listed=$(mcp_from "$A" '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
+[[ "$listed" == *generate_image* ]] || fail "the sandbox cannot list the platform tools between turns: $listed"
+called=$(mcp_from "$A" '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"knowledge_search","arguments":{"query":"x"}}}')
+[[ "$called" == *hermes_turn_inactive* ]] || fail "a platform tool ran between turns: $called"
+fixture bind
 
 log "sandboxes cannot reach each other or the host"
 [[ "$(create "$B")" == 201 ]] || fail "sandbox B was not created"

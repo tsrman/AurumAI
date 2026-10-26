@@ -26,14 +26,14 @@ from src.middleware.error_handler import setup_exception_handlers
 from src.models.agent_definition import AgentDefinition
 from src.models.conversation import Conversation
 from src.models.hermes_session import HermesSession
-from src.models.interaction import InteractionTurn
+from src.models.interaction import InteractionExecution, InteractionTurn
 from src.models.message import Message
 from src.models.workflow_definition import WorkflowDefinition
 from src.models.workflow_run import WorkflowRun
 from src.models.organization import Organization
 from src.models.organization_capability import OrganizationCapability
 from src.models.user import User
-from src.routers import hermes, hermes_egress_internal, hermes_internal
+from src.routers import hermes, hermes_egress_internal, hermes_internal, hermes_mcp
 from src.schemas.interaction import TurnLimits
 from src.services.quota import UsageReservation, get_quota_service
 from src.services.session_token import session_token_service
@@ -75,7 +75,7 @@ class RecordingQuota:
 
 @pytest_asyncio.fixture
 async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNamespace]:
-    org_id, user_id, conversation_id, turn_id = (uuid.uuid4() for _ in range(4))
+    org_id, user_id, conversation_id, turn_id, execution_id = (uuid.uuid4() for _ in range(5))
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
     sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     monkeypatch.setattr(dependencies, "async_session", sessions)
@@ -120,12 +120,15 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
                 limits=TurnLimits().model_dump(),
             )
         )
+        await setup.flush()
+        setup.add(_execution(org_id, turn_id, execution_id, "ordinary", None))
         await setup.commit()
 
     quota = RecordingQuota()
     app = FastAPI()
     setup_exception_handlers(app)
     app.include_router(hermes.router, prefix="/v1")
+    app.include_router(hermes_mcp.router, prefix="/v1")
     app.include_router(hermes_internal.router, prefix="/v1/internal")
     app.include_router(hermes_egress_internal.router, prefix="/v1/internal")
     app.dependency_overrides[get_quota_service] = lambda: quota
@@ -165,15 +168,30 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
                 **kwargs,
             )
 
+    async def add_execution(phase: str, node_key: str | None = None) -> uuid.UUID:
+        added = uuid.uuid4()
+        async with sessions() as change:
+            change.add(_execution(org_id, turn_id, added, phase, node_key))
+            await change.commit()
+        return added
+
+    def turn_body(**extra: Any) -> dict[str, Any]:
+        return {"turnId": str(turn_id), "executionId": str(execution_id), **extra}
+
     async def open_session(*, bind: bool = True, **correlation: Any) -> dict[str, Any]:
         opened = await internal("POST", "/sessions")
         assert opened.status_code == 201, opened.text
         body = opened.json()
         if bind:
+            acting = execution_id
+            if "workflowPhase" in correlation:
+                acting = await add_execution(
+                    correlation["workflowPhase"], correlation.get("workflowNodeKey")
+                )
             bound = await internal(
                 "PUT",
                 f"/sessions/{body['sessionId']}/turn",
-                json={"turnId": str(turn_id), **correlation},
+                json=turn_body(**correlation, executionId=str(acting)),
             )
             assert bound.status_code == 204, bound.text
         return body
@@ -246,6 +264,7 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
             user_id=user_id,
             conversation_id=conversation_id,
             turn_id=turn_id,
+            execution_id=execution_id,
             app=app,
             quota=quota,
             granted_models=granted_models,
@@ -254,6 +273,8 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
             grant=grant,
             internal=internal,
             open_session=open_session,
+            add_execution=add_execution,
+            turn_body=turn_body,
             expire_session=expire_session,
             add_workflow_run=add_workflow_run,
             sessions=sessions,
@@ -269,6 +290,21 @@ async def hermes_env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNam
             await cleanup.execute(delete(Organization).where(Organization.id == org_id))
             await cleanup.commit()
         await engine.dispose()
+
+
+def _execution(
+    org_id: uuid.UUID, turn_id: uuid.UUID, execution_id: uuid.UUID, phase: str, node_key: str | None
+) -> InteractionExecution:
+    return InteractionExecution(
+        id=execution_id,
+        org_id=org_id,
+        turn_id=turn_id,
+        workflow_id=f"hermes-{execution_id}",
+        run_id=uuid.uuid4(),
+        task_queue="tools",
+        phase=phase,
+        node_key=node_key,
+    )
 
 
 StreamChat = Callable[..., Any]

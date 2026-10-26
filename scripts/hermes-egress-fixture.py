@@ -1,8 +1,9 @@
 """Owned rows for ./smoke-test-hermes-egress.sh in the disposable project only.
 
-prepare      an organization, a user, a conversation with an active turn, both
-             Hermes capabilities, a model grant and an open Hermes session bound
-             to the turn; prints the session's token (no other secret)
+prepare      an organization, a user, a conversation with an active turn and its
+             execution, both Hermes capabilities, image generation with its
+             model, a model grant and an open Hermes session bound to the turn;
+             prints the session's token (no other secret)
 mode M       set the organization's egress mode (none, packages or public)
 web-access   grant (on) or revoke (off) web.access
 end-turn     unbind the session from its turn
@@ -27,6 +28,7 @@ DSN = "postgresql://postgres:postgres@127.0.0.1:55436/aurum_ai"
 STATE = Path("/tmp/hermes-egress-acceptance/fixture.json")
 SECRET = "hermes-egress-acceptance-only-signing-key"
 MODEL = "hermes-egress-test"
+IMAGE_MODEL = "hermes-egress-image"
 
 
 def _save(state: dict) -> None:
@@ -40,7 +42,7 @@ def _save(state: dict) -> None:
 async def prepare(db: asyncpg.Connection) -> None:
     if STATE.exists():
         raise SystemExit("fixture journal exists; inspect it before preparing again")
-    org, user, conversation, turn, session = (uuid4() for _ in range(5))
+    org, user, conversation, turn, execution, session = (uuid4() for _ in range(6))
     _save({"org": str(org), "user": str(user), "conversation": str(conversation), "session": str(session)})
     now = datetime.now(timezone.utc)
     async with db.transaction():
@@ -49,12 +51,15 @@ async def prepare(db: asyncpg.Connection) -> None:
             "INSERT INTO users(id,org_id,keycloak_id,email,role) VALUES($1,$2,$3,$4,'member')",
             user, org, uuid4(), f"{user}@hermes-egress.invalid",
         )
-        for capability in ("chat.send", "agents.hermes"):
+        for capability in ("chat.send", "agents.hermes", "images.generate"):
             await db.execute("INSERT INTO organization_capabilities(org_id,capability) VALUES($1,$2)", org, capability)
         await db.execute(
             "INSERT INTO access_grants(id,org_id,resource_type,resource_id,principal_type,principal_id,permission,created_via) "
             "VALUES($1,$2,'model',$3,'organization',$2,'read','provisioning')",
             uuid4(), org, MODEL,
+        )
+        await db.execute(
+            "INSERT INTO organization_settings(org_id,image_generation_model) VALUES($1,$2)", org, IMAGE_MODEL
         )
         await db.execute("SELECT platform_ensure_partition('conversations',$1)", now)
         await db.execute(
@@ -66,8 +71,14 @@ async def prepare(db: asyncpg.Connection) -> None:
             turn, org, conversation, user,
         )
         await db.execute(
-            "INSERT INTO hermes_sessions(id,org_id,user_id,conversation_id,active_turn_id,expires_at) VALUES($1,$2,$3,$4,$5,$6)",
-            session, org, user, conversation, turn, now + timedelta(hours=1),
+            "INSERT INTO interaction_executions(id,org_id,turn_id,workflow_id,run_id,task_queue,phase) "
+            "VALUES($1,$2,$3,'hermes-acceptance',$4,'tools','ordinary')",
+            execution, org, turn, uuid4(),
+        )
+        await db.execute(
+            "INSERT INTO hermes_sessions(id,org_id,user_id,conversation_id,active_turn_id,active_execution_id,expires_at) "
+            "VALUES($1,$2,$3,$4,$5,$6,$7)",
+            session, org, user, conversation, turn, execution, now + timedelta(hours=1),
         )
     # The fixture's own settings: the backend's signing key, nothing else real.
     os.environ.update(APP_SECRET_KEY=SECRET, APP_DEBUG="true")
@@ -102,16 +113,20 @@ async def main(argv: list[str]) -> None:
         elif argv == ["web-access", "off"]:
             await db.execute("DELETE FROM organization_capabilities WHERE org_id=$1 AND capability='web.access'", org)
         elif argv == ["end-turn"]:
-            await db.execute("UPDATE hermes_sessions SET active_turn_id=NULL WHERE id=$1", UUID(state["session"]))
+            await db.execute(
+                "UPDATE hermes_sessions SET active_turn_id=NULL,active_execution_id=NULL WHERE id=$1", UUID(state["session"])
+            )
         elif argv == ["bind"]:
             await db.execute(
-                "UPDATE hermes_sessions s SET active_turn_id=t.id FROM interaction_turns t "
+                "UPDATE hermes_sessions s SET active_turn_id=t.id,active_execution_id=e.id "
+                "FROM interaction_turns t JOIN interaction_executions e ON e.turn_id=t.id "
                 "WHERE s.id=$1 AND t.conversation_id=s.conversation_id AND t.status='active'",
                 UUID(state["session"]),
             )
         elif argv == ["close"]:
             await db.execute(
-                "UPDATE hermes_sessions SET state='closed',closed_at=now(),active_turn_id=NULL,token_version=token_version+1 WHERE id=$1",
+                "UPDATE hermes_sessions SET state='closed',closed_at=now(),active_turn_id=NULL,active_execution_id=NULL,"
+                "token_version=token_version+1 WHERE id=$1",
                 UUID(state["session"]),
             )
         else:
