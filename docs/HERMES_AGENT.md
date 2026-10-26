@@ -455,22 +455,20 @@ Each phase is a separate PR behind the flag:
      idle and absolute lifetimes, guard reconnection), each on its own internal
      network in isolated gateway mode, accepted at runtime by
      `./smoke-test-hermes-sandbox.sh`. Deviations from the text above:
-     - Hermes comes from PyPI (`hermes-agent==0.19.0`) with every dependency
-       pinned by hash, not from a pinned Git commit: hashes, package mirrors and
-       air-gapped installs work the same way as for other images. That release
-       is older than the newest Git tag; upgrading is a requirements recompile
-       plus the acceptance;
-     - Hermes 0.19 does not replay `Idempotency-Key`, so `hermes-relay` records
-       each run id in the workspace and a retried run attaches to it;
+     - Hermes first came from PyPI (`hermes-agent==0.19.0`, the newest release
+       published there); see "Hermes 0.22" below for how it is installed now;
+     - Hermes 0.19 did not replay `Idempotency-Key`, so `hermes-relay` records
+       each run id in the workspace and a retried run attaches to it (kept with
+       0.22, whose idempotency store would also do);
      - ownership is in Docker labels only; linking a sandbox to its
        `hermes_sessions` row is phase 4's, because skill-executor has no database;
      - the Kubernetes runtime refuses Hermes sandboxes explicitly;
      - known window: the relay records a run id only after Hermes accepts the
        run, so a relay that dies in between can make a retry start a second run;
      - attaching to a run was expected to replay its events from the start.
-       Hermes 0.19 hands them to one subscriber only, once, and drops them when
-       that subscriber leaves; phase 4b's relay therefore falls back to polling
-       the run's status (see 4b);
+       Hermes 0.19 handed them to one subscriber only, once; 0.22 replays them
+       (see "Hermes 0.22"), and the relay still falls back to polling the run's
+       status when they are gone;
      - skill-executor's Hermes routes trust any caller that knows a session id,
        like its code-skill routes; phase 4 keeps it reachable only from the tools
        worker;
@@ -644,15 +642,14 @@ Each phase is a separate PR behind the flag:
        minutes) to the run's end, hold the chat stream open past
        `EVENT_SUBSCRIBE_TIMEOUT`; the stream drops them. The turn routes'
        stream projects durable status only and is unchanged;
-     - Hermes hands a run's events to one subscriber, once. A retried run
-       activity therefore sees the events from its reattach on, under call ids
-       that carry the attempt, so it adds cards instead of replacing them; and
-       the relay, finding no events (404) or only keepalives of a queue another
-       subscriber holds, polls the run's status for the result, which the
-       lost-worker reattach of 4a needs (covered by the relay's tests, not yet
-       exercised at runtime). After a reattach the earlier attempt's cards stay
-       running in the live view and are not persisted: Hermes sends them only
-       once, to the lost subscriber;
+     - Hermes 0.19 handed a run's events to one subscriber, once: a retried run
+       activity saw the events from its reattach on, under call ids that
+       carried the attempt, and the relay, finding no events (404) or only
+       keepalives of a queue another subscriber holds, polls the run's status
+       for the result (covered by the relay's tests, not exercised at runtime).
+       With 0.22 a reattach replays the run's events and cards take their ids
+       from Hermes's tool call ids, hashed, so the replay updates the cards the
+       lost attempt showed and the answer persists all of them;
      - a reopened conversation starts in the ordinary chat; Hermes is chosen
        again for the next turn;
      - sources and images under the answer, which ordinary chat shows, come
@@ -661,6 +658,30 @@ Each phase is a separate PR behind the flag:
      conversation's snapshots in the archive purge. Recording the snapshot
      checksum in the session row gets harder now that skill-executor also
      retires sandboxes on its own, since the backend never sees that sha.
+   - Hermes 0.22, implemented: the sandbox runs Hermes 0.22.5. Hermes no longer
+     ships as a package (its build refuses outside Nix, and PyPI ends at 0.19.0),
+     so the image installs the release's source tree from its GitHub tag
+     archive, verified by its sha256, on Python 3.14, which 0.22 requires; its
+     dependencies are exported from Hermes's own `uv.lock` (the `mcp` and `sms`
+     extras, the latter for aiohttp) and installed by hash, as wheels only
+     (`hermes-sandbox/update-requirements.sh`). Changes the upgrade brought:
+     - MCP tools sit behind a `tool_search` bridge by default, which would
+       hide the platform tools' names from the model; the config turns it off;
+     - a `connections` toolset reaches Nous's connector gateway; it is
+       disabled, with connectors and update checks off in the config;
+     - the API server refuses a key shorter than 16 characters (skill-executor
+       generates 43) and warns when it is PID 1, so sandboxes run with an init;
+     - run events are numbered and replayed to every subscriber, tool events
+       carry `tool_call_id`, and `tool.completed` carries a redacted preview of
+       the tool's output, which the worker never forwards;
+     - Hermes copies `config.yaml`, the session token and API key included, to
+       `.hermes/backups/config/` whenever it parses; snapshots exclude
+       `.hermes/backups` as they exclude the config;
+     - the gateway opens a loop-liveness ping on a random 127.0.0.1 port (its
+       Unix socket path would be too long); it carries no control, and the
+       acceptance still checks that nothing listens beyond loopback;
+     - Debian's SQLite (3.46) predates Hermes's WAL fix, so Hermes uses its
+       rollback journal instead.
 5. **Memory and skill drafts.** Tables, hydrate and read-back, user settings and
    admin approval.
 6. **Workflow node.** A `hermes` node type, billing and replay tests, and the

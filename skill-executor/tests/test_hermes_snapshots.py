@@ -76,6 +76,8 @@ def test_secrets_relay_state_memory_and_skills_never_enter_a_snapshot(tmp_path: 
             ("workspace/.hermes/logs/agent.log", TOKEN.encode()),
             ("workspace/.hermes/memories/MEMORY.md", b"m"),
             ("workspace/.hermes/skills/s/SKILL.md", b"s"),
+            # Hermes 0.22 keeps copies of the last config that parsed.
+            ("workspace/.hermes/backups/config/config.yaml.good.20261026-233500", TOKEN.encode()),
             ("workspace/.aurum/proxy", TOKEN.encode()),
             ("workspace/.aurum/requests/k.json", b"{}"),
             ("workspace/.hermes/state.db", b"db"),

@@ -39,6 +39,8 @@ SANDBOX_UID = 10001
 EXCLUDED = (
     ".aurum",
     ".hermes/config.yaml",
+    # Hermes 0.22 copies the config here, secrets included, whenever it parses.
+    ".hermes/backups",
     ".hermes/.env",
     ".hermes/auth.json",
     ".hermes/logs",

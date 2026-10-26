@@ -3,8 +3,9 @@
 The fixed image skill-executor runs for a Hermes Agent session
 ([design](../docs/HERMES_AGENT.md)). It contains
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, Nous Research),
-installed from PyPI with every dependency pinned by hash, plus `git`, `curl` and
-CA certificates. There are no compilers: packages without a wheel for the platform
+run from the release's source tree (its GitHub tag archive, verified by sha256),
+with every dependency pinned by hash and installed as a wheel, plus `git`, `curl`
+and CA certificates. There are no compilers: packages without a wheel for the platform
 cannot be installed by the agent.
 
 skill-executor starts it with no capabilities, no new privileges, a read-only root
@@ -17,11 +18,14 @@ server key) and the egress proxy URL in the workspace, never in the environment.
 listens on 127.0.0.1 only. `hermes_relay.py` (`hermes-relay`) is the only way
 skill-executor talks to it, through `docker exec`.
 
-Upgrading Hermes is a deliberate change: edit `requirements.in`, then regenerate
-`requirements.txt` with
+Upgrading Hermes is a deliberate change. Hermes ships no package (its wheel build
+refuses outside Nix), so set `HERMES_VERSION` and `HERMES_SHA256` in the
+`Dockerfile` to the new tag and the sha256 of
+`https://github.com/NousResearch/hermes-agent/archive/refs/tags/v<version>.tar.gz`,
+then regenerate `requirements.txt` from that release's own `uv.lock` with
 
 ```bash
-uv pip compile requirements.in --universal --python-version 3.13 --generate-hashes --no-header -o requirements.txt
+./update-requirements.sh
 ```
 
 and re-run `./smoke-test-hermes-sandbox.sh`, because Hermes's configuration keys

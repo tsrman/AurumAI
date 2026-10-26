@@ -22,15 +22,21 @@ def test_every_dependency_is_pinned_by_hash() -> None:
     pins = re.findall(r"^([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)==([^ \\\n]+)", requirements, re.M)
     blocks = [block for block in re.split(r"\n(?=[A-Za-z0-9_.-]+==)", requirements) if "==" in block]
 
-    assert ("hermes-agent", "0.19.0") in pins
+    assert ("mcp", "2.3.0") in pins and ("aiohttp", "3.14.5") in pins
     assert len(pins) == len(blocks) > 50
     assert all("--hash=sha256:" in block for block in blocks)
+    assert "git+" not in requirements
+    assert not re.search(r"^hermes-agent\b", requirements, re.M)
 
 
 def test_image_installs_by_hash_and_runs_unprivileged_without_compilers() -> None:
     dockerfile = (IMAGE / "Dockerfile").read_text()
 
-    assert "pip install --no-cache-dir --require-hashes --no-deps -r" in dockerfile
+    assert "FROM python:3.14-slim" in dockerfile
+    assert "pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r" in dockerfile
+    # Hermes's own source tree, from its tag archive, verified by hash.
+    assert re.search(r"^ARG HERMES_SHA256=[0-9a-f]{64}$", dockerfile, re.M)
+    assert 'sha256sum -c -' in dockerfile
     assert "USER 10001:10001" in dockerfile
     assert not re.search(r"build-essential|\bgcc\b|\bg\+\+|\bmake\b", dockerfile)
     assert 'ENTRYPOINT ["/usr/local/bin/hermes-sandbox-start"]' in dockerfile

@@ -1,7 +1,7 @@
 # Fixed image for Hermes Agent sessions (docs/HERMES_AGENT.md), run by
 # skill-executor with no capabilities, a read-only root filesystem and a
 # per-sandbox internal network whose only way out is hermes-egress.
-FROM python:3.13-slim
+FROM python:3.14-slim
 COPY LICENSE /app/LICENSE
 
 ARG AURUMAI_SOURCE_URL=""
@@ -14,10 +14,22 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 
-# Hermes and every dependency are pinned with hashes; upgrading is a deliberate
-# change to requirements.in and a recompile (see README.md).
+# Hermes ships no wheel (its build refuses outside Nix) and runs from its
+# source tree: the release's tag archive, verified by its hash. Its
+# dependencies come from Hermes's own lock, pinned with hashes, as wheels only.
+# Upgrading is a deliberate change of both ARGs and update-requirements.sh
+# (see README.md).
+ARG HERMES_VERSION=0.22.5
+ARG HERMES_SHA256=a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2
+RUN curl -fsSL -o /tmp/hermes.tar.gz \
+        "https://github.com/NousResearch/hermes-agent/archive/refs/tags/v${HERMES_VERSION}.tar.gz" \
+    && echo "${HERMES_SHA256}  /tmp/hermes.tar.gz" | sha256sum -c - \
+    && mkdir /opt/hermes \
+    && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 --no-same-owner \
+    && rm -rf /tmp/hermes.tar.gz /opt/hermes/tests /opt/hermes/.github \
+    && ln -s /opt/hermes/hermes /usr/local/bin/hermes
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --require-hashes --no-deps -r /tmp/requirements.txt \
+RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 COPY start.sh /usr/local/bin/hermes-sandbox-start

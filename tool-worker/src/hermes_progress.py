@@ -7,12 +7,15 @@ tool output and the answer's deltas never leave the worker: the answer
 arrives with the turn's end. Keepalives hold the stream open through quiet
 minutes, and the backend's relay drops them.
 
-Hermes hands a run's events to one subscriber only, so a retried activity
-sees the events from its reattach on; call ids carry the attempt, so a
-retry adds cards instead of overwriting the earlier ones.
+A retried activity reattaches to the run, and Hermes 0.22 replays its
+events from the start. Cards take their ids from Hermes's tool call ids,
+hashed, so the replay updates the cards the lost attempt showed instead of
+adding new ones; an event without one gets an id from the attempt and its
+position.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -34,6 +37,7 @@ _MCP_PREFIX = "mcp__aurum__"
 _BUILTIN = {
     "terminal": "terminal",
     "process": "terminal",
+    "process_manage": "terminal",
     "read_terminal": "terminal",
     "close_terminal": "terminal",
     "execute_code": "code",
@@ -42,6 +46,7 @@ _BUILTIN = {
     "patch": "files",
     "search_files": "files",
     "todo": "plan",
+    "todo_list": "plan",
     "memory": "memory",
     "session_search": "memory",
     "skill_view": "skills",
@@ -124,6 +129,13 @@ class TurnProgress:
     async def keepalive(self) -> None:
         await self._publish("keepalive", {})
 
+    def _hermes_call_id(self, event: dict[str, Any]) -> str | None:
+        # The model chooses it, so only its hash leaves the worker.
+        raw = event.get("tool_call_id")
+        if not isinstance(raw, str) or not raw:
+            return None
+        return f"hermes-{hashlib.sha256(f'{self._turn_id}:{raw}'.encode()).hexdigest()[:16]}"
+
     async def event(self, event: dict[str, Any]) -> None:
         kind = event.get("event")
         if kind == "tool.started":
@@ -131,7 +143,7 @@ class TurnProgress:
                 return
             tool = public_tool(event.get("tool"))
             call = {
-                "call_id": f"hermes-{self._attempt}-{len(self.calls)}",
+                "call_id": self._hermes_call_id(event) or f"hermes-{self._attempt}-{len(self.calls)}",
                 "tool": f"hermes.{tool}",
                 "label": LABELS[tool],
             }
@@ -139,11 +151,14 @@ class TurnProgress:
             self._open.setdefault(str(event.get("tool")), []).append(call["call_id"])
             await self._publish("tool-calls", {"calls": [call]})
         elif kind in {"tool.completed", "tool.failed"}:
-            # Hermes's events carry no call id; tools of one name finish in order.
+            # Without a call id, tools of one name finish in order.
             started = self._open.get(str(event.get("tool"))) or []
-            if not started:
-                return
-            call_id = started.pop(0)
+            call_id = self._hermes_call_id(event)
+            if call_id is None or call_id not in started:
+                if not started:
+                    return
+                call_id = started[0]
+            started.remove(call_id)
             call = next(call for call in self.calls if call["call_id"] == call_id)
             failed = kind == "tool.failed" or event.get("error") is True
             result = {"tool": call["tool"], "status": "failed" if failed else "completed"}

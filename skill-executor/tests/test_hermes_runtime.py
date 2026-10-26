@@ -197,6 +197,8 @@ async def test_a_sandbox_gets_its_own_isolated_network_and_a_hardened_container(
     assert network.config["IPAM"]["Config"][0]["Subnet"].endswith("/28")
     assert network.members == {"id-aurum-ai-hermes-egress-guard": {"Aliases": ["hermes-egress"]}}
     host = daemon.container_map[name].config["HostConfig"]
+    # Hermes warns as PID 1: its children would never be reaped.
+    assert host["Init"] is True
     assert host["CapDrop"] == ["ALL"]
     assert host["SecurityOpt"] == ["no-new-privileges"]
     assert host["ReadonlyRootfs"] is True
@@ -232,8 +234,20 @@ def test_generated_config_disables_unneeded_toolsets() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 
     assert config["approvals"] == {"mode": "off"}
-    assert {"web", "browser", "cronjob", "clarify", "computer_use"} <= set(config["agent"]["disabled_toolsets"])
+    assert {"web", "browser", "cronjob", "clarify", "computer_use", "connections"} <= set(
+        config["agent"]["disabled_toolsets"]
+    )
     assert config["terminal"] == {"backend": "local"}
+
+
+def test_generated_config_lists_the_platform_tools_directly_and_reaches_nothing_else() -> None:
+    config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
+
+    # Behind Hermes 0.22's tool_search bridge the model would see no platform tool by name.
+    assert config["tools"]["tool_search"] == {"enabled": "off"}
+    # Nous's remote connector gateway, and update checks.
+    assert config["tools"]["connectors"] == {"enabled": False}
+    assert config["updates"] == {"check": False}
 
 
 def test_generated_config_reaches_the_platform_tools_through_the_egress() -> None:

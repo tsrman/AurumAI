@@ -141,7 +141,9 @@ log "a sandbox per session, hardened, with no secrets in its metadata"
 inside "$A" 'touch /usr/probe 2>/dev/null' && fail "root filesystem is writable"
 # Docker's embedded DNS also listens on 127.0.0.11 inside the namespace.
 listening=$(inside "$A" "awk 'NR>1 && \$4==\"0A\" {print \$2}' /proc/net/tcp /proc/net/tcp6" | grep -v '^0B00007F:' || true)
-[[ "$listening" == 0100007F:21C2 ]] || fail "Hermes listens beyond 127.0.0.1:8642: $listening"
+# Hermes 0.22's gateway also opens a loop-liveness ping on a random loopback port.
+grep -qx '0100007F:21C2' <<<"$listening" || fail "Hermes's API server is not on 127.0.0.1:8642: $listening"
+grep -v '^0100007F:' <<<"$listening" | grep -q . && fail "Hermes listens beyond loopback: $listening"
 docker inspect "aurum-ai-hermes-$A" | grep -q "$TOKEN" && fail "the session token is in container metadata"
 
 log "a Hermes run goes through hermes-egress to the backend and is billed"
