@@ -744,3 +744,42 @@ async def register_conversation_execution(workflow_id: str, run_id: str) -> None
         'POST', f'/v1/conversations/{settings.conversation_id}/executions',
         {'workflow_id': workflow_id, 'run_id': run_id},
     )
+
+
+# tool-worker's src/hermes_session_workflow.py, by name and shape.
+HERMES_SESSION_WORKFLOW = "HermesSessionWorkflow"
+
+
+def hermes_session_id(conversation_id: str) -> str:
+    return f"hermes-session-{conversation_id}"
+
+
+@activity.defn
+async def hand_off_hermes_turn(turn: dict[str, Any]) -> None:
+    """Start the conversation's Hermes session workflow, or signal the running
+    one, with this turn; it answers with the hermes_turn_result signal."""
+    await activity.client().start_workflow(
+        HERMES_SESSION_WORKFLOW,
+        {
+            "org_id": settings.org_id or "",
+            "conversation_id": settings.conversation_id or "",
+            "idle_seconds": settings.hermes_idle_seconds,
+        },
+        id=hermes_session_id(settings.conversation_id or ""),
+        task_queue=settings.hermes_task_queue,
+        start_signal="hermes_turn",
+        start_signal_args=[turn],
+    )
+
+
+@activity.defn
+async def cancel_hermes_turn(turn_id: str) -> None:
+    handle = activity.client().get_workflow_handle(hermes_session_id(settings.conversation_id or ""))
+    await handle.signal("hermes_cancel_turn", turn_id)
+
+
+@activity.defn
+async def touch_hermes_turn(turn_id: str) -> None:
+    """Keep this runner (and its token) alive while a long Hermes turn runs:
+    chat requests do that for other turns, and a Hermes turn makes none."""
+    await _workflow_api_request("POST", f"/v1/internal/hermes/turns/{turn_id}/touch")

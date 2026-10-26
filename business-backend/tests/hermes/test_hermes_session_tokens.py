@@ -276,3 +276,40 @@ async def test_unbinding_and_closing_clear_the_execution(hermes_env) -> None:
     assert bound == hermes_env.execution_id
     assert unbound is None
     assert await execution() is None
+
+
+async def test_the_current_session_is_read_without_rotating_its_token(hermes_env) -> None:
+    from tests.hermes.test_hermes_mcp import _rpc
+
+    missing = await hermes_env.internal("GET", "/sessions/current")
+    opened = await hermes_env.open_session(bind=False)
+
+    current = await hermes_env.internal("GET", "/sessions/current")
+    still_valid = await _rpc(hermes_env, opened["token"], {"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    await hermes_env.expire_session(opened["sessionId"])
+    expired = await hermes_env.internal("GET", "/sessions/current")
+
+    assert missing.status_code == 404 and "hermes_session_not_found" in missing.text
+    assert current.status_code == 200 and current.json()["sessionId"] == opened["sessionId"]
+    assert still_valid.status_code == 200
+    assert expired.status_code == 404
+
+
+async def test_touching_keeps_the_runner_of_the_active_turn_only(hermes_env, monkeypatch) -> None:
+    from src.routers import hermes_internal
+
+    touched: list[tuple[object, ...]] = []
+
+    async def get_or_create(conversation_id, user_id, org_id, generation=1):  # noqa: ANN001, ANN202
+        touched.append((conversation_id, user_id, org_id, generation))
+
+    monkeypatch.setattr(hermes_internal.session_manager, "get_or_create", get_or_create)
+
+    active = await hermes_env.internal("POST", f"/turns/{hermes_env.turn_id}/touch")
+    other = await hermes_env.internal("POST", f"/turns/{uuid.uuid4()}/touch")
+    await hermes_env.finish_turn()
+    finished = await hermes_env.internal("POST", f"/turns/{hermes_env.turn_id}/touch")
+
+    assert active.status_code == 204
+    assert touched == [(str(hermes_env.conversation_id), str(hermes_env.user_id), str(hermes_env.org_id), 1)]
+    assert other.status_code == 403 and finished.status_code == 403

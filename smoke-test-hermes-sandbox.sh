@@ -20,7 +20,11 @@
 # Hermes generates an image through hermes-egress as a durable operation of the
 # bound execution, and between turns the sandbox can list the platform tools
 # but not call them. Phase 3b adds platform skills: Hermes runs a granted MCP
-# skill through tool-worker against the reference MCP server.
+# skill through tool-worker against the reference MCP server. Phase 4a adds a
+# chat turn: a conversation runner hands a Hermes turn to the session workflow
+# on tool-worker, which prepares a sandbox, binds the turn and persists the
+# answer through the runner, leaving the session unbound; the next turn reuses
+# the running sandbox and its session without rotating the token.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000/58090, no other
 # aurum-ai-hermes-egress-guard container. Never point this at a shared stack.
@@ -116,7 +120,7 @@ gone() {
 
 log "building images from this checkout"
 docker tag aurum-ai-postgres:latest aurum-ai-postgres:hermes-egress-test
-"${STACK[@]}" build migrate hermes-egress-guard skill-executor tool-worker mcp-everything >/dev/null
+"${STACK[@]}" build migrate hermes-egress-guard skill-executor tool-worker mcp-everything conversation-runner >/dev/null
 "${STACK[@]}" --profile build build hermes-sandbox >/dev/null
 log "starting the backend, hermes-egress and skill-executor"
 "${STACK[@]}" up -d --wait postgres redis temporal gateway keycloak minio >/dev/null
@@ -295,4 +299,38 @@ gone "$A" || fail "paused sandbox A was not retired after the store came back"
 SHA=$(mc_ cat "$PREFIX/latest.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha256'])") \
   || fail "no snapshot of the paused tmpfs sandbox"
 mc_ cat "$PREFIX/$SHA.tar" | tar -tf - | grep -q 'home/project/kept.txt' || fail "the tmpfs snapshot lost the workspace"
+
+log "a Hermes chat turn runs through the conversation runner and the session workflow"
+executor_with
+CHAT=$(fixture chat)
+field() { python3 -c "import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])" "$CHAT" "$1"; }
+CHAT_CONVERSATION=$(field conversation); CHAT_TURN=$(field turn)
+"${STACK[@]}" run -d --no-deps --name "$PROJECT-runner" -e CONVERSATION_ID="$CHAT_CONVERSATION" \
+  -e USER_ID="$(journal user)" -e ORG_ID="$ORG" -e SESSION_TOKEN="$(field token)" conversation-runner >/dev/null
+temporal_() { docker exec "$PROJECT-temporal-1" temporal "$@" --address localhost:7233 >/dev/null; }
+temporal_ workflow start --type ConversationWorkflow --task-queue "session-$CHAT_CONVERSATION" \
+  --workflow-id "conversation-$CHAT_CONVERSATION" --input "{\"conversation_id\":\"$CHAT_CONVERSATION\"}"
+chat_turn() {  # chat_turn <turn id> <content> <answers expected>
+  temporal_ workflow signal --workflow-id "conversation-$CHAT_CONVERSATION" --name user_message --input \
+    "{\"role\":\"user\",\"content\":\"$2\",\"turn_id\":\"$1\",\"model\":\"hermes-egress-test\",\"hermes\":true}"
+  for _ in $(seq 120); do
+    (( $(sql "SELECT count(*) FROM messages WHERE conversation_id='$CHAT_CONVERSATION' AND role='assistant' AND content<>''") >= $3 )) \
+      && break
+    sleep 3
+  done
+  (( $(sql "SELECT count(*) FROM messages WHERE conversation_id='$CHAT_CONVERSATION' AND role='assistant' AND content<>''") >= $3 )) \
+    || fail "the Hermes chat turn $1 persisted no answer"
+  [[ "$(sql "SELECT status FROM interaction_turns WHERE id='$1'")" == completed ]] || fail "the Hermes chat turn $1 did not complete"
+}
+chat_turn "$CHAT_TURN" "Say hello." 1
+CHAT_SESSION=$(sql "SELECT replace(id::text,'-','') FROM hermes_sessions WHERE conversation_id='$CHAT_CONVERSATION' AND state='open' AND active_turn_id IS NULL")
+[[ -n "$CHAT_SESSION" ]] || fail "the chat session is missing or still bound after the turn"
+[[ "$(state_of "$CHAT_SESSION")" == running ]] || fail "the chat session's sandbox is not running"
+TOKEN_VERSION=$(sql "SELECT token_version FROM hermes_sessions WHERE replace(id::text,'-','')='$CHAT_SESSION'")
+chat_turn "$(fixture chat-turn "$CHAT_CONVERSATION")" "Say hello again." 2
+[[ "$(sql "SELECT count(*) FROM hermes_sessions WHERE conversation_id='$CHAT_CONVERSATION'")" == 1 ]] \
+  || fail "the second turn opened another session"
+[[ "$(sql "SELECT token_version FROM hermes_sessions WHERE replace(id::text,'-','')='$CHAT_SESSION'")" == "$TOKEN_VERSION" ]] \
+  || fail "the second turn rotated the running sandbox's token"
+[[ "$(state_of "$CHAT_SESSION")" == running ]] || fail "the second turn did not reuse the sandbox"
 log "PASS"

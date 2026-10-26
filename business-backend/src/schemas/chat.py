@@ -34,6 +34,15 @@ class ChatRequest(BaseModel):
     model: str
     options: ChatOptions = Field(default_factory=ChatOptions)
     workflow_id: UUID | None = Field(default=None, alias="workflowId")
+    # A system agent instead of the plain model: "hermes" runs Hermes Agent
+    # in its sandbox on the organization's Hermes model (`model` is ignored).
+    agent: Literal["hermes"] | None = None
+
+    @model_validator(mode="after")
+    def one_agent_or_workflow(self) -> "ChatRequest":
+        if self.agent is not None and self.workflow_id is not None:
+            raise ValueError("choose an agent or a workflow, not both")
+        return self
 
 
 class ChatCompletionMessage(BaseModel):

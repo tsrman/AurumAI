@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     # hanging the whole session (see skill-executor's own session_ttl_seconds
     # for the independent, service-level teardown backstop).
     code_skill_max_rounds: int = 8
+    # Hermes Agent turns (docs/HERMES_AGENT.md): its session workflow runs on
+    # tool-worker's queue; a turn ends at its deadline, a sandbox after the
+    # idle time without turns.
+    hermes_task_queue: str = "tools"
+    hermes_turn_deadline_seconds: int = 7200
+    hermes_idle_seconds: int = 1800
     code_skill_round_timeout_seconds: float = 60.0
     # How long a human-in-the-loop confirmation-gated node waits for an
     # approve/reject signal before the run fails with confirmation_timeout.

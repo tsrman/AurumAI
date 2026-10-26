@@ -10,6 +10,9 @@ from src.workflows.code_skill_session import CodeSkillSessionWorkflow
 from src.workflows.evaluator import EvaluationWorkflow
 from src.workflows.multi_agent import MultiAgentWorkflow
 from src.workflows.activities import (
+    cancel_hermes_turn,
+    hand_off_hermes_turn,
+    touch_hermes_turn,
     authorize_workflow_step,
     consume_user_question,
     create_user_question,
@@ -80,6 +83,9 @@ async def run(client: Client) -> None:
             fail_interaction_turn,
             execute_image_tool,
             execute_web_tool,
+            hand_off_hermes_turn,
+            cancel_hermes_turn,
+            touch_hermes_turn,
         ],
     )
     await worker.run()

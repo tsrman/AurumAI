@@ -5,6 +5,8 @@ it (default `packages`), and `public` also needs the user's live `web.access`
 capability, without which a session gets `packages`. hermes-egress asks for the
 effective mode on every new connection and re-checks open tunnels, so all of
 these take effect without restarting a sandbox.
+
+The organization's Hermes model is kept here as well, next to the egress mode.
 """
 
 from typing import Literal, cast
@@ -69,6 +71,24 @@ async def set_organization_egress_mode(
         .values(org_id=org_id, hermes_egress_mode=mode)
         .on_conflict_do_update(
             index_elements=[OrganizationSettings.org_id], set_={"hermes_egress_mode": mode}
+        )
+    )
+
+
+async def organization_hermes_model(session: AsyncSession, org_id: UUID) -> str | None:
+    return await session.scalar(
+        select(OrganizationSettings.hermes_model).where(OrganizationSettings.org_id == org_id)
+    )
+
+
+async def set_organization_hermes_model(
+    session: AsyncSession, org_id: UUID, model: str | None
+) -> None:
+    await session.execute(
+        insert(OrganizationSettings)
+        .values(org_id=org_id, hermes_model=model)
+        .on_conflict_do_update(
+            index_elements=[OrganizationSettings.org_id], set_={"hermes_model": model}
         )
     )
 
