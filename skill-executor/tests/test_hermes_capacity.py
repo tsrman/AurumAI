@@ -278,25 +278,21 @@ async def test_a_store_that_is_down_evicts_no_one(make, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_oversized_workspace_is_not_snapshotted_again_and_again(make, monkeypatch) -> None:
+async def test_an_oversized_workspace_is_removed_keeping_the_last_snapshot_that_fit(make) -> None:
+    from src.hermes_runtime import HermesSandboxDropped
+
     sandboxes, daemon, store, _ = make(hermes_snapshot_max_bytes=4)
     await _create(sandboxes, 1)
-    attempts = []
-    original = sandboxes._workspace_archive
-
-    async def counted(container_id: str, path: Path) -> None:
-        attempts.append(container_id)
-        await original(container_id, path)
-
-    monkeypatch.setattr(sandboxes, "_workspace_archive", counted)
+    store.latest_sha[("org-1", "conv-1")] = "fit"
     _age(sandboxes, 1, 4000)
-    await sandboxes.reap()
-    sandbox = sandboxes.get(_session(1))
-    assert sandbox.state == "stopped" and sandbox.snapshot_error == "hermes_snapshot_too_large"
-    sandboxes._sandboxes[sandbox.session_id] = type(sandbox)(**{**sandbox.__dict__, "snapshot_attempt_at": 0.0})
 
-    await sandboxes.reap()
+    assert await sandboxes.reap() == 1
 
-    assert len(attempts) == 1
-    await sandboxes.close(_session(1))
+    assert daemon.container_map[resource_name(_session(1))].deleted
     assert resource_name(_session(1)) not in daemon.volume_map
+    assert store.latest_sha[("org-1", "conv-1")] == "fit"
+
+    await _create(sandboxes, 2)
+    with pytest.raises(HermesSandboxDropped, match="too_large"):
+        await sandboxes.close(_session(2), snapshot=True)
+    assert resource_name(_session(2)) not in daemon.volume_map

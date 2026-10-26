@@ -183,7 +183,9 @@ async def snapshot_sandbox(session_id: str) -> dict[str, Any]:
 @router.delete("/sandboxes/{session_id}")
 async def close_sandbox(session_id: str, snapshot: bool = False) -> Response:
     """With ?snapshot=true: stop, snapshot, then remove, answering with the
-    snapshot; a failed snapshot leaves the sandbox stopped and is an error."""
+    snapshot; a failed snapshot leaves the sandbox stopped and is an error,
+    except over the snapshot bound (507) or without a workspace (410), where
+    the sandbox is removed anyway."""
     _available()
     if not session_id.isalnum() or len(session_id) != 32:
         raise HTTPException(status_code=400, detail="Invalid session id")
