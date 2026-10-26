@@ -68,6 +68,8 @@ DISABLED_TOOLSETS = (
     "browser", "clarify", "computer_use", "cronjob", "discord", "discord_admin",
     "feishu_doc", "feishu_drive", "homeassistant", "image_gen", "kanban", "search",
     "spotify", "tts", "video", "video_gen", "web", "x_search", "yuanbao",
+    # Hermes 0.22: remote connectors through Nous's tool gateway.
+    "connections",
 )
 # The platform tools of the MCP bridge (business-backend's hermes_mcp).
 PLATFORM_TOOLS = (
@@ -126,6 +128,10 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
         # The sandbox is the boundary; Hermes's hardline patterns still apply.
         "approvals": {"mode": "off"},
         "agent": {"disabled_toolsets": list(DISABLED_TOOLSETS)},
+        # The platform tools stay listed by name instead of behind the
+        # tool_search bridge; Nous's connector gateway and update checks are off.
+        "tools": {"tool_search": {"enabled": "off"}, "connectors": {"enabled": False}},
+        "updates": {"check": False},
         # Hermes connects when it starts and lists the tools once. The bridge
         # answers POST only, so there is no preflight probe, and a rare ping
         # keeps idle sandboxes from calling the backend between turns.
@@ -361,6 +367,7 @@ class DockerHermesSandboxes:
             "User": f"{SANDBOX_UID}:{SANDBOX_UID}",
             "Labels": labels,
             "HostConfig": {
+                "Init": True,
                 "NetworkMode": name,
                 "ReadonlyRootfs": True,
                 "Tmpfs": {"/tmp": f"rw,nosuid,nodev,size={self._settings.hermes_tmp_mb}m"},

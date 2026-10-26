@@ -71,3 +71,32 @@ async def test_without_an_organization_nothing_is_published(published) -> None:
     await progress.keepalive()
 
     assert published == [] and len(progress.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_hermes_call_ids_pair_cards_and_survive_a_replay(published) -> None:
+    # Hermes 0.22 sends tool_call_id and replays a run's events to a reattach.
+    events = [
+        {"event": "tool.started", "tool": "terminal", "tool_call_id": "call_a", "preview": "SECRET args"},
+        {"event": "tool.started", "tool": "terminal", "tool_call_id": "call_b"},
+        {"event": "tool.completed", "tool": "terminal", "tool_call_id": "call_b", "preview": "SECRET output"},
+        {"event": "tool.completed", "tool": "terminal", "tool_call_id": "call_a", "error": True},
+    ]
+    first, retry = TurnProgress("org", "conv", "turn", attempt=1), TurnProgress("org", "conv", "turn", attempt=2)
+    for progress in (first, retry):
+        for event in events:
+            await progress.event(event)
+
+    assert first.calls == retry.calls
+    a, b = (call["call_id"] for call in first.calls)
+    assert first.results == {
+        a: {"tool": "hermes.terminal", "status": "failed"},
+        b: {"tool": "hermes.terminal", "status": "completed"},
+    }
+    serialized = repr(published)
+    assert "SECRET" not in serialized and "call_a" not in serialized
+
+
+@pytest.mark.parametrize(("name", "public"), [("process_manage", "terminal"), ("todo_list", "plan")])
+def test_hermes_022_tool_names_keep_their_kind(name: str, public: str) -> None:
+    assert public_tool(name) == public

@@ -47,10 +47,12 @@ dependencies. Sample skill ZIPs are reproducible source bundles, not an exceptio
 to license or secret review. AurumAI does not publish its private design-tool
 cache, internal review history, or operator recovery records.
 
-The `hermes-sandbox` image installs Hermes Agent (MIT, Nous Research) and its
+The `hermes-sandbox` image installs Hermes Agent (MIT, Nous Research) from its
+release's source archive on GitHub, verified by hash, with its LICENSE, and its
 dependencies from PyPI, pinned by hash in `hermes-sandbox/requirements.txt`; their
 installed distributions carry their own license files. All of them are under
-permissive licenses (MIT, BSD, Apache-2.0, ISC, PSF) except `certifi` (MPL-2.0).
+permissive licenses (MIT, BSD, Apache-2.0, ISC, PSF) except `certifi` and
+`pathspec` (MPL-2.0).
 
 The vendored Temporal setup/namespace/dynamic-configuration samples retain their
 MIT license and original Temporal Technologies copyright. See

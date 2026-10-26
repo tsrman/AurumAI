@@ -1110,6 +1110,29 @@ def test_hermes_marker_calls_an_offered_platform_tool_natively_then_reports() ->
     assert "HERMES_MCP_NOT_OFFERED" in unoffered.text
 
 
+def test_hermes_marker_ignores_tool_results_of_earlier_turns() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "mcp__aurum__run_skill"}}]
+    skill = "12345678-1234-4234-8234-123456789abc"
+    earlier = [
+        {"role": "user", "content": "HERMES_MCP:generate_image"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "call_hermes_mcp"}]},
+        {"role": "tool", "tool_call_id": "call_hermes_mcp", "content": "an image"},
+        {"role": "assistant", "content": "HERMES_MCP_DONE:generate_image:an image"},
+    ]
+
+    called = client.post(
+        "/v1/chat/completions",
+        json={"messages": [*earlier, {"role": "user", "content": f"HERMES_MCP:run_skill:{skill}"}], "tools": tools},
+    )
+
+    [call] = json.loads(called.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+    assert call["function"]["name"] == "mcp__aurum__run_skill"
+
+
 def test_hermes_marker_runs_the_named_skill() -> None:
     from fastapi.testclient import TestClient
 

@@ -800,7 +800,9 @@ def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | N
     if match is None:
         return None
     tool = match.group(1)
-    results = [message.content for message in request.messages if message.role == "tool"]
+    # Only this turn's results: Hermes 0.22 keeps earlier turns' tool messages in the session.
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
     if results:
         return f"HERMES_MCP_DONE:{tool}:" + " ".join(results[-1].split())[:4000]
     name = f"mcp__aurum__{tool}"
