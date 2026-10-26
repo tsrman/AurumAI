@@ -3,8 +3,9 @@
 They talk to business-backend's runner routes for the session record, with
 the conversation's runner token the workflow fetches from the runner, and to
 skill-executor for the sandbox. Nothing the sandbox says is trusted: the run
-stream is read for its result line only, bounded, and turned into a bare
-outcome.
+stream is read for its result line and its tool events only, bounded:
+the result becomes a bare outcome, the events safe progress (see
+hermes_progress).
 """
 
 import asyncio
@@ -16,6 +17,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src.config import settings
+from src.hermes_progress import TurnProgress, keepalive
 
 _HEARTBEAT_SECONDS = 10.0
 _MAX_OUTPUT_CHARS = 200_000
@@ -66,13 +68,20 @@ async def _executor(method: str, path: str, body: dict[str, Any] | None = None, 
 
 
 @activity.defn(name="hermes_prepare_sandbox")
-async def hermes_prepare_sandbox(token: str, org_id: str, conversation_id: str, model: str) -> str:
+async def hermes_prepare_sandbox(token: str, org_id: str, conversation_id: str, model: str, turn_id: str = "") -> str:
     """The session whose sandbox runs the next turn, as skill-executor's id.
 
     A running sandbox keeps the token it read at its start, so its session is
     only reused; otherwise opening rotates the token and the sandbox is
-    created, restored or resumed with the new one.
+    created, restored or resumed with the new one. Restoring can take
+    minutes, so the turn's stream is kept open meanwhile.
     """
+    progress = TurnProgress(org_id if turn_id else "", conversation_id, turn_id, activity.info().attempt)
+    async with keepalive(progress):
+        return await _prepare(token, org_id, conversation_id, model)
+
+
+async def _prepare(token: str, org_id: str, conversation_id: str, model: str) -> str:
     current = await _backend("GET", "/sessions/current", token)
     if current.status_code == 200:
         session_id = str(current.json()["sessionId"]).replace("-", "")
@@ -143,11 +152,14 @@ async def hermes_run_turn(
     conversation_id: str,
     text: str,
     history: list[dict[str, Any]],
+    org_id: str = "",
 ) -> dict[str, Any]:
     """Run (or, on a retry, attach to) the turn's Hermes run and return its
-    outcome. Heartbeats on a timer, since a run can be quiet for minutes; a
-    cancellation asks Hermes to stop the run."""
-    run_id: str | None = None
+    outcome with the tool cards it showed. Heartbeats on a timer, since a run
+    can be quiet for minutes; a cancellation asks Hermes to stop the run."""
+    # The run's id once Hermes has it, for a cancellation to stop.
+    started: list[str] = []
+    progress = TurnProgress(org_id, conversation_id, turn_id, activity.info().attempt)
 
     async def beat() -> None:
         while True:
@@ -156,32 +168,47 @@ async def hermes_run_turn(
 
     beating = asyncio.create_task(beat())
     try:
-        body = {"key": turn_id, "input": text, "session_id": conversation_id, "conversation_history": history}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None)) as client:
-            async with client.stream(
-                "POST", f"{settings.skill_executor_url}/hermes/sandboxes/{session_id}/runs", json=body
-            ) as response:
-                if response.status_code != 200:
-                    await response.aread()
-                    raise _failure(_code(response, "hermes_sandbox_unavailable"))
-                async for line in response.aiter_lines():
-                    message = _parse(line)
-                    if message.get("type") == "started" and isinstance(message.get("run_id"), str):
-                        run_id = message["run_id"]
-                    elif message.get("type") == "error":
-                        raise _failure(str(message.get("code") or "hermes_interrupted")[:64])
-                    elif message.get("type") == "result":
-                        return _outcome(message)
-        raise _failure("hermes_interrupted")
+        async with keepalive(progress):
+            return await _follow_run(session_id, turn_id, conversation_id, text, history, progress, started)
     except asyncio.CancelledError:
-        if run_id is not None:
+        if started:
             try:
-                await _executor("POST", f"/sandboxes/{session_id}/runs/{run_id}/stop", timeout=30.0)
+                await _executor("POST", f"/sandboxes/{session_id}/runs/{started[0]}/stop", timeout=30.0)
             except httpx.HTTPError:
                 pass
         raise
     finally:
         beating.cancel()
+
+
+async def _follow_run(
+    session_id: str,
+    turn_id: str,
+    conversation_id: str,
+    text: str,
+    history: list[dict[str, Any]],
+    progress: TurnProgress,
+    started: list[str],
+) -> dict[str, Any]:
+    body = {"key": turn_id, "input": text, "session_id": conversation_id, "conversation_history": history}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None)) as client:
+        async with client.stream(
+            "POST", f"{settings.skill_executor_url}/hermes/sandboxes/{session_id}/runs", json=body
+        ) as response:
+            if response.status_code != 200:
+                await response.aread()
+                raise _failure(_code(response, "hermes_sandbox_unavailable"))
+            async for line in response.aiter_lines():
+                message = _parse(line)
+                if message.get("type") == "started" and isinstance(message.get("run_id"), str):
+                    started.append(message["run_id"])
+                elif message.get("type") == "error":
+                    raise _failure(str(message.get("code") or "hermes_interrupted")[:64])
+                elif message.get("type") == "event" and isinstance(message.get("event"), dict):
+                    await progress.event(message["event"])
+                elif message.get("type") == "result":
+                    return _outcome(message, progress)
+    raise _failure("hermes_interrupted")
 
 
 def _parse(line: str) -> dict[str, Any]:
@@ -192,12 +219,16 @@ def _parse(line: str) -> dict[str, Any]:
     return message if isinstance(message, dict) else {}
 
 
-def _outcome(message: dict[str, Any]) -> dict[str, Any]:
+def _outcome(message: dict[str, Any], progress: TurnProgress) -> dict[str, Any]:
     status = message.get("status")
     output = message.get("output")
     if status != "completed" or not isinstance(output, str) or not output.strip():
         return {"status": "failed", "error": "hermes_run_failed"}
-    return {"status": "completed", "output": output[:_MAX_OUTPUT_CHARS]}
+    outcome: dict[str, Any] = {"status": "completed", "output": output[:_MAX_OUTPUT_CHARS]}
+    if progress.calls:
+        outcome["tool_calls"] = progress.calls
+        outcome["tool_results"] = progress.results
+    return outcome
 
 
 def _uuid(session_id: str) -> str:

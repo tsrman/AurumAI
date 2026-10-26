@@ -467,8 +467,10 @@ Each phase is a separate PR behind the flag:
      - the Kubernetes runtime refuses Hermes sandboxes explicitly;
      - known window: the relay records a run id only after Hermes accepts the
        run, so a relay that dies in between can make a retry start a second run;
-     - attaching to a run replays its events from the start, so phase 4
-       deduplicates them;
+     - attaching to a run was expected to replay its events from the start.
+       Hermes 0.19 hands them to one subscriber only, once, and drops them when
+       that subscriber leaves; phase 4b's relay therefore falls back to polling
+       the run's status (see 4b);
      - skill-executor's Hermes routes trust any caller that knows a session id,
        like its code-skill routes; phase 4 keeps it reachable only from the tools
        worker;
@@ -617,13 +619,44 @@ Each phase is a separate PR behind the flag:
        heartbeat throttle is five seconds), and a turn the session never
        answers is cancelled after its deadline. The session remembers its last
        hundred turns, so a repeated hand-off never runs one twice;
-     - the public stream carries the answer at the end; progress events and
-       their deduplication after a reattach come with the UI in 4b. Until then
-       a live stream ends after `EVENT_SUBSCRIBE_TIMEOUT` (120 s) without an
-       event, and a longer turn's answer appears through the turn routes or a
-       reload. Images in a Hermes turn are refused for now;
-   - 4b: the picker, the Hermes model and egress mode in the Admin UI, progress
-     events, and the Russian strings;
+     - the public stream carries the answer at the end, with the progress of
+       4b. Images in a Hermes turn are refused for now;
+   - 4b, implemented: the composer offers Hermes Agent (from `GET
+     /v1/chat/agents`, only when a turn would be accepted) and keeps it chosen for
+     the conversation; the Models page of the Admin UI sets the Hermes model and
+     the egress mode (modes above the operator's maximum are disabled); the run's
+     progress reaches the chat stream; English and Russian strings. Accepted at
+     runtime by `./smoke-test-hermes-sandbox.sh`: a chat turn's tool card, its
+     result and keepalives reach the conversation's channel, a tool argument
+     never does, and the answer is persisted with the card. Deviations:
+     - tool-worker publishes the progress to the conversation's event channel
+       itself (it already had the Redis URL), as tool cards: `tool.started` and
+       `tool.completed` become `tool-calls` and `tool-result`, paired by tool
+       name in order since Hermes's events carry no call id. Only an allowlisted
+       kind leaves the worker (`hermes.terminal`, `hermes.files`,
+       `hermes.knowledge`, ..., else `hermes.other`), never the tool's name as
+       Hermes sent it, its arguments, previews, reasoning or output; at most 50
+       cards a turn. The answer persists with the cards of the attempt that
+       finished, so a reload shows them;
+     - no live answer deltas: the answer arrives with `message-end`. A delta
+       stream could not be deduplicated after a reattach;
+     - keepalives every 30 s, from preparing the sandbox (a restore takes
+       minutes) to the run's end, hold the chat stream open past
+       `EVENT_SUBSCRIBE_TIMEOUT`; the stream drops them. The turn routes'
+       stream projects durable status only and is unchanged;
+     - Hermes hands a run's events to one subscriber, once. A retried run
+       activity therefore sees the events from its reattach on, under call ids
+       that carry the attempt, so it adds cards instead of replacing them; and
+       the relay, finding no events (404) or only keepalives of a queue another
+       subscriber holds, polls the run's status for the result, which the
+       lost-worker reattach of 4a needs (covered by the relay's tests, not yet
+       exercised at runtime). After a reattach the earlier attempt's cards stay
+       running in the live view and are not persisted: Hermes sends them only
+       once, to the lost subscriber;
+     - a reopened conversation starts in the ordinary chat; Hermes is chosen
+       again for the next turn;
+     - sources and images under the answer, which ordinary chat shows, come
+       later: the bridge's results are not read back into the answer yet;
    - 4c: questions to the user through Hermes's `clarify`, and deleting a
      conversation's snapshots in the archive purge. Recording the snapshot
      checksum in the session row gets harder now that skill-executor also

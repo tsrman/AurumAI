@@ -44,8 +44,28 @@ let imageQuery: {
   error: unknown;
 } = { data: undefined, isLoading: false, error: null };
 const imageMutate = vi.fn();
+let hermesQuery: {
+  data?: {
+    data: {
+      enabled: boolean;
+      egressMode: "none" | "packages" | "public";
+      egressMaxMode: "none" | "packages" | "public";
+      model: string | null;
+    };
+  };
+  isLoading: boolean;
+  error: unknown;
+} = { data: undefined, isLoading: false, error: null };
+const hermesMutate = vi.fn();
 
 vi.mock("@/hooks/useAdminModels", () => ({
+  useOrganizationHermesSettings: () => hermesQuery,
+  useUpdateOrganizationHermesSettings: () => ({
+    mutate: hermesMutate,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
   useOrganizationImageModels: () => imageQuery,
   useUpdateOrganizationImageModels: () => ({
     mutate: imageMutate,
@@ -78,6 +98,12 @@ beforeEach(() => {
   query = { data: { data: available }, isLoading: false, error: null };
   mutate.mockClear();
   imageMutate.mockClear();
+  hermesMutate.mockClear();
+  hermesQuery = {
+    data: { data: { enabled: true, egressMode: "none", egressMaxMode: "packages", model: null } },
+    isLoading: false,
+    error: null,
+  };
   imageQuery = {
     data: {
       data: {
@@ -284,4 +310,43 @@ test("explains when the operator switch keeps image tools off", () => {
   render(<AdminModelsPage />);
   expect(screen.getByText(/switched off on this deployment/)).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "gone/model — no longer published" })).toBeDisabled();
+});
+
+
+test("Hermes Agent runs on a model the organization can read, within the egress maximum", () => {
+  render(<AdminModelsPage />);
+  const hermes = screen.getByRole("heading", { name: "Hermes Agent" }).closest("section")!;
+  const save = within(hermes).getByRole("button", { name: "Save Hermes Agent settings" });
+  const models = within(hermes).getByLabelText("Model");
+  expect(within(models).queryByRole("option", { name: "provider/private" })).not.toBeInTheDocument();
+  expect(
+    within(hermes).getByRole("option", { name: "Public internet — above the deployment's maximum" })
+  ).toBeDisabled();
+  expect(save).toBeDisabled();
+
+  fireEvent.change(models, { target: { value: "provider/readable" } });
+  fireEvent.change(within(hermes).getByLabelText("Internet access"), { target: { value: "packages" } });
+  fireEvent.click(save);
+
+  expect(hermesMutate).toHaveBeenCalledWith(
+    { model: "provider/readable", egressMode: "packages" },
+    expect.anything()
+  );
+});
+
+test("a Hermes model the organization lost stays visible until it is cleared", () => {
+  hermesQuery = {
+    ...hermesQuery,
+    data: { data: { ...hermesQuery.data!.data, enabled: false, model: "provider/private" } },
+  };
+  render(<AdminModelsPage />);
+  const hermes = screen.getByRole("heading", { name: "Hermes Agent" }).closest("section")!;
+
+  expect(within(hermes).getByText(/Hermes Agent is switched off/)).toBeInTheDocument();
+  expect(
+    within(hermes).getByRole("option", { name: "provider/private — not available to the organization" })
+  ).toBeDisabled();
+  fireEvent.change(within(hermes).getByLabelText("Model"), { target: { value: "" } });
+  fireEvent.click(within(hermes).getByRole("button", { name: "Save Hermes Agent settings" }));
+  expect(hermesMutate).toHaveBeenCalledWith({ model: null, egressMode: "none" }, expect.anything());
 });

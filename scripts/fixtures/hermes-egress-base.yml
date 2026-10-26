@@ -161,6 +161,9 @@ services:
       TOOL_WORKER_TASK_QUEUE: tools
       TOOL_WORKER_BACKEND_API_URL: http://backend:8000
       TOOL_WORKER_SKILL_EXECUTOR_URL: http://skill-executor:8090
+      TOOL_WORKER_REDIS_URL: redis://redis:6379/0
+      # Short, so even a quick chat turn shows its keepalives.
+      TOOL_WORKER_HERMES_KEEPALIVE_SECONDS: "0.2"
       TOOL_WORKER_OTEL_EXPORTER_OTLP_ENDPOINT: console
       LANGFUSE_ENABLED: "false"
     networks: [default]

@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   getAdminModels,
+  getOrganizationHermesSettings,
   getOrganizationImageModels,
+  putOrganizationHermesSettings,
   putOrganizationImageModels,
   putOrganizationModelSettings,
 } from "@/lib/api";
@@ -47,5 +49,23 @@ export function useUpdateOrganizationImageModels() {
     mutationFn: (settings: Parameters<typeof putOrganizationImageModels>[0]) =>
       putOrganizationImageModels(settings),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-image-models"] }),
+  });
+}
+
+
+export function useOrganizationHermesSettings() {
+  return useQuery({
+    queryKey: ["admin-hermes-settings"],
+    queryFn: getOrganizationHermesSettings,
+  });
+}
+
+
+export function useUpdateOrganizationHermesSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: Parameters<typeof putOrganizationHermesSettings>[0]) =>
+      putOrganizationHermesSettings(settings),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-hermes-settings"] }),
   });
 }

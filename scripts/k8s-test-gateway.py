@@ -83,7 +83,8 @@ _HERMES_MCP = re.compile(
     r"(?::([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}))?"
 )
 _HERMES_MCP_ARGUMENTS: dict[str, dict[str, Any]] = {
-    "knowledge_search": {"query": "acceptance"},
+    # The sandbox acceptance checks this query never reaches the public stream.
+    "knowledge_search": {"query": "hermes-argument-sentinel"},
     "generate_image": {"prompt": "a red square"},
     "run_skill": {"arguments": {"a": 17, "b": 25}},
 }

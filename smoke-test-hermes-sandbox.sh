@@ -322,7 +322,20 @@ chat_turn() {  # chat_turn <turn id> <content> <answers expected>
     || fail "the Hermes chat turn $1 persisted no answer"
   [[ "$(sql "SELECT status FROM interaction_turns WHERE id='$1'")" == completed ]] || fail "the Hermes chat turn $1 did not complete"
 }
-chat_turn "$CHAT_TURN" "Say hello." 1
+EVENTS="$(dirname "$JOURNAL")/chat-events.log"
+docker exec "$PROJECT-redis-1" redis-cli SUBSCRIBE "$ORG:session:$CHAT_CONVERSATION:events" > "$EVENTS" &
+SUBSCRIBER=$!
+sleep 1
+chat_turn "$CHAT_TURN" "HERMES_MCP:knowledge_search" 1
+sleep 1
+kill "$SUBSCRIBER" 2>/dev/null || true
+grep -q '"type": "tool-calls".*"tool": "hermes.knowledge"' "$EVENTS" || fail "the turn published no Hermes tool card"
+grep -q '"type": "tool-result".*"status": "completed"' "$EVENTS" || fail "the turn published no Hermes tool result"
+grep -q '"type": "keepalive"' "$EVENTS" \
+  || { docker logs "$PROJECT-tool-worker-1" 2>&1 | tail -40 >&2; fail "the turn kept no stream open"; }
+grep -q 'hermes-argument-sentinel' "$EVENTS" && fail "a tool argument reached the public stream"
+[[ "$(sql "SELECT tool_calls::text FROM messages WHERE conversation_id='$CHAT_CONVERSATION' AND role='assistant'")" == *hermes.knowledge* ]] \
+  || fail "the answer was persisted without its tool card"
 CHAT_SESSION=$(sql "SELECT replace(id::text,'-','') FROM hermes_sessions WHERE conversation_id='$CHAT_CONVERSATION' AND state='open' AND active_turn_id IS NULL")
 [[ -n "$CHAT_SESSION" ]] || fail "the chat session is missing or still bound after the turn"
 [[ "$(state_of "$CHAT_SESSION")" == running ]] || fail "the chat session's sandbox is not running"

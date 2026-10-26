@@ -57,6 +57,10 @@ def test_image_is_built_and_published_with_the_others() -> None:
 class FakeHermes(http.server.BaseHTTPRequestHandler):
     runs: list[dict] = []
     statuses: dict[str, str] = {}
+    # "gone": the run's event queue was consumed by an earlier subscriber;
+    # "stalled": another subscriber holds it, so only keepalives arrive.
+    events_mode = "normal"
+    polls: list[str] = []
 
     def log_message(self, *args: object) -> None:
         pass
@@ -77,8 +81,12 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path.endswith("/events"):
+            if FakeHermes.events_mode == "gone":
+                return self._send(404, b"{}")
+            if FakeHermes.events_mode == "stalled":
+                return self._send(200, b": keepalive\n\n: keepalive\n\n", "text/event-stream")
             events = [
-                ": keepalive",
+                ": opened",
                 'data: {"event": "tool.started", "tool": "terminal"}',
                 "data: not json",
                 'data: {"event": "run.completed", "output": "done"}',
@@ -86,7 +94,7 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
             ]
             return self._send(200, ("\n".join(events) + "\n").encode(), "text/event-stream")
         run_id = self.path.rsplit("/", 1)[-1]
-        status = FakeHermes.statuses.get(run_id, "completed")
+        status = FakeHermes.polls.pop(0) if FakeHermes.polls else FakeHermes.statuses.get(run_id, "completed")
         if status == "missing":
             return self._send(404, b"{}")
         self._send(200, json.dumps({"status": status, "output": "done", "usage": {"total_tokens": 3}}).encode())
@@ -94,7 +102,7 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
 
 @pytest.fixture
 def relay(tmp_path: Path):  # noqa: ANN201
-    FakeHermes.runs, FakeHermes.statuses = [], {}
+    FakeHermes.runs, FakeHermes.statuses, FakeHermes.events_mode, FakeHermes.polls = [], {}, "normal", []
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeHermes)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     home = tmp_path / ".hermes"
@@ -105,6 +113,7 @@ def relay(tmp_path: Path):  # noqa: ANN201
         "HERMES_HOME": str(home),
         "HERMES_RELAY_STATE": str(tmp_path / ".aurum"),
         "HERMES_RELAY_API": f"http://127.0.0.1:{server.server_address[1]}",
+        "HERMES_RELAY_POLL_SECONDS": "0.05",
     }
 
     def run(*args: str) -> list[dict]:
@@ -144,6 +153,30 @@ def test_a_retried_run_attaches_instead_of_starting_again(relay) -> None:
     assert len(FakeHermes.runs) == 2
     assert other[-1]["status"] == "completed"
     assert not (tmp_path / "request-turn-1.json").exists()
+
+
+def test_a_reattach_after_the_events_were_consumed_polls_for_the_result(relay) -> None:
+    run, tmp_path = relay
+    run("run", _request(tmp_path, "turn-1"))
+    FakeHermes.events_mode = "gone"
+    FakeHermes.polls = ["running", "running", "completed"]
+
+    lines = run("run", _request(tmp_path, "turn-1"))
+
+    assert [line["type"] for line in lines] == ["started", "result"]
+    assert lines[-1]["status"] == "completed" and lines[-1]["output"] == "done"
+    assert len(FakeHermes.runs) == 1
+
+
+def test_a_stream_held_by_another_subscriber_ends_once_the_run_has(relay) -> None:
+    run, tmp_path = relay
+    FakeHermes.events_mode = "stalled"
+    FakeHermes.polls = ["running", "completed"]
+
+    lines = run("run", _request(tmp_path, "turn-1"))
+
+    assert [line["type"] for line in lines] == ["started", "result"]
+    assert lines[-1]["status"] == "completed"
 
 
 def test_active_lists_the_recent_runs_hermes_still_runs(relay) -> None:

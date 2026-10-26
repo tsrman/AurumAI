@@ -7,7 +7,7 @@ import pytest
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
-from src import hermes_activities
+from src import hermes_activities, hermes_progress
 
 SESSION = "0123456789abcdef0123456789abcdef"
 SESSION_UUID = "01234567-89ab-cdef-0123-456789abcdef"
@@ -147,7 +147,12 @@ async def test_a_run_returns_only_its_bounded_outcome(http) -> None:
         hermes_activities.hermes_run_turn, SESSION, "turn-1", "conv", "hi", [{"role": "user", "content": "x"}]
     )
 
-    assert outcome == {"status": "completed", "output": "done"}
+    assert outcome == {
+        "status": "completed",
+        "output": "done",
+        "tool_calls": [{"call_id": "hermes-1-0", "tool": "hermes.terminal", "label": "Running commands"}],
+        "tool_results": {},
+    }
     assert router.requests[0][2] == {
         "key": "turn-1",
         "input": "hi",
@@ -214,3 +219,61 @@ async def test_a_cancelled_run_asks_hermes_to_stop(http, monkeypatch) -> None:
         await task
 
     assert stopped == [f"/sandboxes/{SESSION}/runs/run_7/stop"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_publishes_safe_tool_progress_for_its_turn(http, monkeypatch) -> None:
+    published: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def publish(org_id: str, conversation_id: str, payload: dict[str, Any]) -> None:
+        published.append((org_id, conversation_id, payload))
+
+    monkeypatch.setattr(hermes_progress.publisher, "publish", publish)
+    http(
+        {
+            ("POST", f"/hermes/sandboxes/{SESSION}/runs"): _stream(
+                {"type": "started", "run_id": "run_1"},
+                {"type": "event", "event": {"event": "tool.started", "tool": "terminal", "preview": "cat SECRET"}},
+                {"type": "event", "event": {"event": "reasoning.available", "text": "SECRET thoughts"}},
+                {"type": "event", "event": {"event": "message.delta", "delta": "SECRET answer"}},
+                {"type": "event", "event": {"event": "tool.completed", "tool": "terminal", "error": True}},
+                {"type": "result", "run_id": "run_1", "status": "completed", "output": "done"},
+            )
+        }
+    )
+
+    outcome = await ActivityEnvironment().run(
+        hermes_activities.hermes_run_turn, SESSION, "turn-1", "conv", "hi", [], "org-1"
+    )
+
+    assert [(org, conv, payload["type"], payload["turn_id"]) for org, conv, payload in published] == [
+        ("org-1", "conv", "tool-calls", "turn-1"),
+        ("org-1", "conv", "tool-result", "turn-1"),
+    ]
+    assert "SECRET" not in json.dumps(published)
+    assert outcome["tool_results"] == {"hermes-1-0": {"tool": "hermes.terminal", "status": "failed"}}
+
+
+@pytest.mark.asyncio
+async def test_preparing_keeps_the_turn_stream_open(http, monkeypatch) -> None:
+    published: list[str] = []
+
+    async def publish(org_id: str, conversation_id: str, payload: dict[str, Any]) -> None:
+        published.append(payload["type"])
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.25)
+        return httpx.Response(200, json={"state": "running"})
+
+    monkeypatch.setattr(hermes_progress.publisher, "publish", publish)
+    monkeypatch.setattr(hermes_progress.settings, "hermes_keepalive_seconds", 0.1)
+    http(
+        {
+            ("GET", "/v1/internal/hermes/sessions/current"): httpx.Response(200, json={"sessionId": SESSION_UUID}),
+            ("GET", f"/hermes/sandboxes/{SESSION}"): slow,
+        }
+    )
+
+    await ActivityEnvironment().run(hermes_activities.hermes_prepare_sandbox, "t", "org", "conv", "m", "turn-1")
+
+    assert published and set(published) == {"keepalive"}

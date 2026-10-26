@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     session_token: str = ""
     redis_url: str = "redis://localhost:6379/0"
     skill_executor_url: str = "http://localhost:8090"
+    # Within the backend's EVENT_SUBSCRIBE_TIMEOUT (120 s), which a keepalive resets.
+    hermes_keepalive_seconds: float = 30.0
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
 
     LANGFUSE_ENABLED: bool = Field(default=False, alias="LANGFUSE_ENABLED")

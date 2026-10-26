@@ -142,6 +142,8 @@ export interface WorkflowProgressState {
 
 export interface ToolCall {
   callId?: string;
+  // The runtime's tool id ("hermes.terminal"); Hermes tools are labelled by it.
+  toolId?: string;
   name: string;
   detail: string;
   state?: "wait" | "run" | "done";

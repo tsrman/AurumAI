@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import ValidationError
@@ -503,6 +503,27 @@ async def _hermes_model(session: AsyncSession, user: UserInfo) -> str:
     return model
 
 
+class ChatAgent(BaseModel):
+    id: Literal["hermes"]
+
+
+@router.get("/chat/agents", response_model=ApiResponse[list[ChatAgent]])
+async def chat_agents(
+    user: UserInfo = Depends(require_capability(Capability.CHAT_SEND)),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[list[ChatAgent]]:
+    """The agents the composer offers: those a chat turn would accept now."""
+    agents: list[ChatAgent] = []
+    try:
+        model = await _hermes_model(session, user)
+        await ensure_model_allowed(session, user.org_id, model, user_id=user.user_id, role=user.role)
+    except HTTPException:
+        pass
+    else:
+        agents.append(ChatAgent(id="hermes"))
+    return ApiResponse(data=agents, meta=_meta())
+
+
 async def _require_sendable_uploads(
     session: AsyncSession, request: ChatRequest, conv: "Conversation"
 ) -> None:
@@ -830,6 +851,9 @@ async def chat_stream(
         ):
             event_turn_id = event.get("turn_id")
             if event_turn_id is not None and event_turn_id != str(turn_id):
+                continue
+            if event["type"] == "keepalive":
+                # The listener has already reset the deadline; the browser needs nothing.
                 continue
             yield sse_event(event["type"], event["data"])
             if event["type"] == "message-score":

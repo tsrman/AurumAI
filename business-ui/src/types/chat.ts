@@ -1,3 +1,11 @@
+// Hermes Agent's tools arrive as "hermes.<kind>" (tool-worker's hermes_progress).
+export type ChatToolId =
+  | "web_search"
+  | "web_read"
+  | "generate_image"
+  | "edit_image"
+  | `hermes.${string}`;
+
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
@@ -133,7 +141,7 @@ export type SSEEvent =
         calls: Array<{
           call_id: string;
           skill_id?: string;
-          tool?: "web_search" | "web_read" | "generate_image" | "edit_image";
+          tool?: ChatToolId;
           label?: string;
           args?: Record<string, unknown>;
         }>;
@@ -145,7 +153,7 @@ export type SSEEvent =
       data: {
         call_id: string;
         skill_id?: string;
-        tool?: "web_search" | "web_read" | "generate_image" | "edit_image";
+        tool?: ChatToolId;
         label?: string;
         result: unknown;
         turn_id: string;

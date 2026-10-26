@@ -156,7 +156,9 @@
       "workflow": {
         "choose": "Choose workflow",
         "plainChat": "Plain chat",
-        "plainChatDescription": "A single assistant answers"
+        "plainChatDescription": "A single assistant answers",
+        "hermes": "Hermes Agent",
+        "hermesDescription": "An agent with its own workspace that runs commands and code"
       },
       "modelSettings": {
         "title": "Model settings",
@@ -182,7 +184,22 @@
     "tool": {
       "wait": "Queued",
       "run": "Running",
-      "done": "Done"
+      "done": "Done",
+      "hermes": {
+        "terminal": "Running commands",
+        "code": "Running code",
+        "files": "Working with files",
+        "plan": "Planning",
+        "memory": "Recalling",
+        "skills": "Using a skill",
+        "delegate": "Delegating a task",
+        "vision": "Looking at an image",
+        "knowledge": "Searching knowledge",
+        "web_search": "Searching sources",
+        "web_read": "Reading a page",
+        "image": "Working on an image",
+        "other": "Using a tool"
+      }
     },
     "thinking": {
       "title": "Reasoning",

@@ -39,11 +39,22 @@ export function toolCallsFromHistory(
       .join("\n");
     return {
       callId,
+      ...(call.tool ? { toolId: call.tool } : {}),
       name: call.label ?? call.skill_id ?? call.tool ?? "unknown",
       detail,
       state: "done" as const,
     };
   });
+}
+
+/** Agents a chat turn can run on besides the ordinary chat. */
+export type ChatAgentId = "hermes";
+
+export async function getChatAgents(): Promise<{ id: ChatAgentId }[]> {
+  const response = await api
+    .get("chat/agents")
+    .json<ApiResponse<{ id: ChatAgentId }[]>>();
+  return response.data;
 }
 
 function baseUrl(): string {
@@ -56,6 +67,7 @@ export interface StreamChatOptions {
   model: string;
   options?: ChatRequest["options"];
   workflowId?: string;
+  agent?: ChatAgentId;
   onOpen?: () => void;
   onEvent: (event: SSEEvent) => void;
   onError?: (error: Error) => void;
@@ -191,6 +203,7 @@ export function streamChat(options: StreamChatOptions): { cancel: () => void } {
     model: options.model,
     options: options.options ?? {},
     ...(options.workflowId ? { workflowId: options.workflowId } : {}),
+    ...(options.agent ? { agent: options.agent } : {}),
   });
 
   const run = async () => {

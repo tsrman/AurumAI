@@ -514,6 +514,27 @@
       "vision": "Models that accept images",
       "visionHint": "People can attach pictures to a message only when one of these chat models is selected. Mark only models your provider serves with image input.",
       "noChatModels": "The gateway publishes no chat models."
+    },
+    "hermes": {
+      "title": "Hermes Agent",
+      "description": "The system agent with its own workspace, which people can choose in chat instead of the ordinary assistant.",
+      "operatorOff": "Hermes Agent is switched off on this deployment (APP_HERMES_ENABLED). The choices below take effect once it is on.",
+      "model": "Model",
+      "modelHint": "The model Hermes Agent runs on. It needs native tool calling. Without a model, Hermes Agent is not offered in chat.",
+      "off": "Off",
+      "unavailable": "{model} — not available to the organization",
+      "egress": "Internet access",
+      "egressHint": "What the agent's workspace can reach on the internet. The deployment sets the maximum.",
+      "egressModes": {
+        "none": "None",
+        "packages": "Package registries only",
+        "public": "Public internet"
+      },
+      "aboveMaximum": "{mode} — above the deployment's maximum",
+      "capabilityHint": "People also need the “Use Hermes Agent” capability, given on the Groups page.",
+      "loadFailed": "Could not load Hermes Agent settings",
+      "saving": "Saving...",
+      "save": "Save Hermes Agent settings"
     }
   },
   "skills": {
