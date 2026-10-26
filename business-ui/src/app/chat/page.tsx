@@ -11,6 +11,7 @@ import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/providers/AuthProvider";
 import { useAppShell } from "@/hooks/useAppShell";
 import { useTranslations } from "next-intl";
+import type { ChatAgentId } from "@/lib/chat-api";
 
 export default function ChatPage() {
   const t = useTranslations("chat");
@@ -40,9 +41,14 @@ export default function ChatPage() {
   // auth completes. Guard typing, attachments and suggestions until a
   // selected model exists so no empty-model conversation is created.
   const guardedSend = useCallback(
-    (text: string, workflowId?: string, imageIds?: string[]) => {
+    (
+      text: string,
+      workflowId?: string,
+      imageIds?: string[],
+      agent?: ChatAgentId
+    ) => {
       if (admissionPending) return;
-      send(text, workflowId, imageIds);
+      send(text, workflowId, imageIds, agent);
     },
     [admissionPending, send]
   );

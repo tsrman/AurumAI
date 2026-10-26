@@ -189,3 +189,21 @@ async def test_a_session_that_never_answers_is_cancelled_and_the_turn_fails(monk
     assert session.cancelled[0] == TURN and f"failed:{TURN}" in session.cancelled
     assert persisted == []
     assert "hermes_turn_timeout" in next(data for name, data in events if name == "message-end")["content"]
+
+
+@pytest.mark.asyncio
+async def test_the_tool_cards_of_a_hermes_turn_are_persisted_with_its_answer() -> None:
+    card = {"call_id": "hermes-1-0", "tool": "hermes.terminal", "label": "Running commands"}
+    session = Session(
+        {
+            "status": "completed",
+            "output": "done",
+            "tool_calls": [card, {"call_id": "x", "tool": "web_search"}],
+            "tool_results": {"hermes-1-0": {"tool": "hermes.terminal", "status": "completed"}, "x": {}},
+        }
+    )
+
+    persisted, _, _ = await _turn(session, _message())
+
+    assert persisted[0]["tool_calls"] == [card]
+    assert persisted[0]["tool_results"] == {"hermes-1-0": {"tool": "hermes.terminal", "status": "completed"}}

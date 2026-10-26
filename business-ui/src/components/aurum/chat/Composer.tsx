@@ -7,7 +7,8 @@ import { useAppShell } from "@/hooks/useAppShell";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { ModelPickerMenu } from "./ModelPickerMenu";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
-import { WorkflowPickerMenu } from "./WorkflowPickerMenu";
+import { WorkflowPickerMenu, type ChatMode } from "./WorkflowPickerMenu";
+import type { ChatAgentId } from "@/lib/chat-api";
 import { useAuth } from "@/providers/AuthProvider";
 import { ACCEPTED_SUFFIXES, MAX_FILE_BYTES } from "@/components/aurum/knowledge/DragZone";
 import { useAttachFile, useDocuments } from "@/hooks/useDocuments";
@@ -27,7 +28,12 @@ interface PendingImage {
 }
 
 export interface ComposerProps {
-  onSend?: (text: string, workflowId?: string, imageIds?: string[]) => void;
+  onSend?: (
+    text: string,
+    workflowId?: string,
+    imageIds?: string[],
+    agent?: ChatAgentId
+  ) => void;
   isStreaming?: boolean;
   onStop?: () => void;
   // while Keycloak is still initializing, isRealMode()
@@ -62,10 +68,20 @@ export function Composer({
   const isDisabled = Boolean(disabled || blockedByActiveTurn);
   const { agents, myAgents, activeAgentId, conversations, models, activeModelId } = useAppShell();
   const visionModel = Boolean(models.find((model) => model.id === activeModelId)?.vision);
-  const [workflowId, setWorkflowId] = useState<string | null>(null);
+  // An agent stays chosen for the conversation, whose workspace it keeps;
+  // a workflow is chosen for one turn.
+  // A new chat's first send creates its conversation, which keeps the choice.
+  const [mode, setMode] = useState<ChatMode>({ kind: "chat" });
+  const [modeConversationId, setModeConversationId] = useState(conversationId);
+  if (modeConversationId !== conversationId) {
+    setModeConversationId(conversationId);
+    if (modeConversationId != null) setMode({ kind: "chat" });
+  }
+  const workflowId = mode.kind === "workflow" ? mode.workflowId : null;
+  const agent = mode.kind === "agent" ? mode.agent : undefined;
   // A workflow's agents use their own models; the backend inlines images
-  // only for those marked as vision models.
-  const imagesAllowed = visionModel || Boolean(workflowId);
+  // only for those marked as vision models. Hermes takes no images yet.
+  const imagesAllowed = !agent && (visionModel || Boolean(workflowId));
   const { isAuthenticated } = useAuth();
   const [text, setText] = useState("");
   const [settingsConversationId, setSettingsConversationId] = useState<
@@ -256,15 +272,17 @@ export function Composer({
       return;
     } else if (workflowId) {
       onSend?.(trimmed, workflowId);
+    } else if (agent) {
+      onSend?.(trimmed, undefined, undefined, agent);
     } else {
       onSend?.(trimmed);
     }
-    setWorkflowId(null);
+    if (workflowId) setMode({ kind: "chat" });
     setText("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, onSend, isStreaming, isDisabled, workflowId, pendingImages, imagesAllowed]);
+  }, [text, onSend, isStreaming, isDisabled, workflowId, agent, pendingImages, imagesAllowed]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -396,8 +414,8 @@ export function Composer({
             </IconButton>
 
             <WorkflowPickerMenu
-              value={workflowId}
-              onChange={setWorkflowId}
+              value={mode}
+              onChange={setMode}
               disabled={isDisabled || isStreaming || !isAuthenticated}
             />
 

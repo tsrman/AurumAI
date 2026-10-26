@@ -18,6 +18,7 @@ vi.mock("@/hooks/useModels", () => ({
 }));
 vi.mock("@/hooks/useSettings", () => ({ useSettings: () => ({ isPending: false }) }));
 vi.mock("@/hooks/useWorkflows", () => ({ useWorkflows: () => ({ data: [], isLoading: false }) }));
+vi.mock("@/hooks/useChatAgents", () => ({ useChatAgents: () => ({ data: [] }) }));
 vi.mock("@/hooks/useDocuments", () => ({
   useAttachFile: () => ({ mutateAsync: vi.fn() }),
   useDocuments: () => ({ data: [] }),
@@ -45,7 +46,7 @@ test("authenticated users cannot send an empty model while the catalog loads", (
   expect(input).not.toBeDisabled();
   fireEvent.change(input, { target: { value: "First message" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  expect(send).toHaveBeenCalledWith("First message", undefined, undefined);
+  expect(send).toHaveBeenCalledWith("First message", undefined, undefined, undefined);
 });
 
 test("suggestions wait for a selected model and become usable when it arrives", () => {
@@ -57,5 +58,5 @@ test("suggestions wait for a selected model and become usable when it arrives", 
   view.rerender(<Page />);
   fireEvent.click(screen.getByRole("button", { name: prompt }));
   expect(send).toHaveBeenCalledOnce();
-  expect(send).toHaveBeenCalledWith(prompt, undefined, undefined);
+  expect(send).toHaveBeenCalledWith(prompt, undefined, undefined, undefined);
 });

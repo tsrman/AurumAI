@@ -201,6 +201,13 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   `HERMES_TURN_DEADLINE_SECONDS` 7200 and `HERMES_IDLE_SECONDS` 1800), so tool-worker
   needs `TOOL_WORKER_SKILL_EXECUTOR_URL`. `GET /v1/internal/hermes/sessions/current`
   returns the conversation's open session without rotating its token.
+  `GET /v1/chat/agents` lists Hermes only when such a turn would be accepted (the
+  switch, both capabilities, and a model the user may use); the composer offers it from
+  there, and the Models page of the Admin UI sets the model and the egress mode.
+  tool-worker publishes the turn's progress to the conversation's event channel
+  through `TOOL_WORKER_REDIS_URL`: tool cards by tool kind only, and a keepalive every
+  `TOOL_WORKER_HERMES_KEEPALIVE_SECONDS` (30, below `APP_EVENT_SUBSCRIBE_TIMEOUT`)
+  that the chat stream drops.
 - `POST /v1/hermes/mcp` is the platform tools' MCP endpoint (Streamable HTTP without
   a session: one JSON answer per POST, no server stream). It offers
   `knowledge_search` (only the files attached to the conversation), `web_search` and

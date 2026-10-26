@@ -65,7 +65,7 @@ class Fakes:
             return "runner-token"
 
         @activity.defn(name="hermes_prepare_sandbox")
-        async def prepare(token: str, org_id: str, conversation_id: str, model: str) -> str:
+        async def prepare(token: str, org_id: str, conversation_id: str, model: str, turn_id: str) -> str:
             self.calls.append(f"prepare:{token}:{model}")
             if self.prepare_error:
                 raise ApplicationError(self.prepare_error, type=self.prepare_error, non_retryable=True)
@@ -80,8 +80,11 @@ class Fakes:
             self.calls.append("unbind")
 
         @activity.defn(name="hermes_run_turn")
-        async def run(session_id: str, turn_id: str, conversation_id: str, text: str, history: list[Any]) -> dict[str, Any]:
+        async def run(
+            session_id: str, turn_id: str, conversation_id: str, text: str, history: list[Any], org_id: str
+        ) -> dict[str, Any]:
             self.calls.append(f"run:{turn_id}:{text}:{len(history)}")
+            assert org_id == "org-1"
             if self.run_errors:
                 code = self.run_errors.pop(0)
                 raise ApplicationError(code, type=code, non_retryable=True)

@@ -501,6 +501,7 @@ describe("chat-api", () => {
     ).toEqual([
       {
         callId: "web-1",
+        toolId: "web_search",
         name: "Searching sources",
         detail: JSON.stringify({
           status: "completed",

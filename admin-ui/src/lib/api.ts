@@ -634,6 +634,31 @@ export async function putOrganizationImageModels(settings: {
   >();
 }
 
+export type HermesEgressMode = "none" | "packages" | "public";
+
+export interface OrganizationHermesSettings {
+  // The operator switch (APP_HERMES_ENABLED).
+  enabled: boolean;
+  egressMode: HermesEgressMode;
+  egressMaxMode: HermesEgressMode;
+  model: string | null;
+}
+
+export async function getOrganizationHermesSettings() {
+  return (await api.get("admin/settings/hermes")).json<
+    ApiResponse<OrganizationHermesSettings>
+  >();
+}
+
+export async function putOrganizationHermesSettings(settings: {
+  egressMode?: HermesEgressMode;
+  model?: string | null;
+}) {
+  return (await api.put("admin/settings/hermes", { json: settings })).json<
+    ApiResponse<OrganizationHermesSettings>
+  >();
+}
+
 function explicitSearchParams<T extends object>(
   values: T
 ): Record<string, string | number> {

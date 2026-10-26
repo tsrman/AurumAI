@@ -122,3 +122,51 @@ def test_an_agent_and_a_workflow_cannot_be_chosen_together() -> None:
             agent="hermes",
             workflowId=uuid.uuid4(),
         )
+
+
+async def test_keepalives_hold_the_stream_open_without_reaching_the_browser(monkeypatch) -> None:
+    import asyncio
+    import json
+
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
+    monkeypatch.setattr(chat.settings, "EVENT_SUBSCRIBE_TIMEOUT", 0.2)
+    conv, user, session, pubsub = _fixture()
+    turn = str(uuid.uuid4())
+
+    async def messages():  # noqa: ANN202
+        for _ in range(4):
+            await asyncio.sleep(0.12)
+            yield {"type": "message", "data": json.dumps({"type": "keepalive", "data": {}})}
+        yield {"type": "message", "data": json.dumps({"type": "done", "data": {}})}
+
+    pubsub.listen = messages
+    signal = AsyncMock(return_value=turn)
+    with ExitStack() as stack:
+        for item in _patches(conv, pubsub, signal).values():
+            stack.enter_context(item)
+        response = await chat.chat_stream(request=_request(conv), user=user, session=session, quota=AllowQuota([]))
+        chunks = [chunk async for chunk in response.body_iterator]
+
+    assert not any("keepalive" in chunk for chunk in chunks)
+    assert "event: done" in chunks[-1]
+
+
+@pytest.mark.parametrize(
+    ("case", "agents"),
+    [("ready", [{"id": "hermes"}]), ("switch_off", []), ("no_capability", []), ("no_model", []), ("model_denied", [])],
+)
+async def test_the_composer_offers_hermes_only_when_a_turn_would_be_accepted(monkeypatch, case, agents) -> None:
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", case != "switch_off")
+    _, user, session, _ = _fixture()
+    capabilities = AsyncMock(side_effect=HermesAccessDenied("hermes_access_denied") if case == "no_capability" else None)
+    allowed = AsyncMock(side_effect=HTTPException(status_code=403) if case == "model_denied" else None)
+    with (
+        patch.object(chat, "require_hermes_capabilities", capabilities),
+        patch.object(
+            chat, "organization_hermes_model", AsyncMock(return_value=None if case == "no_model" else "hermes-model")
+        ),
+        patch.object(chat, "ensure_model_allowed", allowed),
+    ):
+        response = await chat.chat_agents(user=user, session=session)
+
+    assert [agent.model_dump() for agent in response.data] == agents

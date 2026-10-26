@@ -149,7 +149,13 @@ class HermesSessionWorkflow:
     async def _prepare(self, start: HermesSessionInput, turn: HermesTurn) -> str:
         session_id: str = await workflow.execute_activity(
             "hermes_prepare_sandbox",
-            args=(await self._token(turn.parent_task_queue), start.org_id, start.conversation_id, turn.model),
+            args=(
+                await self._token(turn.parent_task_queue),
+                start.org_id,
+                start.conversation_id,
+                turn.model,
+                turn.turn_id,
+            ),
             start_to_close_timeout=timedelta(minutes=25),
             retry_policy=_RETRY,
             result_type=str,
@@ -199,7 +205,7 @@ class HermesSessionWorkflow:
     async def _follow(self, start: HermesSessionInput, turn: HermesTurn, session_id: str) -> dict[str, Any]:
         run = workflow.start_activity(
             "hermes_run_turn",
-            args=(session_id, turn.turn_id, start.conversation_id, turn.text, turn.history),
+            args=(session_id, turn.turn_id, start.conversation_id, turn.text, turn.history, start.org_id),
             # The deadline covers every attempt, not each one.
             schedule_to_close_timeout=timedelta(seconds=turn.deadline_seconds),
             heartbeat_timeout=timedelta(seconds=60),

@@ -29,6 +29,9 @@ API = os.environ.get("HERMES_RELAY_API", "http://127.0.0.1:8642")
 MAX_LINE = 256 * 1024
 TERMINAL = {"run.completed", "run.failed", "run.cancelled", "run.interrupted"}
 ACTIVE = {"queued", "running", "waiting_for_approval"}
+# A run not yet settled: still active, or asked to stop.
+UNSETTLED = ACTIVE | {"stopping"}
+POLL_SECONDS = float(os.environ.get("HERMES_RELAY_POLL_SECONDS", "2"))
 # Only runs started within the longest turn deadline, newest first, are asked about.
 RECENT_SECONDS = 86400
 RECENT_RUNS = 32
@@ -58,10 +61,27 @@ def write_atomic(path: str, text: str) -> None:
     os.replace(temporary, path)
 
 
-def follow(run_id: str) -> int:
-    with request("GET", f"/v1/runs/{run_id}/events", timeout=None) as stream:
+def run_status(run_id: str) -> dict:
+    with request("GET", f"/v1/runs/{run_id}") as response:
+        return json.load(response)
+
+
+def stream_events(run_id: str) -> None:
+    """Hermes hands a run's events to one subscriber, once, and drops the queue
+    when that subscriber leaves: a reattach finds no events (404), or a queue
+    an earlier subscriber still reads, so only keepalives arrive. Either way
+    the run's status decides when it is over."""
+    try:
+        stream = request("GET", f"/v1/runs/{run_id}/events", timeout=None)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return
+        raise
+    with stream:
         for raw in stream:
             line = raw[:MAX_LINE].decode("utf-8", "replace").rstrip("\n")
+            if line == ": keepalive" and run_status(run_id).get("status") not in UNSETTLED:
+                return
             if not line.startswith("data:"):
                 continue
             try:
@@ -71,9 +91,15 @@ def follow(run_id: str) -> int:
             if isinstance(event, dict):
                 emit("event", event=event)
                 if event.get("event") in TERMINAL:
-                    break
-    with request("GET", f"/v1/runs/{run_id}") as response:
-        status = json.load(response)
+                    return
+
+
+def follow(run_id: str) -> int:
+    stream_events(run_id)
+    status = run_status(run_id)
+    while status.get("status") in UNSETTLED:
+        time.sleep(POLL_SECONDS)
+        status = run_status(run_id)
     emit("result", run_id=run_id, status=status.get("status"), output=status.get("output"), usage=status.get("usage"))
     return 0
 

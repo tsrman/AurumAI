@@ -1275,9 +1275,10 @@ class ConversationWorkflow:
             raise ApplicationError(str(result.get("error") or "hermes_interrupted"))
         answer = str(result["output"])
         self.messages.append({"role": "assistant", "content": answer})
+        tool_calls, tool_results = _hermes_tool_cards(result)
         await workflow.execute_activity(
             persist_assistant_message,
-            args=(answer, model, turn_id, None, None),
+            args=(answer, model, turn_id, tool_calls or None, tool_results or None),
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=_ACTIVITY_RETRY_POLICY,
         )
@@ -1348,3 +1349,26 @@ class ConversationWorkflow:
     @workflow.signal(name="question_available")
     async def question_available(self, question_id: str, version: int) -> None:
         self._question_wait.notify(question_id, version)
+
+
+def _hermes_tool_cards(result: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The tool cards a Hermes turn showed, in the shape the web tools persist,
+    so a reload renders what the live stream did."""
+    calls: list[dict[str, Any]] = []
+    raw_calls = result.get("tool_calls")
+    for call in raw_calls[:50] if isinstance(raw_calls, list) else []:
+        if (
+            isinstance(call, dict)
+            and isinstance(call.get("call_id"), str)
+            and isinstance(call.get("tool"), str)
+            and call["tool"].startswith("hermes.")
+        ):
+            calls.append({key: str(call[key]) for key in ("call_id", "tool", "label") if key in call})
+    raw_results = result.get("tool_results")
+    known = {call["call_id"] for call in calls}
+    results = {
+        call_id: {"tool": str(value.get("tool")), "status": str(value.get("status"))}
+        for call_id, value in (raw_results.items() if isinstance(raw_results, dict) else [])
+        if call_id in known and isinstance(value, dict)
+    }
+    return calls, results

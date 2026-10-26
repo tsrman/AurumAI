@@ -26,6 +26,10 @@ vi.mock("@/hooks/useWorkflows", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useChatAgents", () => ({
+  useChatAgents: () => ({ data: [{ id: "hermes" }] }),
+}));
+
 interface AttachedDocument {
   id: string;
   title: string;
@@ -117,6 +121,41 @@ test("passes the selected workflow for one turn and then clears it", () => {
   fireEvent.click(screen.getByRole("button", { name: /Send/i }));
 
   expect(onSend).toHaveBeenCalledWith("Build the report", "workflow-1");
+  expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent(
+    "Plain chat"
+  );
+});
+
+test("keeps Hermes Agent chosen across turns of the conversation", () => {
+  const onSend = vi.fn();
+  render(<Composer onSend={onSend} />, { wrapper: Wrapper });
+
+  fireEvent.click(screen.getByRole("button", { name: "Choose workflow" }));
+  fireEvent.click(screen.getByRole("option", { name: /Hermes Agent/ }));
+  for (const text of ["Set up the repo", "Now run the tests"]) {
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+  }
+
+  expect(onSend.mock.calls).toEqual([
+    ["Set up the repo", undefined, undefined, "hermes"],
+    ["Now run the tests", undefined, undefined, "hermes"],
+  ]);
+  expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent(
+    "Hermes Agent"
+  );
+});
+
+test("another conversation starts in the ordinary chat", () => {
+  const onSend = vi.fn();
+  const { rerender } = render(<Composer onSend={onSend} conversationId="conversation-1" />, {
+    wrapper: Wrapper,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Choose workflow" }));
+  fireEvent.click(screen.getByRole("option", { name: /Hermes Agent/ }));
+
+  rerender(<Composer onSend={onSend} conversationId="conversation-2" />);
+
   expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent(
     "Plain chat"
   );

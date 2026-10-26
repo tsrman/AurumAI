@@ -23,12 +23,14 @@ import {
 } from "@/components/ui";
 import {
   useAdminModels,
+  useOrganizationHermesSettings,
   useOrganizationImageModels,
+  useUpdateOrganizationHermesSettings,
   useUpdateOrganizationImageModels,
   useUpdateOrganizationModelSettings,
 } from "@/hooks/useAdminModels";
 import { useErrorMessage } from "@/lib/errors";
-import type { AdminModelSettings } from "@/lib/api";
+import type { AdminModelSettings, HermesEgressMode } from "@/lib/api";
 
 const DEFAULT_TEMPERATURE_IF_ENABLED = 0.7;
 
@@ -64,6 +66,7 @@ function ModelsContent({ canWrite }: { canWrite: boolean }) {
       <GatewayNotice settings={settings} />
       <DefaultsSection settings={settings} canWrite={canWrite} onGrantAccess={openAccess} />
       <ImageModelsSection canWrite={canWrite} />
+      <HermesSection settings={settings} canWrite={canWrite} />
       <CatalogSection settings={settings} canWrite={canWrite} onAccess={openAccess} />
       <AccessDialog target={access} onClose={() => setAccess(null)} />
     </PageBody>
@@ -332,6 +335,87 @@ function ImageModelsSection({ canWrite }: { canWrite: boolean }) {
                 { generationModel: generation || null, editModel: edit || null, visionModels: vision },
                 { onSuccess: () => setDraft(null) }
               )
+            }
+          >
+            {update.isPending ? t("saving") : t("save")}
+          </Button>
+        </div>
+      ) : null}
+    </Section>
+  );
+}
+
+const EGRESS_MODES: HermesEgressMode[] = ["none", "packages", "public"];
+
+function HermesSection({ settings, canWrite }: { settings: AdminModelSettings; canWrite: boolean }) {
+  const t = useTranslations("models.hermes");
+  const errorMessage = useErrorMessage();
+  const query = useOrganizationHermesSettings();
+  const update = useUpdateOrganizationHermesSettings();
+  const saved = query.data?.data;
+  const baseline = `${saved?.model ?? ""}\u0000${saved?.egressMode ?? ""}`;
+  const [draft, setDraft] = useState<{ baseline: string; model: string; egressMode: HermesEgressMode } | null>(null);
+
+  if (query.isLoading) return null;
+  if (query.error || !saved) {
+    return (
+      <Section title={t("title")}>
+        <Notice tone="error">{query.error ? errorMessage(query.error) : t("loadFailed")}</Notice>
+      </Section>
+    );
+  }
+  const current = draft?.baseline === baseline ? draft : null;
+  const model = current ? current.model : (saved.model ?? "");
+  const egressMode = current ? current.egressMode : saved.egressMode;
+  const change = (next: { model?: string; egressMode?: HermesEgressMode }) =>
+    setDraft({ baseline, model: next.model ?? model, egressMode: next.egressMode ?? egressMode });
+  const changed = model !== (saved.model ?? "") || egressMode !== saved.egressMode;
+  const readable = settings.models.filter((entry) => entry.organizationReadable).map((entry) => entry.id);
+  const maximum = EGRESS_MODES.indexOf(saved.egressMaxMode);
+
+  return (
+    <Section title={t("title")} description={t("description")}>
+      {!saved.enabled ? <Notice tone="warning" className="mb-4">{t("operatorOff")}</Notice> : null}
+      <SettingRow label={t("model")} description={t("modelHint")} htmlFor="hermes-model">
+        <select
+          id="hermes-model"
+          value={model}
+          disabled={!canWrite}
+          onChange={(event) => change({ model: event.target.value })}
+          className={controlClass}
+        >
+          <option value="">{t("off")}</option>
+          {model && !readable.includes(model) ? (
+            <option value={model} disabled>{t("unavailable", { model })}</option>
+          ) : null}
+          {readable.map((id) => (
+            <option key={id} value={id}>{id}</option>
+          ))}
+        </select>
+      </SettingRow>
+      <SettingRow label={t("egress")} description={t("egressHint")} htmlFor="hermes-egress">
+        <select
+          id="hermes-egress"
+          value={egressMode}
+          disabled={!canWrite}
+          onChange={(event) => change({ egressMode: event.target.value as HermesEgressMode })}
+          className={controlClass}
+        >
+          {EGRESS_MODES.map((mode, index) => (
+            <option key={mode} value={mode} disabled={index > maximum}>
+              {index > maximum ? t("aboveMaximum", { mode: t(`egressModes.${mode}`) }) : t(`egressModes.${mode}`)}
+            </option>
+          ))}
+        </select>
+      </SettingRow>
+      <p className="mt-4 text-xs leading-5 text-aurum-text-3">{t("capabilityHint")}</p>
+      {update.isError ? <Notice tone="error" className="mt-4">{errorMessage(update.error)}</Notice> : null}
+      {canWrite ? (
+        <div className="mt-5 flex justify-end">
+          <Button
+            disabled={!changed || update.isPending}
+            onClick={() =>
+              update.mutate({ model: model || null, egressMode }, { onSuccess: () => setDraft(null) })
             }
           >
             {update.isPending ? t("saving") : t("save")}
