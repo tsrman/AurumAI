@@ -7,6 +7,7 @@ returned to the caller, which phase 4 records in the session row.
 """
 
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -43,6 +44,7 @@ _STATUS = {
     "hermes_workspace_lost": 410,
     "hermes_clarify_settled": 409,
     "hermes_clarify_failed": 502,
+    "hermes_snapshot_key_invalid": 400,
 }
 
 
@@ -76,6 +78,9 @@ class ClarifyRequest(BaseModel):
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     execution_generation: int = Field(ge=0, strict=True)
     answer: str = Field(min_length=1, max_length=16000)
+
+
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
 def _available() -> None:
@@ -191,6 +196,18 @@ async def clarify_run(session_id: str, run_id: str, request: ClarifyRequest) -> 
     except HermesSandboxError as exc:
         raise _error(exc) from None
     return {"status": "answered"}
+
+
+@router.delete("/conversations/{org_id}/{conversation_id}")
+async def purge_conversation(org_id: str, conversation_id: str) -> dict[str, int]:
+    """The archive purge: a conversation's sandboxes and snapshots go."""
+    _available()
+    if not all(_IDENTIFIER.fullmatch(part) for part in (org_id, conversation_id)):
+        raise HTTPException(status_code=400, detail="Invalid identifier")
+    try:
+        return await sandboxes.purge_conversation(org_id, conversation_id)
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
 
 
 @router.post("/sandboxes/{session_id}/snapshot")

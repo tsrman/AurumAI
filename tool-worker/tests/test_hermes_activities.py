@@ -277,3 +277,28 @@ async def test_preparing_keeps_the_turn_stream_open(http, monkeypatch) -> None:
     await ActivityEnvironment().run(hermes_activities.hermes_prepare_sandbox, "t", "org", "conv", "m", "turn-1")
 
     assert published and set(published) == {"keepalive"}
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_purge_asks_skill_executor(http) -> None:
+    router = http(
+        {("DELETE", "/hermes/conversations/org-1/conv-1"): httpx.Response(200, json={"sandboxes": 1, "snapshots": 3})}
+    )
+
+    counts = await ActivityEnvironment().run(hermes_activities.hermes_purge_conversation, "org-1", "conv-1")
+
+    assert counts == {"sandboxes": 1, "snapshots": 3} and router.requests[0][0] == "DELETE"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_conversation_purge_carries_skill_executors_code(http) -> None:
+    http(
+        {
+            ("DELETE", "/hermes/conversations/org-1/conv-1"): httpx.Response(
+                503, json={"detail": {"code": "hermes_snapshot_store_failed"}}
+            )
+        }
+    )
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(hermes_activities.hermes_purge_conversation, "org-1", "conv-1")
+    assert raised.value.type == "hermes_snapshot_store_failed"

@@ -393,4 +393,15 @@ chat_turn "$SKIP_TURN" HERMES_CLARIFY 4 false
 [[ "$(sql "SELECT count(*) FROM user_questions WHERE turn_id='$SKIP_TURN'")" == 0 ]] || fail "a disabled question was asked"
 ANSWER=$(sql "SELECT content FROM messages WHERE turn_id='$SKIP_TURN' AND role='assistant'")
 [[ "$ANSWER" == *HERMES_CLARIFY_DONE:*'"user_response": "skip"'* ]] || fail "the skipped question did not end: $ANSWER"
+
+log "the archive purge's workflow removes the conversation's sandbox and every snapshot"
+CHAT_PREFIX="local/aurum-ai-business/hermes-sessions/$ORG/$CHAT_CONVERSATION"
+curl -fsS -X POST "$EXECUTOR/hermes/sandboxes/$CHAT_SESSION/snapshot" -o /dev/null || fail "the chat sandbox was not snapshotted"
+mc_ ls "$CHAT_PREFIX/" | grep -q '\.tar$' || fail "the chat conversation has no snapshot to purge"
+docker exec "$PROJECT-temporal-1" temporal workflow execute --address localhost:7233 \
+  --type HermesConversationPurgeWorkflow --task-queue tools --workflow-id "hermes-purge-$ORG-$CHAT_CONVERSATION" \
+  --input "{\"org_id\":\"$ORG\",\"conversation_id\":\"$CHAT_CONVERSATION\"}" >/dev/null \
+  || fail "the purge workflow failed"
+gone "$CHAT_SESSION" || fail "the purge left the chat sandbox behind"
+[[ -z "$(mc_ ls "$CHAT_PREFIX/" 2>/dev/null)" ]] || fail "the purge left snapshots behind: $(mc_ ls "$CHAT_PREFIX/")"
 log "PASS"

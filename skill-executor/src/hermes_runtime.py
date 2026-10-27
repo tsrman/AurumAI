@@ -53,6 +53,7 @@ from aiodocker.exceptions import DockerError
 
 from src.config import Settings
 from src.hermes_snapshots import Snapshot, SnapshotError, SnapshotStore, to_thread_sanitize
+from src.hermes_snapshots import prefix as snapshot_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -828,6 +829,29 @@ class DockerHermesSandboxes:
             await volume.delete()
         except DockerError:
             pass
+
+    async def purge_conversation(self, org_id: str, conversation_id: str) -> dict[str, int]:
+        """Remove a conversation's sandboxes, without a snapshot, then all its
+        snapshots. Closing waits for a snapshot in progress, so none is written
+        after the deletion. Idempotent."""
+        try:
+            snapshot_prefix(org_id, conversation_id)
+        except SnapshotError as exc:
+            raise HermesSandboxError(exc.code) from None
+        owned = [
+            sandbox.session_id
+            for sandbox in list(self._sandboxes.values())
+            if sandbox.org_id == org_id and sandbox.conversation_id == conversation_id
+        ]
+        for session_id in owned:
+            await self.close(session_id)
+        snapshots = 0
+        if self._store.enabled:
+            try:
+                snapshots = await self._store.delete_conversation(org_id, conversation_id)
+            except SnapshotError as exc:
+                raise HermesSandboxError(exc.code) from None
+        return {"sandboxes": len(owned), "snapshots": snapshots}
 
     async def reconcile(self) -> None:
         """Reconnect the guard (a recreated guard loses runtime connections)."""

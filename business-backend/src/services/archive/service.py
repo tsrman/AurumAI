@@ -11,12 +11,12 @@ import hashlib
 import json
 import tempfile
 from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
-from sqlalchemy import select, text, delete, insert, update, bindparam, JSON
+from sqlalchemy import select, text, delete, func, insert, update, bindparam, JSON
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from src.services.archive.collisions import unique_collision
@@ -59,6 +59,8 @@ from src.models.conversation_image import ConversationImage
 from src.models.hermes_session import HermesSession
 
 Sessions = Callable[[], AsyncSession]
+# (org, conversation): removes the conversation's Hermes sandboxes and snapshots.
+HermesPurge = Callable[[UUID, UUID], Awaitable[None]]
 
 
 class ArchiveService:
@@ -69,6 +71,7 @@ class ArchiveService:
         rag: RagArchiveClient | None = None,
         retention_days: int = 180,
         images: PlatformImageStorage | None = None,
+        hermes: HermesPurge | None = None,
     ):
         if retention_days <= 0:
             raise ValueError("retention_must_be_positive")
@@ -81,6 +84,9 @@ class ArchiveService:
         # Platform-bucket access for conversation image bytes; without it,
         # conversations that hold images are not archived.
         self.images = images
+        # Removes a conversation's Hermes sandboxes and workspace snapshots;
+        # without it, conversations that used Hermes are not archived.
+        self.hermes = hermes
 
     @staticmethod
     def _version(job: ArchiveJob) -> int:
@@ -414,6 +420,7 @@ class ArchiveService:
                 # Like the RAG purge, platform image copies go only after the
                 # archive copies are verified and before the rows.
                 await self._purge_images(org, job, manifest)
+                await self._purge_hermes(org, job)
                 await self._purge(org, job)
 
     async def _seal(self, org: UUID, job: ArchiveJob) -> None:
@@ -695,6 +702,27 @@ class ArchiveService:
         keys = manifest["_image_keys"]
         for entry in entries:
             await self.images.delete(keys[entry["id"]])
+
+    async def _purge_hermes(self, org: UUID, job: ArchiveJob) -> None:
+        """Hermes workspaces are runtime state and are not archived: a restored
+        conversation starts Hermes in a fresh one. The rows that show Hermes
+        was used go with the rows below, so a resume repeats this first."""
+        if job.conversation_id is None:
+            return
+        async with self.session(org) as session:
+            used = await session.scalar(
+                select(func.count())
+                .select_from(HermesSession)
+                .where(HermesSession.org_id == org, HermesSession.conversation_id == job.conversation_id)
+            )
+        if not used:
+            return
+        if self.hermes is None:
+            raise ArchiveBlocked("hermes_purge_not_configured")
+        try:
+            await self.hermes(org, job.conversation_id)
+        except Exception:
+            raise ArchiveBlocked("hermes_purge_failed") from None
 
     async def _restore_images(
         self, org: UUID, job: ArchiveJob, manifest: dict[str, Any], directory: Path
