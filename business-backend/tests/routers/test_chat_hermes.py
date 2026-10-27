@@ -50,6 +50,7 @@ async def _stream(conv, user, session, request, patches):  # noqa: ANN001, ANN20
 async def test_a_hermes_turn_runs_on_the_organization_model_without_the_runner_tools(monkeypatch) -> None:
     monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
     monkeypatch.setattr(chat.settings, "WEB_ENABLED", True)
+    monkeypatch.setattr(chat.settings, "USER_QUESTIONS_ENABLED", True)
     conv, user, session, pubsub = _fixture()
     signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
 
@@ -62,10 +63,11 @@ async def test_a_hermes_turn_runs_on_the_organization_model_without_the_runner_t
     assert mocks["create"].call_args.kwargs["model"] == "hermes-model"
     payload = signal.call_args.args[2]
     assert payload["hermes"] is True and payload["model"] == "hermes-model"
+    # Hermes asks the user through its clarify tool, as the turn's questions.
+    assert payload["user_questions_enabled"] is True
     assert not any(
         payload[flag]
         for flag in (
-            "user_questions_enabled",
             "web_tools_enabled",
             "image_generation_enabled",
             "image_editing_enabled",

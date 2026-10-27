@@ -1153,3 +1153,32 @@ def test_hermes_marker_runs_the_named_skill() -> None:
     [call] = chunk["choices"][0]["delta"]["tool_calls"]
     assert json.loads(call["function"]["arguments"]) == {"arguments": {"a": 17, "b": 25}, "skill_id": skill}
     assert "HERMES_MCP_NO_SKILL" in unnamed.text
+
+
+def test_hermes_clarify_marker_asks_once_then_reports_the_answer() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "clarify"}}]
+    user = {"role": "user", "content": "HERMES_CLARIFY"}
+
+    called = client.post("/v1/chat/completions", json={"messages": [user], "tools": tools})
+    [call] = json.loads(called.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+    answered = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                user,
+                {"role": "assistant", "content": None, "tool_calls": [{"id": "call_hermes_mcp"}]},
+                {"role": "tool", "tool_call_id": "call_hermes_mcp", "content": '{"user_response": "Rome"}'},
+            ],
+            "tools": tools,
+        },
+    )
+    unoffered = client.post("/v1/chat/completions", json={"messages": [user], "tools": []})
+
+    assert call["function"]["name"] == "clarify"
+    assert json.loads(call["function"]["arguments"])["questions"][0]["choices"] == ["Paris", "Rome"]
+    assert "HERMES_CLARIFY_DONE:" in answered.text and "Rome" in answered.text
+    assert "HERMES_CLARIFY_NOT_OFFERED" in unoffered.text

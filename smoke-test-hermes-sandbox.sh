@@ -348,4 +348,49 @@ chat_turn "$(fixture chat-turn "$CHAT_CONVERSATION")" "Say hello again." 2
 [[ "$(sql "SELECT token_version FROM hermes_sessions WHERE replace(id::text,'-','')='$CHAT_SESSION'")" == "$TOKEN_VERSION" ]] \
   || fail "the second turn rotated the running sandbox's token"
 [[ "$(state_of "$CHAT_SESSION")" == running ]] || fail "the second turn did not reuse the sandbox"
+
+log "Hermes asks the user through a question card, and the answer reaches it"
+chat_turn() {  # chat_turn <turn id> <content> <answers expected> [questions enabled]
+  temporal_ workflow signal --workflow-id "conversation-$CHAT_CONVERSATION" --name user_message --input \
+    "{\"role\":\"user\",\"content\":\"$2\",\"turn_id\":\"$1\",\"model\":\"hermes-egress-test\",\"hermes\":true,\"user_questions_enabled\":${4:-false}}"
+  [[ "${5:-}" == ask ]] && return 0
+  wait_answer "$1" "$3"
+}
+wait_answer() {
+  for _ in $(seq 120); do
+    (( $(sql "SELECT count(*) FROM messages WHERE conversation_id='$CHAT_CONVERSATION' AND role='assistant' AND content<>''") >= $2 )) \
+      && break
+    sleep 3
+  done
+  [[ "$(sql "SELECT status FROM interaction_turns WHERE id='$1'")" == completed ]] || fail "the Hermes chat turn $1 did not complete"
+}
+USER=$(fixture user-token)
+python3 -c "import json,sys; print(json.dumps(json.loads(sys.argv[1])['jwks']))" "$USER" \
+  | docker exec -i "$PROJECT-keycloak-1" sh -c 'cat > /tmp/jwks.json'
+USER_TOKEN=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['token'])" "$USER")
+ASK_TURN=$(fixture chat-turn "$CHAT_CONVERSATION" HERMES_CLARIFY)
+chat_turn "$ASK_TURN" HERMES_CLARIFY 3 true ask
+for _ in $(seq 60); do
+  QUESTION=$(sql "SELECT id FROM user_questions WHERE turn_id='$ASK_TURN' AND status='pending'")
+  [[ -n "$QUESTION" ]] && break
+  sleep 2
+done
+[[ -n "$QUESTION" ]] || fail "Hermes's question did not become the turn's question card"
+[[ "$(sql "SELECT text FROM user_questions WHERE id='$QUESTION'")" == "Which city should the trip start in?" ]] \
+  || fail "the question card does not carry Hermes's question"
+answered=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "http://127.0.0.1:58000/v1/conversations/$CHAT_CONVERSATION/questions/$QUESTION/answer" \
+  -H "Authorization: Bearer $USER_TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"idempotencyKey\":\"$(python3 -c 'import uuid; print(uuid.uuid4())')\",\"answer\":{\"optionId\":\"c1\"}}")
+[[ "$answered" == 200 ]] || fail "answering the question card failed: $answered"
+wait_answer "$ASK_TURN" 3
+ANSWER=$(sql "SELECT content FROM messages WHERE turn_id='$ASK_TURN' AND role='assistant'")
+[[ "$ANSWER" == *HERMES_CLARIFY_DONE:*Rome* ]] || fail "Hermes did not get the answer: $ANSWER"
+
+log "with questions off, Hermes's question is skipped instead of waiting"
+SKIP_TURN=$(fixture chat-turn "$CHAT_CONVERSATION" HERMES_CLARIFY)
+chat_turn "$SKIP_TURN" HERMES_CLARIFY 4 false
+[[ "$(sql "SELECT count(*) FROM user_questions WHERE turn_id='$SKIP_TURN'")" == 0 ]] || fail "a disabled question was asked"
+ANSWER=$(sql "SELECT content FROM messages WHERE turn_id='$SKIP_TURN' AND role='assistant'")
+[[ "$ANSWER" == *HERMES_CLARIFY_DONE:*'"user_response": "skip"'* ]] || fail "the skipped question did not end: $ANSWER"
 log "PASS"

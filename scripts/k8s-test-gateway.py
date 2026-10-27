@@ -794,6 +794,20 @@ def _content_for(request: CompletionRequest) -> str:
     return _outer_response(request.messages)
 
 
+def _hermes_clarify_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_CLARIFY: one question through Hermes's clarify tool, then the answer as text."""
+    if "HERMES_CLARIFY" not in _last_user_message(request.messages):
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
+    if results:
+        return "HERMES_CLARIFY_DONE:" + " ".join(results[-1].split())[:4000]
+    if "clarify" not in {str((item.get("function") or {}).get("name")) for item in request.tools}:
+        return "HERMES_CLARIFY_NOT_OFFERED"
+    questions = [{"question": "Which city should the trip start in?", "choices": ["Paris", "Rome"]}]
+    return {"name": "clarify", "arguments": json.dumps({"questions": questions})}
+
+
 def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """A native tool call to the marked platform tool, then its result as text."""
     match = _HERMES_MCP.search(_last_user_message(request.messages))
@@ -920,7 +934,7 @@ async def chat_completions(request: CompletionRequest) -> StreamingResponse:
         # running status before calling the gateway, giving the harness a
         # deterministic window for revoke/cancel. Never log prompt or key.
         await asyncio.sleep(float(os.getenv("TEST_GATEWAY_BARRIER_SECONDS", "3")))
-    hermes = _hermes_mcp_response(request)
+    hermes = _hermes_clarify_response(request) or _hermes_mcp_response(request)
     if isinstance(hermes, dict):
         return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")
     if hermes is not None:

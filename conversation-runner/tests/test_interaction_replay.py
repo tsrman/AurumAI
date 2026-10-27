@@ -138,3 +138,13 @@ async def test_replay_negative_control_detects_nondeterminism() -> None:
 
     assert result.replay_failure is not None
     assert "nondetermin" in str(result.replay_failure).lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "filename", ["pre_clarify_hermes_answered_v1.json", "pre_clarify_hermes_long_turn_v1.json"]
+)
+async def test_hermes_turns_recorded_before_questions_replay(filename: str) -> None:
+    history = _load_history(filename, "conversation-conv-hermes")
+    result = await Replayer(workflows=[ConversationWorkflow]).replay_workflow(history, raise_on_replay_failure=False)
+    assert result.replay_failure is None

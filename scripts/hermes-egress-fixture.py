@@ -14,8 +14,11 @@ skill        an MCP skill on the reference server (get-sum), granted to the
 chat         a second conversation with an active turn and its user message,
              the organization's Hermes model, and a runner token for it;
              prints them as JSON
-chat-turn C  the next active turn of conversation C with its user message;
+chat-turn C [TEXT]
+             the next active turn of conversation C with its user message;
              prints the turn id
+user-token   a user token for the fixture user, signed by a fresh key whose
+             JWKS the fake Keycloak is to serve; prints both as JSON
 
 State lives in a private journal; nothing outside the fixture organization is
 touched. Run with the backend's environment (uv run in business-backend).
@@ -56,7 +59,8 @@ async def prepare(db: asyncpg.Connection) -> None:
         await db.execute("INSERT INTO organizations(id,name,slug) VALUES($1,'Hermes egress',$2)", org, f"hermes-egress-{org}")
         await db.execute(
             "INSERT INTO users(id,org_id,keycloak_id,email,role) VALUES($1,$2,$3,$4,'member')",
-            user, org, uuid4(), f"{user}@hermes-egress.invalid",
+            # As Keycloak sign-in creates it: the subject is the user's id.
+            user, org, user, f"{user}@hermes-egress.invalid",
         )
         for capability in ("chat.send", "agents.hermes", "images.generate"):
             await db.execute("INSERT INTO organization_capabilities(org_id,capability) VALUES($1,$2)", org, capability)
@@ -132,7 +136,34 @@ async def chat(db: asyncpg.Connection, state: dict) -> None:
     print(json.dumps({"conversation": str(conversation), "turn": str(turn), "token": token}))
 
 
-async def chat_turn(db: asyncpg.Connection, state: dict, conversation: UUID) -> None:
+async def user_token(db: asyncpg.Connection, state: dict) -> None:
+    """A user token the backend accepts, signed by a key whose JWKS the fake
+    Keycloak serves; prints {"token", "jwks"}."""
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public = json.loads(RSAAlgorithm.to_jwk(key.public_key()))
+    public.update(kid="hermes-acceptance", use="sig", alg="RS256")
+    now = int(datetime.now(timezone.utc).timestamp())
+    claims = {
+        "sub": state["user"],
+        "org_id": state["org"],
+        "email": f"{state['user']}@hermes-egress.invalid",
+        "role": "member",
+        "iss": "http://keycloak:8080/realms/aurum-ai",
+        "aud": "business-ui",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    token = jwt.encode(claims, pem, algorithm="RS256", headers={"kid": "hermes-acceptance"})
+    print(json.dumps({"token": token, "jwks": {"keys": [public]}}))
+
+
+async def chat_turn(db: asyncpg.Connection, state: dict, conversation: UUID, content: str = "Say hello again.") -> None:
     org, user, turn = UUID(state["org"]), UUID(state["user"]), uuid4()
     async with db.transaction():
         await db.execute(
@@ -141,8 +172,8 @@ async def chat_turn(db: asyncpg.Connection, state: dict, conversation: UUID) -> 
         )
         await db.execute(
             "INSERT INTO messages(id,org_id,conversation_id,turn_id,user_id,role,content,model) "
-            "VALUES($1,$2,$3,$4,$5,'user','Say hello again.',$6)",
-            uuid4(), org, conversation, turn, user, MODEL,
+            "VALUES($1,$2,$3,$4,$5,'user',$7,$6)",
+            uuid4(), org, conversation, turn, user, MODEL, content,
         )
     print(turn)
 
@@ -180,8 +211,10 @@ async def main(argv: list[str]) -> None:
             )
         elif argv == ["chat"]:
             await chat(db, state)
-        elif len(argv) == 2 and argv[0] == "chat-turn":
-            await chat_turn(db, state, UUID(argv[1]))
+        elif len(argv) in (2, 3) and argv[0] == "chat-turn":
+            await chat_turn(db, state, UUID(argv[1]), *argv[2:])
+        elif argv == ["user-token"]:
+            await user_token(db, state)
         elif argv == ["skill"]:
             skill = uuid4()
             await db.execute(
@@ -204,7 +237,10 @@ async def main(argv: list[str]) -> None:
                 UUID(state["session"]),
             )
         else:
-            raise SystemExit("usage: prepare | mode M | web-access on|off | end-turn | bind | close | skill | chat | chat-turn C")
+            raise SystemExit(
+                "usage: prepare | mode M | web-access on|off | end-turn | bind | close | skill | chat"
+                " | chat-turn C [TEXT] | user-token"
+            )
     finally:
         await db.close()
 

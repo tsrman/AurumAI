@@ -54,6 +54,7 @@ _BUILTIN = {
     "skill_manage": "skills",
     "delegate_task": "delegate",
     "vision_analyze": "vision",
+    "clarify": "question",
 }
 _PLATFORM = {
     "knowledge_search": "knowledge",
@@ -74,6 +75,7 @@ LABELS = {
     "skills": "Using a skill",
     "delegate": "Delegating a task",
     "vision": "Looking at an image",
+    "question": "Asking you",
     "knowledge": "Searching knowledge",
     "web_search": "Searching sources",
     "web_read": "Reading page",

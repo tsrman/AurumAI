@@ -16,6 +16,7 @@ from src import hermes_session_workflow
 
 from src.hermes_session_workflow import (
     HEARTBEAT_THROTTLE,
+    ANSWER_SIGNAL,
     CANCEL_SIGNAL,
     HERMES_SESSION_WORKFLOW,
     RESULT_SIGNAL,
@@ -58,6 +59,7 @@ class Fakes:
         self.prepare_error: str | None = None
         self.block_run = False
         self.run_cancelled = False
+        self.answered: list[tuple[Any, ...]] = []
 
     def activities(self) -> list[Any]:
         @activity.defn(name="get_session_token")
@@ -81,7 +83,13 @@ class Fakes:
 
         @activity.defn(name="hermes_run_turn")
         async def run(
-            session_id: str, turn_id: str, conversation_id: str, text: str, history: list[Any], org_id: str
+            session_id: str,
+            turn_id: str,
+            conversation_id: str,
+            text: str,
+            history: list[Any],
+            org_id: str,
+            parent_workflow_id: str,
         ) -> dict[str, Any]:
             self.calls.append(f"run:{turn_id}:{text}:{len(history)}")
             assert org_id == "org-1"
@@ -90,13 +98,19 @@ class Fakes:
                 raise ApplicationError(code, type=code, non_retryable=True)
             if self.block_run:
                 try:
-                    while True:
+                    while self.block_run:
                         activity.heartbeat()
                         await asyncio.sleep(0.1)
                 except asyncio.CancelledError:
                     self.run_cancelled = True
                     raise
             return {"status": "completed", "output": f"answer to {text}"}
+
+        @activity.defn(name="hermes_answer_question")
+        async def answer(session_id: str, run_id: str, prompt_id: str, generation: int, text: str) -> str:
+            self.answered.append((session_id, run_id, prompt_id, generation, text))
+            self.block_run = False
+            return "answered"
 
         @activity.defn(name="hermes_retire_sandbox")
         async def retire(session_id: str) -> None:
@@ -106,7 +120,7 @@ class Fakes:
         async def close(token: str, session_id: str) -> None:
             self.calls.append(f"close:{session_id}")
 
-        return [prepare, bind, unbind, run, retire, close], [get_session_token]
+        return [prepare, bind, unbind, run, answer, retire, close], [get_session_token]
 
 
 @asynccontextmanager
@@ -312,3 +326,24 @@ async def test_a_vanished_conversation_does_not_end_the_session() -> None:
         [result] = await handle.result()
 
     assert result["turn_id"] == "turn-2" and result["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_an_answer_reaches_the_running_turn_and_others_are_ignored() -> None:
+    fakes = Fakes()
+    fakes.block_run = True
+    async with await WorkflowEnvironment.start_time_skipping() as env, _stack(env, fakes) as client:
+        parent, handle = await _parent(client)
+        session = await _hand_off(client, parent, _turn(parent))
+        for _ in range(100):
+            if any(call.startswith("run") for call in fakes.calls):
+                break
+            await asyncio.sleep(0.05)
+        answer = {"run_id": "run_1", "prompt_id": "p1", "execution_generation": 1, "answer": "Rome"}
+        await session.signal(ANSWER_SIGNAL, {**answer, "turn_id": "another-turn"})
+        await session.signal(ANSWER_SIGNAL, {**answer, "turn_id": "turn-1"})
+
+        [result] = await handle.result()
+
+    assert result["status"] == "completed"
+    assert fakes.answered == [(SESSION, "run_1", "p1", 1, "Rome")]

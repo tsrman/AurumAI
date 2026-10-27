@@ -18,6 +18,7 @@ from temporalio.exceptions import ApplicationError
 
 from src.config import settings
 from src.hermes_progress import TurnProgress, keepalive
+from src.hermes_questions import ParentQuestions
 
 _HEARTBEAT_SECONDS = 10.0
 _MAX_OUTPUT_CHARS = 200_000
@@ -153,13 +154,16 @@ async def hermes_run_turn(
     text: str,
     history: list[dict[str, Any]],
     org_id: str = "",
+    parent_workflow_id: str = "",
 ) -> dict[str, Any]:
     """Run (or, on a retry, attach to) the turn's Hermes run and return its
-    outcome with the tool cards it showed. Heartbeats on a timer, since a run
-    can be quiet for minutes; a cancellation asks Hermes to stop the run."""
+    outcome with the tool cards it showed, forwarding its questions to the
+    conversation workflow. Heartbeats on a timer, since a run can be quiet
+    for minutes; a cancellation asks Hermes to stop the run."""
     # The run's id once Hermes has it, for a cancellation to stop.
     started: list[str] = []
     progress = TurnProgress(org_id, conversation_id, turn_id, activity.info().attempt)
+    questions = ParentQuestions(parent_workflow_id, turn_id)
 
     async def beat() -> None:
         while True:
@@ -169,7 +173,9 @@ async def hermes_run_turn(
     beating = asyncio.create_task(beat())
     try:
         async with keepalive(progress):
-            return await _follow_run(session_id, turn_id, conversation_id, text, history, progress, started)
+            return await _follow_run(
+                session_id, turn_id, conversation_id, text, history, progress, questions, started
+            )
     except asyncio.CancelledError:
         if started:
             try:
@@ -188,6 +194,7 @@ async def _follow_run(
     text: str,
     history: list[dict[str, Any]],
     progress: TurnProgress,
+    questions: ParentQuestions,
     started: list[str],
 ) -> dict[str, Any]:
     body = {"key": turn_id, "input": text, "session_id": conversation_id, "conversation_history": history}
@@ -206,9 +213,28 @@ async def _follow_run(
                     raise _failure(str(message.get("code") or "hermes_interrupted")[:64])
                 elif message.get("type") == "event" and isinstance(message.get("event"), dict):
                     await progress.event(message["event"])
+                    await questions.event(message["event"], started[0] if started else None)
                 elif message.get("type") == "result":
                     return _outcome(message, progress)
     raise _failure("hermes_interrupted")
+
+
+@activity.defn(name="hermes_answer_question")
+async def hermes_answer_question(session_id: str, run_id: str, prompt_id: str, generation: int, answer: str) -> str:
+    """Answer the run's pending question; "settled" when Hermes no longer waits
+    for it (answered, timed out, the run ended)."""
+    response = await _executor(
+        "POST",
+        f"/sandboxes/{session_id}/runs/{run_id}/clarify",
+        {"request_id": prompt_id, "execution_generation": generation, "answer": answer},
+        timeout=60.0,
+    )
+    if response.status_code == 200:
+        return "answered"
+    code = _code(response, "hermes_sandbox_unavailable")
+    if code == "hermes_clarify_settled":
+        return "settled"
+    raise _failure(code)
 
 
 def _parse(line: str) -> dict[str, Any]:
