@@ -219,6 +219,15 @@ async def _follow_run(
     raise _failure("hermes_interrupted")
 
 
+@activity.defn(name="hermes_purge_conversation")
+async def hermes_purge_conversation(org_id: str, conversation_id: str) -> dict[str, int]:
+    response = await _executor("DELETE", f"/conversations/{org_id}/{conversation_id}", timeout=600.0)
+    if response.status_code != 200:
+        raise _failure(_code(response, "hermes_sandbox_unavailable"))
+    counts = response.json()
+    return {key: int(counts.get(key, 0)) for key in ("sandboxes", "snapshots")}
+
+
 @activity.defn(name="hermes_answer_question")
 async def hermes_answer_question(session_id: str, run_id: str, prompt_id: str, generation: int, answer: str) -> str:
     """Answer the run's pending question; "settled" when Hermes no longer waits

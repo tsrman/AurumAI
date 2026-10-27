@@ -6,6 +6,7 @@ import httpx
 from src.core.config import settings
 from src.core.database import async_session
 from src.services.rag_archive_client import RagArchiveClient
+from src.services.archive.hermes import HermesSnapshotPurge
 from src.services.archive.service import ArchiveService
 from src.services.archive.storage import S3ArchiveStorage, S3PlatformImageStorage
 
@@ -39,5 +40,10 @@ async def archive_service() -> AsyncIterator[ArchiveService]:
             else None
         )
         yield ArchiveService(
-            async_session, storage, rag, settings.ARCHIVE_RETENTION_DAYS, images=images
+            async_session,
+            storage,
+            rag,
+            settings.ARCHIVE_RETENTION_DAYS,
+            images=images,
+            hermes=HermesSnapshotPurge(),
         )

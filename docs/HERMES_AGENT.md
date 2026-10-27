@@ -678,12 +678,28 @@ Each phase is a separate PR behind the flag:
          question Hermes settles itself (its timeout, the run ended) loses its
          card. Several answers to a multi-select question are typed as text;
        - a `clarify` card shows "Asking you" while Hermes waits.
-     - 4c-ii: deleting a conversation's snapshots in the archive purge. The
-       backend's object store credentials are scoped to
-       `conversation-images/`, and only tool-worker reaches skill-executor, so
-       the purge goes through a tool-worker workflow. Recording the snapshot
-       checksum in the session row gets harder now that skill-executor also
-       retires sandboxes on its own, since the backend never sees that sha.
+     - 4c-ii, implemented: the archive purge removes a conversation's Hermes
+       sandboxes and workspace snapshots. The backend's object store
+       credentials are scoped to `conversation-images/`, and only tool-worker
+       reaches skill-executor, so the maintenance worker's purge starts
+       tool-worker's `HermesConversationPurgeWorkflow` (one id per
+       conversation; a resumed purge attaches or repeats it) and waits for it.
+       It runs after the image purge and before the rows go, and only for a
+       conversation with `hermes_sessions` rows, which the row purge removes,
+       so a crash in between repeats it; a purge that cannot reach it, or a
+       worker without it, leaves the conversation in place. skill-executor's
+       `DELETE /hermes/conversations/{org}/{conversation}` closes the
+       conversation's sandboxes without a snapshot (waiting for one in
+       progress) and then deletes every object under its
+       `hermes-sessions/{org}/{conversation}/` prefix. Workspaces are runtime
+       state, not history: they are not archived, and a restored conversation
+       starts Hermes in a fresh one. Accepted at runtime by
+       `./smoke-test-hermes-sandbox.sh` through the workflow itself; the
+       archive saga's step is covered by the backend's archive tests. A
+       versioned bucket keeps the deleted objects' older versions; that is
+       the operator's retention to set. The snapshot checksum is not recorded
+       in the session row: skill-executor retires sandboxes on its own and
+       the backend never sees it, and the purge needs only the prefix.
    - Hermes 0.22, implemented: the sandbox runs Hermes 0.22.5. Hermes no longer
      ships as a package (its build refuses outside Nix, and PyPI ends at 0.19.0),
      so the image installs the release's source tree from its GitHub tag

@@ -94,11 +94,18 @@ async def test_purge_removes_closed_and_expired_sessions_and_restore_leaves_none
     await _add_session(sessions, args, state="closed", expired=False, turn=False)
     # Expired but never closed, still naming the turn the purge deletes.
     await _add_session(sessions, args, state="open", expired=True, turn=True)
-    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"))
+    purged: list[tuple] = []
+
+    async def hermes(org_id, conversation_id) -> None:  # noqa: ANN001
+        # The sandboxes and snapshots go while the session rows still exist.
+        purged.append((org_id, conversation_id, await _session_count(sessions, args)))
+
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), hermes=hermes)
 
     result = await service.run(org, conversation, apply=True)
 
     assert result["state"] == "purged"
+    assert purged == [(org, conversation, 2)]
     assert await _session_count(sessions, args) == 0
     await service.restore(org, result["archive_id"], apply=True)
     assert await _session_count(sessions, args) == 0
@@ -134,3 +141,50 @@ async def test_lifecycle_role_sees_and_purges_sessions_only_in_its_org(
     assert foreign == 0
     assert blocker == "hermes_session_open"
     assert purged.rowcount == 2  # type: ignore[attr-defined]
+
+
+async def test_a_purge_that_cannot_reach_the_hermes_snapshots_keeps_the_conversation(
+    archive_fixture, tmp_path  # noqa: F811
+) -> None:
+    from src.services.conversation_lifecycle import ArchiveBlocked
+
+    sessions, org, conversation = archive_fixture
+    args = await _history(sessions, org, conversation)
+    await _add_session(sessions, args, state="closed", expired=False, turn=False)
+    attempts: list[str] = []
+
+    async def unreachable(org_id, conversation_id) -> None:  # noqa: ANN001
+        attempts.append("purge")
+        raise RuntimeError("tool-worker is down")
+
+    storage = LocalArchiveStorage(tmp_path / "objects")
+    for hermes, reason in ((None, "hermes_purge_not_configured"), (unreachable, "hermes_purge_failed")):
+        service = ArchiveService(sessions, storage, hermes=hermes)
+        try:
+            if hermes is None:
+                await service.run(org, conversation, apply=True)
+            else:
+                await service.resume(org, await sessions_archive_id(sessions, org, conversation))
+        except ArchiveBlocked as exc:
+            assert str(exc) == reason
+        else:
+            raise AssertionError("not blocked")
+        assert await _session_count(sessions, args) == 1
+
+    async def reachable(org_id, conversation_id) -> None:  # noqa: ANN001
+        attempts.append("purged")
+
+    service = ArchiveService(sessions, storage, hermes=reachable)
+    archive = await sessions_archive_id(sessions, org, conversation)
+    await service.resume(org, archive)
+
+    assert attempts == ["purge", "purged"]
+    assert await _session_count(sessions, args) == 0
+
+
+async def sessions_archive_id(sessions, org, conversation):  # noqa: ANN001, ANN201
+    from src.models.archive_manifest import ArchiveJob
+
+    async with sessions() as session:
+        await session.execute(text("SELECT set_config('app.current_org_id', :o, true)"), {"o": str(org)})
+        return await session.scalar(select(ArchiveJob.id).where(ArchiveJob.conversation_id == conversation))

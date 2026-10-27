@@ -328,6 +328,10 @@ class MemoryStore:
     async def sweep(self, cutoff: float) -> int:
         return 0
 
+    async def delete_conversation(self, org: str, conversation: str) -> int:
+        removed = len(self.objects.pop((org, conversation), {}))
+        return removed + (self.latest_sha.pop((org, conversation), None) is not None)
+
 
 WORKSPACE = _tar(
     [
@@ -628,3 +632,37 @@ def test_a_clarify_answer_is_bounded(lifecycle, monkeypatch, body) -> None:
     response = TestClient(app).post(f"/hermes/sandboxes/{SESSION}/runs/run_1/clarify", json=body)
 
     assert response.status_code in (400, 422)
+
+
+@pytest.mark.asyncio
+async def test_purging_a_conversation_removes_its_sandboxes_and_every_snapshot(lifecycle) -> None:
+    sandboxes, daemon, store = lifecycle
+    await _create(sandboxes)
+    await sandboxes.snapshot(SESSION)
+    other = "b" * 32
+    await sandboxes.create(session_id=other, org_id=ORG, conversation_id="conv-2", token=TOKEN, model="m")
+    store.objects[(ORG, "conv-2")] = {"x": b"kept"}
+
+    purged = await sandboxes.purge_conversation(ORG, CONVERSATION)
+    again = await sandboxes.purge_conversation(ORG, CONVERSATION)
+
+    assert purged == {"sandboxes": 1, "snapshots": 2} and again == {"sandboxes": 0, "snapshots": 0}
+    assert (ORG, CONVERSATION) not in store.objects and store.latest_sha.get((ORG, CONVERSATION)) is None
+    assert daemon.container_map[resource_name(SESSION)].deleted
+    assert sandboxes.get(other).conversation_id == "conv-2" and store.objects[(ORG, "conv-2")] == {"x": b"kept"}
+
+
+def test_the_purge_route_checks_its_identifiers(lifecycle, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from src import hermes_routes
+    from src.main import app
+
+    sandboxes, _, _ = lifecycle
+    monkeypatch.setattr(hermes_routes, "sandboxes", sandboxes)
+    monkeypatch.setattr(hermes_routes, "settings", Settings(hermes_enabled=True))
+    client = TestClient(app)
+
+    assert client.delete(f"/hermes/conversations/{ORG}/{CONVERSATION}").json() == {"sandboxes": 0, "snapshots": 0}
+    assert client.delete(f"/hermes/conversations/{ORG}/conv_1").status_code == 400
+    assert client.delete(f"/hermes/conversations/{ORG}/conv%2F..").status_code == 404

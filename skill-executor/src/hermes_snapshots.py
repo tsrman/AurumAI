@@ -278,6 +278,22 @@ class SnapshotStore:
             path.unlink(missing_ok=True)
             raise SnapshotError("hermes_snapshot_invalid")
 
+    async def delete_conversation(self, org_id: str, conversation_id: str) -> int:
+        """Delete every snapshot object of one conversation (the archive purge)."""
+        base = prefix(org_id, conversation_id)
+        bucket = self._settings.s3_bucket
+        removed = 0
+        try:
+            async with self._client() as s3:
+                paginator = s3.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(Bucket=bucket, Prefix=base):
+                    for item in page.get("Contents") or []:
+                        await s3.delete_object(Bucket=bucket, Key=item["Key"])
+                        removed += 1
+        except Exception:
+            raise SnapshotError("hermes_snapshot_store_failed") from None
+        return removed
+
     async def sweep(self, cutoff: float) -> int:
         """Delete snapshot objects last written before `cutoff` (the retention)."""
         removed = 0
