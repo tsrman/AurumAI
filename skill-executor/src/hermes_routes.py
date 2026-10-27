@@ -41,6 +41,8 @@ _STATUS = {
     "hermes_capacity_exhausted": 503,
     "hermes_workspace_full": 507,
     "hermes_workspace_lost": 410,
+    "hermes_clarify_settled": 409,
+    "hermes_clarify_failed": 502,
 }
 
 
@@ -66,6 +68,14 @@ class RunRequest(BaseModel):
     input: str = Field(min_length=1, max_length=1_000_000)
     session_id: str = Field(min_length=1, max_length=255)
     conversation_history: list[dict[str, Any]] | None = None
+
+
+class ClarifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    execution_generation: int = Field(ge=0, strict=True)
+    answer: str = Field(min_length=1, max_length=16000)
 
 
 def _available() -> None:
@@ -169,6 +179,18 @@ async def stop_run(session_id: str, run_id: str) -> dict[str, str]:
     except HermesSandboxError as exc:
         raise _error(exc) from None
     return {"status": "stopping"}
+
+
+@router.post("/sandboxes/{session_id}/runs/{run_id}/clarify")
+async def clarify_run(session_id: str, run_id: str, request: ClarifyRequest) -> dict[str, str]:
+    _available()
+    if not run_id.replace("_", "").isalnum() or len(run_id) > 128:
+        raise HTTPException(status_code=400, detail="Invalid run id")
+    try:
+        await sandboxes.clarify(session_id, run_id, request.model_dump())
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+    return {"status": "answered"}
 
 
 @router.post("/sandboxes/{session_id}/snapshot")

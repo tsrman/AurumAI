@@ -65,7 +65,7 @@ SANDBOX_UID = 10001
 # Isolated gateway mode for internal bridge networks arrived in Docker 28.
 MIN_DOCKER_API = (1, 48)
 DISABLED_TOOLSETS = (
-    "browser", "clarify", "computer_use", "cronjob", "discord", "discord_admin",
+    "browser", "computer_use", "cronjob", "discord", "discord_admin",
     "feishu_doc", "feishu_drive", "homeassistant", "image_gen", "kanban", "search",
     "spotify", "tts", "video", "video_gen", "web", "x_search", "yuanbao",
     # Hermes 0.22: remote connectors through Nous's tool gateway.
@@ -127,7 +127,12 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
         "terminal": {"backend": "local"},
         # The sandbox is the boundary; Hermes's hardline patterns still apply.
         "approvals": {"mode": "off"},
-        "agent": {"disabled_toolsets": list(DISABLED_TOOLSETS)},
+        # Questions to the user go through the platform's question cards, which
+        # expire after an hour; the platform answers "skip" then, so Hermes's
+        # own wait is longer.
+        "agent": {"disabled_toolsets": list(DISABLED_TOOLSETS), "clarify_timeout": 4200},
+        # The API server's toolset leaves clarify out.
+        "platform_toolsets": {"api_server": ["hermes-api-server", "clarify"]},
         # The platform tools stay listed by name instead of behind the
         # tool_search bridge; Nous's connector gateway and update checks are off.
         "tools": {"tool_search": {"enabled": "off"}, "connectors": {"enabled": False}},
@@ -657,6 +662,25 @@ class DockerHermesSandboxes:
     async def stop(self, session_id: str, run_id: str) -> None:
         sandbox = self.get_running(session_id)
         await self._exec(sandbox, ["hermes-relay", "stop", run_id])
+
+    async def clarify(self, session_id: str, run_id: str, body: dict[str, Any]) -> None:
+        """Answer a run's pending question. The answer is the user's text, so it
+        goes in a file, never on the command line."""
+        sandbox = self.get_running(session_id)
+        name = hashlib.sha256(f"{run_id}:{body['request_id']}".encode()).hexdigest()
+        container = await self.docker.containers.get(sandbox.container_id)
+        await container.put_archive(  # type: ignore[no-untyped-call]
+            "/workspace", _tar({f".aurum/clarify/{name}.json": json.dumps(body).encode()})
+        )
+        _, output = await self._exec(
+            sandbox, ["hermes-relay", "clarify", run_id, f"/workspace/.aurum/clarify/{name}.json"]
+        )
+        lines, _ = bounded_json_lines(output + b"\n", self._settings.hermes_event_line_max_bytes)
+        status = next((line.get("status") for line in lines if line.get("type") == "clarify"), None)
+        if status in (404, 409):
+            raise HermesSandboxError("hermes_clarify_settled")
+        if not isinstance(status, int) or status >= 300:
+            raise HermesSandboxError("hermes_clarify_failed")
 
     # Snapshots ---------------------------------------------------------------
 

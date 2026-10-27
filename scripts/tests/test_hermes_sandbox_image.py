@@ -67,6 +67,7 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
     # "stalled": another subscriber holds it, so only keepalives arrive.
     events_mode = "normal"
     polls: list[str] = []
+    clarified: list[tuple[str, dict]] = []
 
     def log_message(self, *args: object) -> None:
         pass
@@ -82,6 +83,11 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != "Bearer relay-key":
             return self._send(401, b"{}")
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path.endswith("/clarify"):
+            FakeHermes.clarified.append((self.path, body))
+            if body["request_id"] == "settled":
+                return self._send(409, b'{"error": {"code": "stale_generation"}}')
+            return self._send(200, b'{"status": "resolved"}')
         FakeHermes.runs.append(body)
         self._send(202, json.dumps({"run_id": f"run_{len(FakeHermes.runs)}", "status": "started"}).encode())
 
@@ -109,6 +115,7 @@ class FakeHermes(http.server.BaseHTTPRequestHandler):
 @pytest.fixture
 def relay(tmp_path: Path):  # noqa: ANN201
     FakeHermes.runs, FakeHermes.statuses, FakeHermes.events_mode, FakeHermes.polls = [], {}, "normal", []
+    FakeHermes.clarified = []
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeHermes)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     home = tmp_path / ".hermes"
@@ -183,6 +190,22 @@ def test_a_stream_held_by_another_subscriber_ends_once_the_run_has(relay) -> Non
 
     assert [line["type"] for line in lines] == ["started", "result"]
     assert lines[-1]["status"] == "completed"
+
+
+def test_clarify_answers_a_pending_question_from_a_file_it_removes(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    answer = tmp_path / "answer.json"
+    answer.write_text(json.dumps({"request_id": "p1", "execution_generation": 1, "answer": "Rome"}))
+    stale = tmp_path / "stale.json"
+    stale.write_text(json.dumps({"request_id": "settled", "execution_generation": 1, "answer": "x"}))
+
+    assert run("clarify", "run_1", str(answer)) == [{"type": "clarify", "status": 200}]
+    assert run("clarify", "run_1", str(stale)) == [{"type": "clarify", "status": 409}]
+    assert FakeHermes.clarified[0] == (
+        "/v1/runs/run_1/clarify",
+        {"request_id": "p1", "execution_generation": 1, "answer": "Rome"},
+    )
+    assert not answer.exists() and not stale.exists()
 
 
 def test_active_lists_the_recent_runs_hermes_still_runs(relay) -> None:

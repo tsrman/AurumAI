@@ -12,6 +12,7 @@ from src.activities import (
 )
 from src.config import settings
 from src.hermes_activities import (
+    hermes_answer_question,
     hermes_bind_turn,
     hermes_close_session,
     hermes_prepare_sandbox,
@@ -71,6 +72,7 @@ async def main() -> None:
             exec_in_skill_session,
             close_skill_session,
             hermes_prepare_sandbox,
+            hermes_answer_question,
             hermes_bind_turn,
             hermes_unbind_turn,
             hermes_run_turn,

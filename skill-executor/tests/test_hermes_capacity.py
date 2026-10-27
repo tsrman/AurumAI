@@ -296,3 +296,27 @@ async def test_an_oversized_workspace_is_removed_keeping_the_last_snapshot_that_
     with pytest.raises(HermesSandboxDropped, match="too_large"):
         await sandboxes.close(_session(2), snapshot=True)
     assert resource_name(_session(2)) not in daemon.volume_map
+
+
+@pytest.mark.asyncio
+async def test_a_clarify_answer_reaches_the_relay_through_a_file(make, monkeypatch) -> None:
+    sandboxes, daemon, _, _ = make()
+    await _create(sandboxes, 1)
+    answers = iter([b'{"type":"clarify","status":200}', b'{"type":"clarify","status":409}'])
+    commands: list[list[str]] = []
+
+    async def exec_(sandbox: Any, cmd: list[str]) -> tuple[int, bytes]:
+        commands.append(cmd)
+        return 0, next(answers)
+
+    monkeypatch.setattr(sandboxes, "_exec", exec_)
+    body = {"request_id": "abc123", "execution_generation": 1, "answer": "Rome; rm -rf /"}
+
+    await sandboxes.clarify(_session(1), "run_1", body)
+    with pytest.raises(HermesSandboxError, match="hermes_clarify_settled"):
+        await sandboxes.clarify(_session(1), "run_1", body)
+
+    path = commands[0][3]
+    assert commands[0][:3] == ["hermes-relay", "clarify", "run_1"] and path.startswith("/workspace/.aurum/clarify/")
+    [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
+    assert b"Rome; rm -rf /" in archive

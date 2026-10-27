@@ -40,6 +40,7 @@ with workflow.unsafe.imports_passed_through():
         web_tool_error_context,
     )
     from src.workflows.tools import extract_tool_calls
+    from src.workflows.hermes_questions import RECONCILE, HermesQuestions
     from src.workflows.user_questions import (
         QuestionWaitState,
         application_error_type,
@@ -163,6 +164,7 @@ class ConversationWorkflow:
         self.conversation_id = ""
         self._last_result = ""
         self._hermes_results: dict[str, dict[str, Any]] = {}
+        self._hermes_questions = HermesQuestions(self._question_wait)
 
     @workflow.run
     async def run(self, input: ConversationInput) -> str:
@@ -1213,6 +1215,8 @@ class ConversationWorkflow:
             for item in self.messages[:-1]
             if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
         ]
+        # Before the hand-off: the session may ask its first question at once.
+        self._hermes_questions.start(turn_id)
         await workflow.execute_activity(
             hand_off_hermes_turn,
             args=(
@@ -1233,9 +1237,12 @@ class ConversationWorkflow:
         # Waited in slices: each one keeps this runner and its token alive,
         # which chat requests do for other turns. The session's own deadline
         # ends the run first; the total only covers a session that never answers.
-        waited = 0
+        # While a question waits for its answer the slices are shorter.
+        questions = self._hermes_questions
+        waited = since_touch = 0
         while turn_id not in self._hermes_results and not self._cancelled:
             if waited >= settings.hermes_turn_deadline_seconds + 900:
+                await questions.close()
                 await workflow.execute_activity(
                     cancel_hermes_turn,
                     args=(turn_id,),
@@ -1243,13 +1250,27 @@ class ConversationWorkflow:
                     retry_policy=_ACTIVITY_RETRY_POLICY,
                 )
                 raise ApplicationError("hermes_turn_timeout")
+            await questions.step(
+                self.conversation_id, execution, message.get("user_questions_enabled") is True
+            )
+            if turn_id in self._hermes_results or self._cancelled:
+                break
+            slice_seconds = (
+                min(int(RECONCILE.total_seconds()), _HERMES_TOUCH_SECONDS - since_touch)
+                if questions.waiting
+                else _HERMES_TOUCH_SECONDS - since_touch
+            )
             try:
                 await workflow.wait_condition(
-                    lambda: turn_id in self._hermes_results or self._cancelled,
-                    timeout=timedelta(seconds=_HERMES_TOUCH_SECONDS),
+                    lambda: turn_id in self._hermes_results or self._cancelled or questions.changed(),
+                    timeout=timedelta(seconds=slice_seconds),
                 )
+                continue
             except asyncio.TimeoutError:
-                waited += _HERMES_TOUCH_SECONDS
+                waited += slice_seconds
+                since_touch += slice_seconds
+            if since_touch >= _HERMES_TOUCH_SECONDS:
+                since_touch = 0
                 try:
                     await workflow.execute_activity(
                         touch_hermes_turn,
@@ -1260,6 +1281,7 @@ class ConversationWorkflow:
                 except ActivityError:
                     # The next slice tries again; the turn itself goes on.
                     workflow.logger.warning(f"Could not keep the runner for Hermes turn {turn_id}")
+        await questions.close()
         if turn_id not in self._hermes_results:
             await workflow.execute_activity(
                 cancel_hermes_turn,
@@ -1349,6 +1371,14 @@ class ConversationWorkflow:
     @workflow.signal(name="question_available")
     async def question_available(self, question_id: str, version: int) -> None:
         self._question_wait.notify(question_id, version)
+
+    @workflow.signal(name="hermes_question")
+    async def hermes_question(self, question: dict[str, Any]) -> None:
+        self._hermes_questions.asked(question)
+
+    @workflow.signal(name="hermes_question_settled")
+    async def hermes_question_settled(self, settled: dict[str, Any]) -> None:
+        self._hermes_questions.settled(settled)
 
 
 def _hermes_tool_cards(result: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:

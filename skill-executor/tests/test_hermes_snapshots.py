@@ -603,3 +603,28 @@ async def test_restore_timeouts_and_a_vanished_stopped_container_have_codes(life
     with pytest.raises(HermesSandboxError, match="snapshot_timeout"):
         await _create(sandboxes)
     assert resource_name(SESSION) not in daemon.volume_map
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"request_id": "../x", "execution_generation": 1, "answer": "a"},
+        {"request_id": "abc", "execution_generation": "1", "answer": "a"},
+        {"request_id": "abc", "execution_generation": 1, "answer": ""},
+        {"request_id": "abc", "execution_generation": 1, "answer": "a" * 16001},
+        {"request_id": "abc", "execution_generation": 1, "answer": "a", "extra": 1},
+    ],
+)
+def test_a_clarify_answer_is_bounded(lifecycle, monkeypatch, body) -> None:
+    from fastapi.testclient import TestClient
+
+    from src import hermes_routes
+    from src.main import app
+
+    sandboxes, _, _ = lifecycle
+    monkeypatch.setattr(hermes_routes, "sandboxes", sandboxes)
+    monkeypatch.setattr(hermes_routes, "settings", Settings(hermes_enabled=True))
+
+    response = TestClient(app).post(f"/hermes/sandboxes/{SESSION}/runs/run_1/clarify", json=body)
+
+    assert response.status_code in (400, 422)

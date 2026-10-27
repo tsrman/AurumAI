@@ -198,7 +198,8 @@
         "web_search": "Searching sources",
         "web_read": "Reading a page",
         "image": "Working on an image",
-        "other": "Using a tool"
+        "other": "Using a tool",
+        "question": "Asking you"
       }
     },
     "thinking": {

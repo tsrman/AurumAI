@@ -797,7 +797,8 @@ async def chat_stream(
             "content": user_message.content,
             "turn_id": str(turn_id),
             # Hermes reaches web, images and questions through its own bridge.
-            "user_questions_enabled": settings.USER_QUESTIONS_ENABLED and not hermes,
+            # Hermes asks through its clarify tool, as the turn's questions.
+            "user_questions_enabled": settings.USER_QUESTIONS_ENABLED,
             "web_tools_enabled": web_tools_enabled and not hermes,
             "image_generation_enabled": image_generation_enabled and not hermes,
             "image_editing_enabled": image_editing_enabled and not hermes,

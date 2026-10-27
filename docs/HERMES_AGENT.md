@@ -654,10 +654,36 @@ Each phase is a separate PR behind the flag:
        again for the next turn;
      - sources and images under the answer, which ordinary chat shows, come
        later: the bridge's results are not read back into the answer yet;
-   - 4c: questions to the user through Hermes's `clarify`, and deleting a
-     conversation's snapshots in the archive purge. Recording the snapshot
-     checksum in the session row gets harder now that skill-executor also
-     retires sandboxes on its own, since the backend never sees that sha.
+   - 4c, split into two changes:
+     - 4c-i, implemented: questions to the user through Hermes's `clarify`
+       (Hermes 0.22). Accepted at runtime by `./smoke-test-hermes-sandbox.sh`:
+       a question becomes the turn's question card, the user's answer through
+       the ordinary answer route reaches Hermes, and with questions off the
+       question is skipped. How it works:
+       - skill-executor enables `clarify` for the API server
+         (`platform_toolsets.api_server`, which leaves it out by default) and
+         sets Hermes's own wait (`agent.clarify_timeout`) past the platform
+         question's hour; answers go through `hermes-relay clarify` from a
+         file and `POST /hermes/sandboxes/{id}/runs/{run}/clarify`;
+       - the run activity forwards each `clarify.request` and
+         `clarify.settled` to the conversation workflow, bounded: an id of a
+         fixed shape, the question without Hermes's reply hint (4000
+         characters), at most eight choices without its "(Recommended)" mark;
+       - the conversation workflow asks it as an ordinary question of the turn
+         (one at a time, as Hermes asks them) inside its five-minute touches,
+         and signals the answer to the session workflow, which answers the run
+         while it follows it. A chosen option goes back as the choice's text;
+       - a question the user cannot be asked (questions off, the turn's limit)
+         or does not answer before the card expires is answered `skip`; a
+         question Hermes settles itself (its timeout, the run ended) loses its
+         card. Several answers to a multi-select question are typed as text;
+       - a `clarify` card shows "Asking you" while Hermes waits.
+     - 4c-ii: deleting a conversation's snapshots in the archive purge. The
+       backend's object store credentials are scoped to
+       `conversation-images/`, and only tool-worker reaches skill-executor, so
+       the purge goes through a tool-worker workflow. Recording the snapshot
+       checksum in the session row gets harder now that skill-executor also
+       retires sandboxes on its own, since the backend never sees that sha.
    - Hermes 0.22, implemented: the sandbox runs Hermes 0.22.5. Hermes no longer
      ships as a package (its build refuses outside Nix, and PyPI ends at 0.19.0),
      so the image installs the release's source tree from its GitHub tag

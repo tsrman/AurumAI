@@ -12,6 +12,9 @@ the agent can stop the server and answer in its place.
                    starts the run once per key, then streams it
   events RUN_ID    replays and follows a run's events
   stop RUN_ID      asks Hermes to stop a run
+  clarify RUN FILE answers a run's pending question; FILE (placed by
+                   skill-executor, then removed) holds {"request_id",
+                   "execution_generation", "answer"}
   active           the recent runs Hermes still reports as queued or running
 """
 
@@ -125,6 +128,20 @@ def run(path: str) -> int:
     return follow(run_id)
 
 
+def clarify(run_id: str, path: str) -> int:
+    with open(path) as answer_file:
+        body = json.load(answer_file)
+    os.unlink(path)
+    try:
+        with request("POST", f"/v1/runs/{run_id}/clarify", body) as response:
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        # 409: the question was settled meanwhile (answered, timed out, run ended).
+        status = exc.code
+    emit("clarify", status=status)
+    return 0 if status < 300 else 3
+
+
 def active() -> int:
     runs = os.path.join(STATE, "runs")
     try:
@@ -162,13 +179,15 @@ def main(argv: list[str]) -> int:
         return run(argv[1])
     if command == "events" and len(argv) == 2:
         return follow(argv[1])
+    if command == "clarify" and len(argv) == 3:
+        return clarify(argv[1], argv[2])
     if command == "active" and len(argv) == 1:
         return active()
     if command == "stop" and len(argv) == 2:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|active", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|active", file=sys.stderr)
     return 2
 
 

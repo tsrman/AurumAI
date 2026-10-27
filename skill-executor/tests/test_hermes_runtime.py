@@ -234,9 +234,7 @@ def test_generated_config_disables_unneeded_toolsets() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 
     assert config["approvals"] == {"mode": "off"}
-    assert {"web", "browser", "cronjob", "clarify", "computer_use", "connections"} <= set(
-        config["agent"]["disabled_toolsets"]
-    )
+    assert {"web", "browser", "cronjob", "computer_use", "connections"} <= set(config["agent"]["disabled_toolsets"])
     assert config["terminal"] == {"backend": "local"}
 
 
@@ -248,6 +246,16 @@ def test_generated_config_lists_the_platform_tools_directly_and_reaches_nothing_
     # Nous's remote connector gateway, and update checks.
     assert config["tools"]["connectors"] == {"enabled": False}
     assert config["updates"] == {"check": False}
+
+
+def test_generated_config_lets_hermes_ask_the_user_until_the_platform_question_expires() -> None:
+    config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
+
+    assert "clarify" not in config["agent"]["disabled_toolsets"]
+    # The API server's own toolset leaves clarify out.
+    assert config["platform_toolsets"] == {"api_server": ["hermes-api-server", "clarify"]}
+    # Past the platform question's hour, so the platform answers first.
+    assert config["agent"]["clarify_timeout"] > 3600
 
 
 def test_generated_config_reaches_the_platform_tools_through_the_egress() -> None:

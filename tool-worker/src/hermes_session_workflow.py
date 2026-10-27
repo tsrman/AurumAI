@@ -25,6 +25,8 @@ from temporalio.exceptions import ActivityError, ApplicationError
 HERMES_SESSION_WORKFLOW = "HermesSessionWorkflow"
 TURN_SIGNAL = "hermes_turn"
 CANCEL_SIGNAL = "hermes_cancel_turn"
+# The user's answer to a question the running turn asked (see hermes_questions).
+ANSWER_SIGNAL = "hermes_answer_question"
 RESULT_SIGNAL = "hermes_turn_result"
 # Continue-as-new after this many turns keeps the history bounded.
 TURNS_PER_RUN = 50
@@ -73,6 +75,7 @@ class HermesSessionWorkflow:
         self._cancelled: set[str] = set()
         self._running: str | None = None
         self._handled: list[str] = []
+        self._answers: list[dict[str, Any]] = []
 
     @workflow.signal(name=TURN_SIGNAL)
     def turn(self, turn: HermesTurn) -> None:
@@ -83,6 +86,11 @@ class HermesSessionWorkflow:
     @workflow.signal(name=CANCEL_SIGNAL)
     def cancel_turn(self, turn_id: str) -> None:
         self._cancelled.add(turn_id)
+
+    @workflow.signal(name=ANSWER_SIGNAL)
+    def answer_question(self, answer: dict[str, Any]) -> None:
+        if answer.get("turn_id") == self._running and self._running is not None:
+            self._answers.append(answer)
 
     @workflow.run
     async def run(self, start: HermesSessionInput) -> None:
@@ -205,7 +213,15 @@ class HermesSessionWorkflow:
     async def _follow(self, start: HermesSessionInput, turn: HermesTurn, session_id: str) -> dict[str, Any]:
         run = workflow.start_activity(
             "hermes_run_turn",
-            args=(session_id, turn.turn_id, start.conversation_id, turn.text, turn.history, start.org_id),
+            args=(
+                session_id,
+                turn.turn_id,
+                start.conversation_id,
+                turn.text,
+                turn.history,
+                start.org_id,
+                turn.parent_workflow_id,
+            ),
             # The deadline covers every attempt, not each one.
             schedule_to_close_timeout=timedelta(seconds=turn.deadline_seconds),
             heartbeat_timeout=timedelta(seconds=60),
@@ -214,17 +230,42 @@ class HermesSessionWorkflow:
             cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
             result_type=dict,
         )
-        cancelled = asyncio.ensure_future(workflow.wait_condition(lambda: turn.turn_id in self._cancelled))
-        done, _ = await workflow.wait([run, cancelled], return_when=asyncio.FIRST_COMPLETED)
-        if run not in done:
-            run.cancel()
-            try:
-                await run
-            except (ActivityError, asyncio.CancelledError):
-                pass
-            return {"status": "cancelled"}
-        cancelled.cancel()
-        return dict(await run)
+        while True:
+            woken = asyncio.ensure_future(
+                workflow.wait_condition(lambda: turn.turn_id in self._cancelled or bool(self._answers))
+            )
+            done, _ = await workflow.wait([run, woken], return_when=asyncio.FIRST_COMPLETED)
+            if run in done:
+                woken.cancel()
+                self._answers.clear()
+                return dict(await run)
+            if turn.turn_id in self._cancelled:
+                run.cancel()
+                try:
+                    await run
+                except (ActivityError, asyncio.CancelledError):
+                    pass
+                return {"status": "cancelled"}
+            await self._answer(session_id, self._answers.pop(0))
+
+    async def _answer(self, session_id: str, answer: dict[str, Any]) -> None:
+        try:
+            await workflow.execute_activity(
+                "hermes_answer_question",
+                args=(
+                    session_id,
+                    str(answer.get("run_id")),
+                    str(answer.get("prompt_id")),
+                    answer.get("execution_generation"),
+                    str(answer.get("answer")),
+                ),
+                start_to_close_timeout=timedelta(seconds=90),
+                retry_policy=RetryPolicy(maximum_attempts=3, maximum_interval=timedelta(seconds=10)),
+                result_type=str,
+            )
+        except ActivityError:
+            # Hermes's own timeout ends a question nobody answers; the turn goes on.
+            workflow.logger.warning("Could not answer a Hermes question")
 
     async def _retire(self, session_id: str | None, parent_queue: str | None) -> None:
         if session_id is None:

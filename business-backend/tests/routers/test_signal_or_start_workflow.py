@@ -55,6 +55,8 @@ def test_backend_stub_and_runner_signal_contracts_stay_identical() -> None:
         "cancel_turn": ["str"],
         "question_available": ["str", "int"],
         "hermes_turn_result": ["dict[str, Any]"],
+        "hermes_question": ["dict[str, Any]"],
+        "hermes_question_settled": ["dict[str, Any]"],
     }
 
 
