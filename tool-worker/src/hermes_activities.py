@@ -9,6 +9,7 @@ hermes_progress).
 """
 
 import asyncio
+import hashlib
 import json
 from typing import Any
 
@@ -217,6 +218,54 @@ async def _follow_run(
                 elif message.get("type") == "result":
                     return _outcome(message, progress)
     raise _failure("hermes_interrupted")
+
+
+def _sha256(content: str) -> str:
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+@activity.defn(name="hermes_load_memory")
+async def hermes_load_memory(token: str, session_id: str) -> dict[str, dict[str, Any]]:
+    """Write the user's memory into the sandbox before the turn. Only versions
+    and hashes come back: the memory itself stays out of the workflow's history."""
+    response = await _backend("GET", "/memory", token)
+    if response.status_code != 200:
+        raise _failure(_code(response, "hermes_backend_unavailable"))
+    memory = {kind: response.json()[kind] for kind in ("memory", "user")}
+    written = await _executor(
+        "PUT", f"/sandboxes/{session_id}/memory", {kind: str(item["content"]) for kind, item in memory.items()}
+    )
+    if written.status_code != 204:
+        raise _failure(_code(written, "hermes_sandbox_unavailable"))
+    return {kind: {"version": int(item["version"]), "sha256": _sha256(str(item["content"]))} for kind, item in memory.items()}
+
+
+@activity.defn(name="hermes_save_memory")
+async def hermes_save_memory(token: str, session_id: str, loaded: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Store what the turn changed, on the version written before it; a
+    conflict (another conversation, or the user cleared it) drops the change."""
+    response = await _executor("GET", f"/sandboxes/{session_id}/memory")
+    if response.status_code != 200:
+        raise _failure(_code(response, "hermes_sandbox_unavailable"))
+    outcome: dict[str, str] = {}
+    for kind, before in loaded.items():
+        content = response.json().get(kind)
+        if not isinstance(content, str):
+            outcome[kind] = "unreadable"
+            continue
+        if _sha256(content) == before.get("sha256"):
+            outcome[kind] = "unchanged"
+            continue
+        stored = await _backend(
+            "PUT", "/memory", token, {"kind": kind, "content": content, "baseVersion": int(before.get("version", 0))}
+        )
+        if stored.status_code == 409:
+            outcome[kind] = "conflict"
+        elif stored.status_code == 200:
+            outcome[kind] = "stored"
+        else:
+            raise _failure(_code(stored, "hermes_backend_unavailable"))
+    return outcome
 
 
 @activity.defn(name="hermes_purge_conversation")

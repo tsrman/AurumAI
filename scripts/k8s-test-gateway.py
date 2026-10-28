@@ -794,6 +794,27 @@ def _content_for(request: CompletionRequest) -> str:
     return _outer_response(request.messages)
 
 
+_HERMES_MEMORY_SENTINEL = "AURUM_MEMORY_SENTINEL"
+
+
+def _hermes_memory_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_MEMORY_ADD: Hermes's memory tool adds a sentinel entry.
+    HERMES_MEMORY_SHOW: whether the sentinel is in the system prompt."""
+    last = _last_user_message(request.messages)
+    if "HERMES_MEMORY_SHOW" in last:
+        seen = any(message.role == "system" and _HERMES_MEMORY_SENTINEL in message.content for message in request.messages)
+        return "HERMES_MEMORY_SEEN" if seen else "HERMES_MEMORY_UNSEEN"
+    if "HERMES_MEMORY_ADD" not in last:
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    if any(message.role == "tool" for message in request.messages[last_user + 1 :]):
+        return "HERMES_MEMORY_ADDED"
+    if "memory" not in {str((item.get("function") or {}).get("name")) for item in request.tools}:
+        return "HERMES_MEMORY_NOT_OFFERED"
+    entry = {"action": "add", "target": "memory", "content": f"{_HERMES_MEMORY_SENTINEL}: the trip starts in Rome"}
+    return {"name": "memory", "arguments": json.dumps(entry)}
+
+
 def _hermes_clarify_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """HERMES_CLARIFY: one question through Hermes's clarify tool, then the answer as text."""
     if "HERMES_CLARIFY" not in _last_user_message(request.messages):
@@ -934,7 +955,7 @@ async def chat_completions(request: CompletionRequest) -> StreamingResponse:
         # running status before calling the gateway, giving the harness a
         # deterministic window for revoke/cancel. Never log prompt or key.
         await asyncio.sleep(float(os.getenv("TEST_GATEWAY_BARRIER_SECONDS", "3")))
-    hermes = _hermes_clarify_response(request) or _hermes_mcp_response(request)
+    hermes = _hermes_memory_response(request) or _hermes_clarify_response(request) or _hermes_mcp_response(request)
     if isinstance(hermes, dict):
         return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")
     if hermes is not None:

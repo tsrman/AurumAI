@@ -76,6 +76,9 @@ class HermesSessionWorkflow:
         self._running: str | None = None
         self._handled: list[str] = []
         self._answers: list[dict[str, Any]] = []
+        # What the user's memory was when written into the sandbox for the
+        # running turn: versions and hashes, never the memory itself.
+        self._memory: dict[str, Any] | None = None
 
     @workflow.signal(name=TURN_SIGNAL)
     def turn(self, turn: HermesTurn) -> None:
@@ -174,6 +177,8 @@ class HermesSessionWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=_RETRY,
         )
+        if workflow.patched("hermes-memory"):
+            self._memory = await self._memory_activity("hermes_load_memory", turn, session_id)
         return session_id
 
     async def _run_turn(
@@ -197,6 +202,10 @@ class HermesSessionWorkflow:
         except ApplicationError as exc:
             return session_id, {"status": "failed", "error": exc.type or str(exc)}
         finally:
+            if session_id is not None and self._memory is not None:
+                # While the turn is still bound: the backend takes memory only then.
+                await self._memory_activity("hermes_save_memory", turn, session_id, self._memory)
+            self._memory = None
             if session_id is not None:
                 try:
                     await workflow.execute_activity(
@@ -209,6 +218,20 @@ class HermesSessionWorkflow:
                     # The binding ends with the turn anyway: every check needs
                     # the bound turn to be active.
                     workflow.logger.warning("Could not unbind the Hermes session")
+
+    async def _memory_activity(self, name: str, turn: HermesTurn, session_id: str, *extra: Any) -> Any:
+        """Memory is best effort: a turn never fails for it."""
+        try:
+            return await workflow.execute_activity(
+                name,
+                args=(await self._token(turn.parent_task_queue), session_id, *extra),
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=_RETRY,
+                result_type=dict,
+            )
+        except (ActivityError, ApplicationError):
+            workflow.logger.warning(f"Hermes memory step {name} failed")
+            return None
 
     async def _follow(self, start: HermesSessionInput, turn: HermesTurn, session_id: str) -> dict[str, Any]:
         run = workflow.start_activity(

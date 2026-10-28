@@ -9,6 +9,7 @@ import {
 import { useModels } from "@/hooks/useModels";
 import { useAuth } from "@/providers/AuthProvider";
 import { useTranslations } from "next-intl";
+import { HermesMemorySection } from "@/components/aurum/settings/HermesMemorySection";
 
 export default function SettingsPage() {
   const t = useTranslations("settings");
@@ -127,6 +128,7 @@ export default function SettingsPage() {
           <p className="text-sm text-red-600">{t("saveFailed")}</p>
         )}
       </form>
+      <HermesMemorySection />
     </div>
   );
 }

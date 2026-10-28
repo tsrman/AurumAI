@@ -302,3 +302,55 @@ async def test_a_failed_conversation_purge_carries_skill_executors_code(http) ->
     with pytest.raises(ApplicationError) as raised:
         await ActivityEnvironment().run(hermes_activities.hermes_purge_conversation, "org-1", "conv-1")
     assert raised.value.type == "hermes_snapshot_store_failed"
+
+
+@pytest.mark.asyncio
+async def test_memory_is_written_in_and_only_its_versions_and_hashes_come_back(http) -> None:
+    router = http(
+        {
+            ("GET", "/v1/internal/hermes/memory"): httpx.Response(
+                200,
+                json={"memory": {"content": "repo uses uv", "version": 3}, "user": {"content": "", "version": 0}},
+            ),
+            ("PUT", f"/hermes/sandboxes/{SESSION}/memory"): httpx.Response(204),
+        }
+    )
+
+    loaded = await ActivityEnvironment().run(hermes_activities.hermes_load_memory, "t", SESSION)
+
+    assert router.requests[1][2] == {"memory": "repo uses uv", "user": ""}
+    assert "repo uses uv" not in json.dumps(loaded)
+    assert loaded["memory"]["version"] == 3 and loaded["user"]["version"] == 0
+
+
+@pytest.mark.asyncio
+async def test_only_changed_memory_is_stored_on_the_version_it_was_read_at(http) -> None:
+    import hashlib
+
+    same = hashlib.sha256(b"repo uses uv").hexdigest()
+    router = http(
+        {
+            ("GET", f"/hermes/sandboxes/{SESSION}/memory"): httpx.Response(
+                200, json={"memory": "repo uses uv", "user": "likes tea"}
+            ),
+            ("PUT", "/v1/internal/hermes/memory"): httpx.Response(409, json={"detail": {"code": "hermes_memory_conflict"}}),
+        }
+    )
+    loaded = {"memory": {"version": 3, "sha256": same}, "user": {"version": 0, "sha256": "other"}}
+
+    outcome = await ActivityEnvironment().run(hermes_activities.hermes_save_memory, "t", SESSION, loaded)
+
+    assert outcome == {"memory": "unchanged", "user": "conflict"}
+    [(_, _, body)] = [request for request in router.requests if request[0] == "PUT"]
+    assert body == {"kind": "user", "content": "likes tea", "baseVersion": 0}
+
+
+@pytest.mark.asyncio
+async def test_unreadable_memory_files_are_not_stored(http) -> None:
+    http({("GET", f"/hermes/sandboxes/{SESSION}/memory"): httpx.Response(200, json={"memory": None, "user": None})})
+
+    outcome = await ActivityEnvironment().run(
+        hermes_activities.hermes_save_memory, "t", SESSION, {"memory": {"version": 1, "sha256": "x"}}
+    )
+
+    assert outcome == {"memory": "unreadable"}

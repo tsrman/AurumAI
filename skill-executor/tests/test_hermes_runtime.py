@@ -248,6 +248,19 @@ def test_generated_config_lists_the_platform_tools_directly_and_reaches_nothing_
     assert config["updates"] == {"check": False}
 
 
+def test_generated_config_bounds_memory_as_the_platform_stores_it() -> None:
+    config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
+
+    assert config["memory"] == {
+        "memory_enabled": True,
+        "user_profile_enabled": True,
+        "write_approval": False,
+        "memory_char_limit": 2200,
+        "user_char_limit": 1375,
+        "provider": "",
+    }
+
+
 def test_generated_config_lets_hermes_ask_the_user_until_the_platform_question_expires() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 

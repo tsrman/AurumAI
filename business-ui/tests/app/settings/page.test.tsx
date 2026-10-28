@@ -23,6 +23,10 @@ vi.mock("@/hooks/useSettings", () => ({
   useUpdateSettings: () => updateState,
 }));
 
+vi.mock("@/components/aurum/settings/HermesMemorySection", () => ({
+  HermesMemorySection: () => null,
+}));
+
 vi.mock("@/hooks/useModels", () => ({
   useModels: () => modelsResult,
 }));

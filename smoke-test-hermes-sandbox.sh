@@ -394,6 +394,20 @@ chat_turn "$SKIP_TURN" HERMES_CLARIFY 4 false
 ANSWER=$(sql "SELECT content FROM messages WHERE turn_id='$SKIP_TURN' AND role='assistant'")
 [[ "$ANSWER" == *HERMES_CLARIFY_DONE:*'"user_response": "skip"'* ]] || fail "the skipped question did not end: $ANSWER"
 
+log "Hermes's memory is the user's: written back after the turn, brought into a fresh sandbox"
+MEMORY_TURN=$(fixture chat-turn "$CHAT_CONVERSATION" HERMES_MEMORY_ADD)
+chat_turn "$MEMORY_TURN" HERMES_MEMORY_ADD 5 false
+[[ "$(sql "SELECT content LIKE '%AURUM_MEMORY_SENTINEL%' AND version >= 1 FROM hermes_memories WHERE user_id='$(journal user)' AND kind='memory'")" == t ]] \
+  || fail "the memory Hermes wrote was not stored for the user"
+# Memory never travels in snapshots: a sandbox removed without one starts without it.
+curl -fsS -X DELETE "$EXECUTOR/hermes/sandboxes/$CHAT_SESSION" -o /dev/null || fail "removing the chat sandbox failed"
+SHOW_TURN=$(fixture chat-turn "$CHAT_CONVERSATION" HERMES_MEMORY_SHOW)
+chat_turn "$SHOW_TURN" HERMES_MEMORY_SHOW 6 false
+[[ "$(sql "SELECT content FROM messages WHERE turn_id='$SHOW_TURN' AND role='assistant'")" == *HERMES_MEMORY_SEEN* ]] \
+  || fail "a fresh sandbox did not get the user's memory"
+CHAT_SESSION=$(sql "SELECT replace(id::text,'-','') FROM hermes_sessions WHERE conversation_id='$CHAT_CONVERSATION' AND state='open'")
+[[ -n "$CHAT_SESSION" ]] || fail "the memory turn left no open session"
+
 log "the archive purge's workflow removes the conversation's sandbox and every snapshot"
 CHAT_PREFIX="local/aurum-ai-business/hermes-sessions/$ORG/$CHAT_CONVERSATION"
 curl -fsS -X POST "$EXECUTOR/hermes/sandboxes/$CHAT_SESSION/snapshot" -o /dev/null || fail "the chat sandbox was not snapshotted"

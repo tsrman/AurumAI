@@ -313,3 +313,18 @@ async def test_touching_keeps_the_runner_of_the_active_turn_only(hermes_env, mon
     assert active.status_code == 204
     assert touched == [(str(hermes_env.conversation_id), str(hermes_env.user_id), str(hermes_env.org_id), 1)]
     assert other.status_code == 403 and finished.status_code == 403
+
+
+async def test_a_turn_reads_its_users_memory_and_stores_it_on_the_version_it_read(hermes_env) -> None:
+    empty = await hermes_env.internal("GET", "/memory")
+    stored = await hermes_env.internal("PUT", "/memory", json={"kind": "user", "content": "likes tea", "baseVersion": 0})
+    stale = await hermes_env.internal("PUT", "/memory", json={"kind": "user", "content": "older read", "baseVersion": 0})
+    read = await hermes_env.internal("GET", "/memory")
+    await hermes_env.finish_turn()
+    after_turn = await hermes_env.internal("PUT", "/memory", json={"kind": "user", "content": "late", "baseVersion": 1})
+
+    assert empty.json() == {"memory": {"content": "", "version": 0}, "user": {"content": "", "version": 0}}
+    assert stored.status_code == 200 and stored.json() == {"content": "likes tea", "version": 1}
+    assert stale.status_code == 409 and "hermes_memory_conflict" in stale.text
+    assert read.json()["user"] == {"content": "likes tea", "version": 1}
+    assert after_turn.status_code == 403 and "hermes_turn_inactive" in after_turn.text

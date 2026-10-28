@@ -16,11 +16,16 @@ the agent can stop the server and answer in its place.
                    skill-executor, then removed) holds {"request_id",
                    "execution_generation", "answer"}
   active           the recent runs Hermes still reports as queued or running
+  memory-write FILE  writes the user's memory files; FILE (placed by
+                   skill-executor, then removed) holds {"memory", "user"}
+  memory-read      the memory files as Hermes left them: regular files only,
+                   bounded, valid UTF-8, else null
 """
 
 import hashlib
 import json
 import os
+import stat
 import sys
 import time
 import urllib.error
@@ -142,6 +147,47 @@ def clarify(run_id: str, path: str) -> int:
     return 0 if status < 300 else 3
 
 
+MEMORY_FILES = {"memory": "MEMORY.md", "user": "USER.md"}
+# Well above Hermes's character limits; the platform cuts to them.
+MEMORY_MAX_BYTES = 32 * 1024
+
+
+def memory_write(path: str) -> int:
+    with open(path) as request_file:
+        body = json.load(request_file)
+    os.unlink(path)
+    directory = os.path.join(HERMES_HOME, "memories")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    for kind, name in MEMORY_FILES.items():
+        # os.replace swaps the name itself, never a file a link points to.
+        write_atomic(os.path.join(directory, name), str(body.get(kind) or ""))
+    emit("memory-written")
+    return 0
+
+
+def _read_memory(path: str) -> str | None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as memory_file:
+        if not stat.S_ISREG(os.fstat(memory_file.fileno()).st_mode):
+            return None
+        data = memory_file.read(MEMORY_MAX_BYTES + 1)
+    if len(data) > MEMORY_MAX_BYTES:
+        return None
+    try:
+        return data.decode("utf-8").replace("\x00", "")
+    except UnicodeDecodeError:
+        return None
+
+
+def memory_read() -> int:
+    directory = os.path.join(HERMES_HOME, "memories")
+    emit("memory", **{kind: _read_memory(os.path.join(directory, name)) for kind, name in MEMORY_FILES.items()})
+    return 0
+
+
 def active() -> int:
     runs = os.path.join(STATE, "runs")
     try:
@@ -181,13 +227,17 @@ def main(argv: list[str]) -> int:
         return follow(argv[1])
     if command == "clarify" and len(argv) == 3:
         return clarify(argv[1], argv[2])
+    if command == "memory-write" and len(argv) == 2:
+        return memory_write(argv[1])
+    if command == "memory-read" and len(argv) == 1:
+        return memory_read()
     if command == "active" and len(argv) == 1:
         return active()
     if command == "stop" and len(argv) == 2:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|active", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|active", file=sys.stderr)
     return 2
 
 

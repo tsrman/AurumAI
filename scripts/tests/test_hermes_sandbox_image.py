@@ -208,6 +208,30 @@ def test_clarify_answers_a_pending_question_from_a_file_it_removes(relay, tmp_pa
     assert not answer.exists() and not stale.exists()
 
 
+def test_memory_is_written_and_read_back_only_from_regular_files(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    memories = tmp_path / ".hermes" / "memories"
+    request = tmp_path / "memory.json"
+    request.write_text(json.dumps({"memory": "repo uses uv", "user": "likes tea"}))
+
+    assert run("memory-write", str(request)) == [{"type": "memory-written"}]
+    assert not request.exists()
+    assert (memories / "MEMORY.md").read_text() == "repo uses uv"
+    assert oct((memories / "USER.md").stat().st_mode & 0o777) == "0o600"
+    assert run("memory-read") == [{"type": "memory", "memory": "repo uses uv", "user": "likes tea"}]
+
+    # The terminal can replace the files: a link, a FIFO or invalid text is not memory.
+    (memories / "USER.md").unlink()
+    (memories / "USER.md").symlink_to(tmp_path / ".hermes" / "config.yaml")
+    (memories / "MEMORY.md").write_bytes(b"\xff\xfe not text")
+    assert run("memory-read") == [{"type": "memory", "memory": None, "user": None}]
+    (memories / "USER.md").unlink()
+    os.mkfifo(memories / "USER.md")
+    (memories / "MEMORY.md").write_text("x" * 100_000)
+    [read] = run("memory-read")
+    assert read["user"] is None and read["memory"] is None
+
+
 def test_active_lists_the_recent_runs_hermes_still_runs(relay) -> None:
     run, tmp_path = relay
     assert run("active") == [{"type": "active", "run_ids": []}]
