@@ -1,5 +1,6 @@
 from src.models.conversation_image import ConversationImage
+from src.models.hermes_memory import HermesMemory
 from src.models.hermes_session import HermesSession
 from src.models.web_source import WebSource
 
-__all__ = ["ConversationImage", "HermesSession", "WebSource"]
+__all__ = ["ConversationImage", "HermesMemory", "HermesSession", "WebSource"]

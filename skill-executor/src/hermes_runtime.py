@@ -138,6 +138,16 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
         # tool_search bridge; Nous's connector gateway and update checks are off.
         "tools": {"tool_search": {"enabled": "off"}, "connectors": {"enabled": False}},
         "updates": {"check": False},
+        # The built-in store only, within the limits the platform keeps the
+        # user's memory to (business-backend's hermes_memories).
+        "memory": {
+            "memory_enabled": True,
+            "user_profile_enabled": True,
+            "write_approval": False,
+            "memory_char_limit": 2200,
+            "user_char_limit": 1375,
+            "provider": "",
+        },
         # Hermes connects when it starts and lists the tools once. The bridge
         # answers POST only, so there is no preflight probe, and a rare ping
         # keeps idle sandboxes from calling the backend between turns.
@@ -663,6 +673,28 @@ class DockerHermesSandboxes:
     async def stop(self, session_id: str, run_id: str) -> None:
         sandbox = self.get_running(session_id)
         await self._exec(sandbox, ["hermes-relay", "stop", run_id])
+
+    async def write_memory(self, session_id: str, memory: dict[str, str]) -> None:
+        """Write the user's memory files before a turn; through a file, as answers."""
+        sandbox = self.get_running(session_id)
+        name = secrets.token_hex(16)
+        container = await self.docker.containers.get(sandbox.container_id)
+        await container.put_archive(  # type: ignore[no-untyped-call]
+            "/workspace", _tar({f".aurum/memory/{name}.json": json.dumps(memory).encode()})
+        )
+        _, output = await self._exec(sandbox, ["hermes-relay", "memory-write", f"/workspace/.aurum/memory/{name}.json"])
+        if b'"memory-written"' not in output:
+            raise HermesSandboxError("hermes_memory_failed")
+
+    async def read_memory(self, session_id: str) -> dict[str, str | None]:
+        """The memory files as the turn left them; None where one is not usable."""
+        sandbox = self.get_running(session_id)
+        _, output = await self._exec(sandbox, ["hermes-relay", "memory-read"])
+        lines, _ = bounded_json_lines(output + b"\n", self._settings.hermes_event_line_max_bytes)
+        found = next((line for line in lines if line.get("type") == "memory"), None)
+        if found is None:
+            raise HermesSandboxError("hermes_memory_failed")
+        return {kind: value if isinstance(value, str) else None for kind, value in found.items() if kind in ("memory", "user")}
 
     async def clarify(self, session_id: str, run_id: str, body: dict[str, Any]) -> None:
         """Answer a run's pending question. The answer is the user's text, so it

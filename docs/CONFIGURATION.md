@@ -209,7 +209,9 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   `TOOL_WORKER_HERMES_KEEPALIVE_SECONDS` (30, below `APP_EVENT_SUBSCRIBE_TIMEOUT`)
   that the chat stream drops. With `APP_USER_QUESTIONS_ENABLED`, Hermes's questions
   (its `clarify` tool) become the turn's question cards under the same limits;
-  without it they are answered `skip`.
+  without it they are answered `skip`. Hermes's memory is kept per user in the
+  platform (`hermes_memories`), written into the sandbox before each turn and read
+  back after it; users see and clear it in their settings.
 - `POST /v1/hermes/mcp` is the platform tools' MCP endpoint (Streamable HTTP without
   a session: one JSON answer per POST, no server stream). It offers
   `knowledge_search` (only the files attached to the conversation), `web_search` and

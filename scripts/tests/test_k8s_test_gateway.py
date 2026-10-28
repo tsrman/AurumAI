@@ -1182,3 +1182,30 @@ def test_hermes_clarify_marker_asks_once_then_reports_the_answer() -> None:
     assert json.loads(call["function"]["arguments"])["questions"][0]["choices"] == ["Paris", "Rome"]
     assert "HERMES_CLARIFY_DONE:" in answered.text and "Rome" in answered.text
     assert "HERMES_CLARIFY_NOT_OFFERED" in unoffered.text
+
+
+def test_hermes_memory_markers_write_a_sentinel_and_report_seeing_it() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "memory"}}]
+
+    called = client.post(
+        "/v1/chat/completions", json={"messages": [{"role": "user", "content": "HERMES_MEMORY_ADD"}], "tools": tools}
+    )
+    [call] = json.loads(called.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+    seen = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                {"role": "system", "content": "Memory: AURUM_MEMORY_SENTINEL: the trip starts in Rome"},
+                {"role": "user", "content": "HERMES_MEMORY_SHOW"},
+            ]
+        },
+    )
+    unseen = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "HERMES_MEMORY_SHOW"}]})
+
+    assert call["function"]["name"] == "memory"
+    assert "AURUM_MEMORY_SENTINEL" in json.loads(call["function"]["arguments"])["content"]
+    assert "HERMES_MEMORY_SEEN" in seen.text and "HERMES_MEMORY_UNSEEN" in unseen.text

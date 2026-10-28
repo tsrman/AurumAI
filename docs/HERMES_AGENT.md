@@ -724,8 +724,38 @@ Each phase is a separate PR behind the flag:
        acceptance still checks that nothing listens beyond loopback;
      - Debian's SQLite (3.46) predates Hermes's WAL fix, so Hermes uses its
        rollback journal instead.
-5. **Memory and skill drafts.** Tables, hydrate and read-back, user settings and
-   admin approval.
+5. **Memory and skill drafts.** Split into three changes:
+   - 5a, implemented: memory. `hermes_memories` (organization, user, `memory` or
+     `user`, content within Hermes's 2200 and 1375 characters, version) has
+     FORCE RLS by organization, and every query also names the owning user; it
+     cascades with the user (the platform has no user deletion path yet, as for
+     `user_settings`). It is not conversation data: conversation archives
+     neither carry nor remove it. Accepted at runtime by
+     `./smoke-test-hermes-sandbox.sh`: what Hermes's memory tool writes in a turn
+     is stored for the user, and a fresh sandbox, which snapshots never carry
+     memory into, starts with it. How it works:
+     - while the turn is bound, the session workflow writes the user's memory
+       into the sandbox before the run (`hermes_load_memory`) and reads it back
+       after it, before unbinding (`hermes_save_memory`); the activities carry
+       only versions and hashes, so the memory stays out of Temporal history.
+       The steps are gated by `workflow.patched("hermes-memory")`, and a
+       failed step never fails the turn;
+     - what comes back is the sandbox's: `hermes-relay memory-read` takes only
+       regular files (no links or FIFOs), bounded and valid UTF-8, and the
+       backend cuts it to the limits at an entry boundary;
+     - it is stored only on the version it was written at
+       (`PUT /v1/internal/hermes/memory` with `baseVersion`; a missing row is
+       version 0), so a turn in another conversation, or the user clearing
+       it, wins over an older read. Clearing keeps the rows, empty, on a new
+       version;
+     - Hermes freezes the memory into a session's prompt at the session's
+       first run: a sandbox that keeps running sees changes made elsewhere in
+       its files (its own writes merge with them) but in its prompt only after
+       it starts again, at the latest after its idle time;
+     - users see and clear their own memory in their settings
+       (`GET`/`DELETE /v1/hermes/memory`), shown where Hermes can be used.
+   - 5b: skill drafts and their approval by an administrator.
+   - 5c: platform code skills in the sandbox, read-only.
 6. **Workflow node.** A `hermes` node type, billing and replay tests, and the
    choice for parallel Hermes nodes (see the open questions).
 

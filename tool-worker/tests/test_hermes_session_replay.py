@@ -11,8 +11,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.mark.asyncio
-async def test_a_session_recorded_before_questions_replays() -> None:
-    raw = json.loads((FIXTURES / "pre_clarify_hermes_session_v1.json").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("fixture", ["pre_clarify_hermes_session_v1.json", "pre_memory_hermes_session_v1.json"])
+async def test_a_session_recorded_before_questions_or_memory_replays(fixture: str) -> None:
+    raw = json.loads((FIXTURES / fixture).read_text(encoding="utf-8"))
     history = WorkflowHistory.from_json("hermes-session-conv-1", raw)
 
     result = await Replayer(workflows=[HermesSessionWorkflow]).replay_workflow(history, raise_on_replay_failure=False)

@@ -15,10 +15,12 @@ from src.hermes_activities import (
     hermes_answer_question,
     hermes_bind_turn,
     hermes_close_session,
+    hermes_load_memory,
     hermes_prepare_sandbox,
     hermes_purge_conversation,
     hermes_retire_sandbox,
     hermes_run_turn,
+    hermes_save_memory,
     hermes_unbind_turn,
 )
 from src.hermes_session_workflow import HEARTBEAT_THROTTLE, HermesSessionWorkflow
@@ -76,6 +78,8 @@ async def main() -> None:
             hermes_prepare_sandbox,
             hermes_answer_question,
             hermes_purge_conversation,
+            hermes_load_memory,
+            hermes_save_memory,
             hermes_bind_turn,
             hermes_unbind_turn,
             hermes_run_turn,

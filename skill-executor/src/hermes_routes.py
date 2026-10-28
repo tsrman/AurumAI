@@ -45,6 +45,7 @@ _STATUS = {
     "hermes_clarify_settled": 409,
     "hermes_clarify_failed": 502,
     "hermes_snapshot_key_invalid": 400,
+    "hermes_memory_failed": 502,
 }
 
 
@@ -70,6 +71,13 @@ class RunRequest(BaseModel):
     input: str = Field(min_length=1, max_length=1_000_000)
     session_id: str = Field(min_length=1, max_length=255)
     conversation_history: list[dict[str, Any]] | None = None
+
+
+class MemoryFiles(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memory: str = Field(max_length=2200)
+    user: str = Field(max_length=1375)
 
 
 class ClarifyRequest(BaseModel):
@@ -184,6 +192,25 @@ async def stop_run(session_id: str, run_id: str) -> dict[str, str]:
     except HermesSandboxError as exc:
         raise _error(exc) from None
     return {"status": "stopping"}
+
+
+@router.put("/sandboxes/{session_id}/memory", status_code=204)
+async def write_memory(session_id: str, files: MemoryFiles) -> Response:
+    _available()
+    try:
+        await sandboxes.write_memory(session_id, files.model_dump())
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+    return Response(status_code=204)
+
+
+@router.get("/sandboxes/{session_id}/memory")
+async def read_memory(session_id: str) -> dict[str, str | None]:
+    _available()
+    try:
+        return await sandboxes.read_memory(session_id)
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
 
 
 @router.post("/sandboxes/{session_id}/runs/{run_id}/clarify")

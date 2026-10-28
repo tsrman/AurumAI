@@ -304,7 +304,19 @@
     "saving": "Saving...",
     "save": "Save",
     "saved": "Settings saved",
-    "saveFailed": "Could not save settings"
+    "saveFailed": "Could not save settings",
+    "hermesMemory": {
+      "title": "Hermes Agent memory",
+      "description": "What Hermes Agent keeps across your conversations: its notes and what it knows about you. Only you can see it.",
+      "memory": "Notes",
+      "user": "About you",
+      "empty": "Hermes Agent remembers nothing yet.",
+      "clear": "Clear memory",
+      "confirmTitle": "Clear Hermes Agent memory?",
+      "confirmDescription": "Hermes Agent forgets its notes and what it knows about you. A conversation already open keeps what it read until it ends.",
+      "loadFailed": "Could not load the memory",
+      "clearFailed": "Could not clear the memory"
+    }
   },
   "sidebar": {
     "links": {

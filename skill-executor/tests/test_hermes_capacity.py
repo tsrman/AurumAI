@@ -320,3 +320,26 @@ async def test_a_clarify_answer_reaches_the_relay_through_a_file(make, monkeypat
     assert commands[0][:3] == ["hermes-relay", "clarify", "run_1"] and path.startswith("/workspace/.aurum/clarify/")
     [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
     assert b"Rome; rm -rf /" in archive
+
+
+@pytest.mark.asyncio
+async def test_memory_goes_into_the_sandbox_as_a_file_and_comes_back_bounded(make, monkeypatch) -> None:
+    sandboxes, daemon, _, _ = make()
+    await _create(sandboxes, 1)
+    answers = iter([b'{"type":"memory-written"}', b'{"type":"memory","memory":"notes","user":null}'])
+    commands: list[list[str]] = []
+
+    async def exec_(sandbox: Any, cmd: list[str]) -> tuple[int, bytes]:
+        commands.append(cmd)
+        return 0, next(answers)
+
+    monkeypatch.setattr(sandboxes, "_exec", exec_)
+
+    await sandboxes.write_memory(_session(1), {"memory": "notes", "user": "likes tea"})
+    read = await sandboxes.read_memory(_session(1))
+
+    assert commands[0][:2] == ["hermes-relay", "memory-write"] and commands[0][2].startswith("/workspace/.aurum/memory/")
+    assert commands[1] == ["hermes-relay", "memory-read"]
+    [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
+    assert b"likes tea" in archive
+    assert read == {"memory": "notes", "user": None}
