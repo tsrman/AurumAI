@@ -62,6 +62,8 @@ export interface Conversation {
   lastMessageAt: string;
   status: string;
   messageCount: number;
+  // The agent the conversation runs on; the composer keeps it chosen.
+  agent?: "hermes" | null;
 }
 
 export type Message = UserMessage | AssistantMessageView;

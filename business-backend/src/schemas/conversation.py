@@ -1,4 +1,4 @@
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -34,6 +34,9 @@ class ConversationResponse(BaseModel):
     # default, else the platform default) — never null, so the runner and UI
     # never need to know about the cascade.
     temperature: float = 0.7
+    # The agent the conversation runs on, so the composer keeps it chosen:
+    # "hermes" once a Hermes Agent session was opened for it.
+    agent: Optional[Literal["hermes"]] = None
 
 
 class MessageResponse(BaseModel):

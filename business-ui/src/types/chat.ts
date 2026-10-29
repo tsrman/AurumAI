@@ -25,6 +25,8 @@ export interface ConversationResponse {
   messageCount: number;
   tokenCount: number;
   costUsd: number;
+  // "hermes" once a Hermes Agent session was opened for the conversation.
+  agent?: "hermes" | null;
 }
 
 export interface MessageResponse {
