@@ -128,6 +128,9 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       await expect(replies.last()).toContainText("out of quota or rate limited", { timeout: TURN_TIMEOUT });
       await expect(replies.last()).toContainText("(hermes_model_unavailable)");
       await expect(replies.last()).not.toContainText("provider.invalid");
+      // Set apart from answers, with a way to try again instead of copy and regenerate.
+      await expect(member.getByText("The answer could not be completed").last()).toBeVisible();
+      await expect(member.getByRole("button", { name: "Try again" }).last()).toBeVisible();
       // The history keeps the reason: it is still there after a reload.
       await member.reload();
       await expect(member.getByTestId("assistant-content").last()).toContainText("out of quota or rate limited", {
