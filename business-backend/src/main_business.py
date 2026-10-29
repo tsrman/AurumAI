@@ -22,6 +22,7 @@ from src.services.interaction_maintenance import (
 from src.services.interaction_outbox import run_interaction_outbox_dispatcher
 from src.services.workflow_run import workflow_run_service
 from src.services.hermes_egress import require_egress_secret
+from src.services.hermes_sessions import run_idle_session_closer
 from src.routers import (
     auth,
     chat,
@@ -88,6 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         asyncio.create_task(run_interaction_outbox_dispatcher()),
         asyncio.create_task(run_interaction_maintenance(session_manager)),
         asyncio.create_task(run_web_result_scrubber()),
+        asyncio.create_task(run_idle_session_closer()),
     ]
     if settings.RUNNER_RUNTIME != "kubernetes":
         background_tasks.append(asyncio.create_task(session_manager.maintain_pool()))

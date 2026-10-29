@@ -274,6 +274,9 @@ class Settings(BaseSettings):
     # waits this long for one call (below Hermes's 600-second tool timeout).
     HERMES_SKILL_TASK_QUEUE: str = "tools"
     HERMES_SKILL_TIMEOUT_SECONDS: float = Field(default=240, gt=0, le=540)
+    # An open session without a turn for this long is closed by the backend;
+    # its sandbox was retired at the session workflow's idle time (1800 s).
+    HERMES_SESSION_IDLE_CLOSE_SECONDS: int = Field(default=2700, ge=900, le=86400)
 
     @field_validator("WEB_TOOLS_URL")
     @classmethod

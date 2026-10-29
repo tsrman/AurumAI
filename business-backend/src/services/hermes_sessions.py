@@ -7,16 +7,19 @@ away. Opening again rotates the token version; closing bumps it as well, so
 every earlier token of the session stops working at once.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.authorization_types import AuthorizationSubject
 from src.core.config import settings
+from src.core.database import async_session
+from src.core.logging import logger
 from src.models.hermes_session import HermesSession
 from src.models.interaction import InteractionExecution, InteractionTurn
 from src.models.workflow_run import WorkflowRun, WorkflowRunStatus
@@ -290,3 +293,31 @@ async def authorize_token(
     if status != "active":
         raise HermesAccessDenied("hermes_turn_inactive")
     return row
+
+
+async def close_idle_sessions(
+    session_factory: async_sessionmaker[AsyncSession] = async_session, *, batch_size: int = 100
+) -> int:
+    """Close sessions open without a turn past the idle limit, in every
+    organization, through a bounded DB function: their session workflow
+    could not, its runner token having expired with the sandbox's idle time."""
+    async with session_factory.begin() as db:
+        value = await db.scalar(
+            text("SELECT public.close_idle_hermes_sessions(:idle, :batch)"),
+            {"idle": settings.HERMES_SESSION_IDLE_CLOSE_SECONDS, "batch": batch_size},
+        )
+        return int(value or 0)
+
+
+async def run_idle_session_closer() -> None:
+    interval = settings.INTERACTION_MAINTENANCE_INTERVAL_SECONDS
+    while True:
+        try:
+            closed = await close_idle_sessions()
+            if closed:
+                logger.info("closed %s idle Hermes sessions", closed)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("closing idle Hermes sessions failed", exc_info=True)
+        await asyncio.sleep(interval)
