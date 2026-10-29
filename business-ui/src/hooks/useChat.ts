@@ -154,6 +154,7 @@ function backendMessageToUIMessage(
     faithfulnessScore: msg.faithfulnessScore,
     faithfulnessReason: msg.faithfulnessReason,
     createdAt: msg.createdAt,
+    failed: msg.failed === true,
   };
 }
 
@@ -1311,14 +1312,6 @@ export function useChat(): UseChatReturn {
               !(m.workflow?.turnId && restoredTurns.has(m.workflow.turnId)) &&
               (m.workflow?.status === "failed" || m.workflow?.status === "cancelled")
           );
-          // A failed turn's reason is not persisted: the history after it
-          // would drop it at once. It stays while it is the latest message.
-          const lastExisting = existing?.messages.at(-1);
-          const failedTail =
-            lastExisting?.role === "assistant" && lastExisting.failed && !hydratedIds.has(lastExisting.id)
-              && !survivingWorkflowMessages.includes(lastExisting)
-              ? [lastExisting]
-              : [];
           const updated: Conversation = {
             ...(existing ?? {
               id: conversation.id,
@@ -1336,10 +1329,10 @@ export function useChat(): UseChatReturn {
               messageCount: 0,
             }),
             title: conversation.title ?? existing?.title ?? text.t("conversationFallback"),
-            messages: [...hydratedMessages, ...survivingWorkflowMessages, ...failedTail],
+            messages: [...hydratedMessages, ...survivingWorkflowMessages],
             temperature: conversation.temperature,
             lastMessageAt: conversation.lastMessageAt ?? conversation.createdAt,
-            messageCount: messages.length + survivingWorkflowMessages.length + failedTail.length,
+            messageCount: messages.length + survivingWorkflowMessages.length,
             // The composer keeps the conversation's agent chosen after a reload.
             agent: conversation.agent ?? null,
           };

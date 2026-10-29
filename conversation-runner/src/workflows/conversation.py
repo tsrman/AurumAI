@@ -247,22 +247,6 @@ class ConversationWorkflow:
         """
         turn_id = str(message.get("turn_id") or "")
         workflow.logger.error(f"Turn {turn_id} failed: {exc}")
-        # Persist terminal state before closing SSE. The patch marker keeps
-        # histories recorded before this activity was introduced replayable:
-        # old failed turns have no marker and therefore retain their original
-        # command sequence, while every new failed turn is closed durably.
-        if turn_id and workflow.patched("failed-turn-terminal-v1"):
-            try:
-                await workflow.execute_activity(
-                    fail_interaction_turn,
-                    args=(turn_id,),
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=_ACTIVITY_RETRY_POLICY,
-                )
-            except Exception as terminal_exc:  # noqa: BLE001 - preserve SSE cleanup
-                workflow.logger.error(
-                    f"Could not close failed turn {turn_id}: {terminal_exc}"
-                )
         # Unwrap to the root cause: Temporal wraps an activity failure in
         # ActivityError -> ApplicationError, whose str() is
         # "Activity task failed (...)" plus scheduling metadata and says
@@ -272,13 +256,39 @@ class ConversationWorkflow:
         root = exc
         while root.__cause__ is not None:
             root = root.__cause__  # type: ignore[assignment]
-        if isinstance(root, ApplicationError) and root.type in {
+        silent = isinstance(root, ApplicationError) and root.type in {
             "user_input_timeout",
             "user_input_cancelled",
             "user_input_limit",
             "authorization_revoked",
             "access_revoked",
-        }:
+        }
+        text: str | None = None
+        if not silent:
+            reason = _FAILURE_REASONS.get(str(root))
+            text = (
+                f"Could not get a model response. Reason: {reason} ({root})"
+                if reason
+                else f"Could not get a model response. Reason: {root}"
+            )
+        # Persist terminal state before closing SSE, with the reason the user
+        # is told, which the history then shows. The patch marker keeps
+        # histories recorded before this activity was introduced replayable:
+        # old failed turns have no marker and therefore retain their original
+        # command sequence, while every new failed turn is closed durably.
+        if turn_id and workflow.patched("failed-turn-terminal-v1"):
+            try:
+                await workflow.execute_activity(
+                    fail_interaction_turn,
+                    args=(turn_id, text),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_ACTIVITY_RETRY_POLICY,
+                )
+            except Exception as terminal_exc:  # noqa: BLE001 - preserve SSE cleanup
+                workflow.logger.error(
+                    f"Could not close failed turn {turn_id}: {terminal_exc}"
+                )
+        if text is None:
             try:
                 await workflow.execute_activity(
                     publish_event,
@@ -294,14 +304,7 @@ class ConversationWorkflow:
                     f"Could not publish done for turn {turn_id}: {publish_exc}"
                 )
             return
-        reason = _FAILURE_REASONS.get(str(root))
-        text = (
-            f"Could not get a model response. Reason: {reason} ({root})"
-            if reason
-            else f"Could not get a model response. Reason: {root}"
-        )
         for event, data in (
-            # `failed`: no history keeps this text, so the browser holds on to it.
             ("message-end", {"role": "assistant", "content": text, "turn_id": turn_id, "failed": True}),
             ("done", {"turn_id": turn_id, "evaluation_pending": False}),
         ):

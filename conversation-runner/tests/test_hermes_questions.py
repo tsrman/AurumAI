@@ -121,7 +121,7 @@ class Backend:
             self.calls.append("cancel")
 
         @activity.defn(name="fail_interaction_turn")
-        async def fail(turn_id: str) -> None:
+        async def fail(turn_id: str, reason: str | None = None) -> None:
             self.calls.append("fail")
 
         return [hand_off, register, create, read, consume, expire, touch, cancel, fail]

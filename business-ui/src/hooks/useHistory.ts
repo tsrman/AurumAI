@@ -69,6 +69,7 @@ function mapMessageToUIMessage(
     startedAt: new Date(msg.createdAt).getTime(),
     faithfulnessScore: msg.faithfulnessScore,
     faithfulnessReason: msg.faithfulnessReason,
+    failed: msg.failed === true,
   };
 }
 

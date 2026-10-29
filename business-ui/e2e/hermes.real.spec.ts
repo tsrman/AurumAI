@@ -128,6 +128,11 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       await expect(replies.last()).toContainText("out of quota or rate limited", { timeout: TURN_TIMEOUT });
       await expect(replies.last()).toContainText("(hermes_model_unavailable)");
       await expect(replies.last()).not.toContainText("provider.invalid");
+      // The history keeps the reason: it is still there after a reload.
+      await member.reload();
+      await expect(member.getByTestId("assistant-content").last()).toContainText("out of quota or rate limited", {
+        timeout: 30_000,
+      });
     } finally {
       for (const context of contexts) await context.close();
       const fresh = await adminToken(request);

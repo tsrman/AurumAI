@@ -558,7 +558,7 @@ async def test_ordinary_question_timeout_publishes_no_false_assistant(
         persisted.append(args)
 
     @activity.defn(name="fail_interaction_turn")
-    async def fail_interaction_turn(turn_id: str) -> None:
+    async def fail_interaction_turn(turn_id: str, reason: str | None = None) -> None:
         failed_turns.append(turn_id)
 
     async with await WorkflowEnvironment.start_time_skipping() as env:

@@ -450,3 +450,28 @@ async def test_conversations_with_a_hermes_session_name_their_agent(client, db, 
     assert listed["Hermes"] == "hermes" and listed["Plain"] is None
     assert detail["agent"] == "hermes"
     assert renamed["agent"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turns_reason_comes_back_marked_failed(client, db, test_user, test_org):
+    from src.repositories.message_repository import message_repository as messages
+
+    conv = Conversation(org_id=test_org.id, user_id=test_user.id, title="Failed", model="gpt-4o-mini")
+    db.add(conv)
+    await db.flush()
+    await messages.upsert_assistant_by_turn(
+        db, conversation_id=str(conv.id), turn_id=uuid.uuid4(), role="assistant",
+        content="Could not get a model response. Reason: x", org_id=str(test_org.id), extra={"failed": True},
+    )
+    await messages.upsert_assistant_by_turn(
+        db, conversation_id=str(conv.id), turn_id=uuid.uuid4(), role="assistant",
+        content="A real answer", org_id=str(test_org.id),
+    )
+    await db.flush()
+
+    data = (await client.get(f"/v1/conversations/{conv.id}")).json()["data"]["messages"]["data"]
+
+    assert {item["content"]: item["failed"] for item in data} == {
+        "Could not get a model response. Reason: x": True,
+        "A real answer": False,
+    }

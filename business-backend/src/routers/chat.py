@@ -159,6 +159,7 @@ def _msg_response(msg: Message) -> MessageResponse:
         sourceIds=extra.get("web_source_ids", []),
         unsupportedSourceIds=extra.get("unsupported_web_source_ids", []),
         imageIds=extra.get("image_ids", []),
+        failed=extra.get("failed") is True,
     )
 
 

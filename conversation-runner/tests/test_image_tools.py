@@ -302,7 +302,7 @@ async def test_disabled_images_never_dispatch_a_hallucinated_call(
     failed = asyncio.Event()
 
     @activity.defn(name="fail_interaction_turn")
-    async def fail_interaction_turn(turn_id: str) -> None:
+    async def fail_interaction_turn(turn_id: str, reason: str | None = None) -> None:
         failed.set()
 
     async with await WorkflowEnvironment.start_time_skipping() as env:

@@ -401,7 +401,7 @@ async def test_failed_turn_still_emits_done_and_keeps_the_workflow_alive(monkeyp
         calls.append(f"persist_assistant_message:{content}")
 
     @activity.defn(name="fail_interaction_turn")
-    async def recording_fail_interaction_turn(turn_id: str) -> None:
+    async def recording_fail_interaction_turn(turn_id: str, reason: str | None = None) -> None:
         failed_turns.append(turn_id)
 
     async with await WorkflowEnvironment.start_time_skipping() as env:

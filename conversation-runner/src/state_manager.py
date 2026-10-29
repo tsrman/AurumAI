@@ -38,6 +38,9 @@ class StateManager:
                             else {}
                         )
                         for m in page["data"]
+                        # A failed turn's reason was told to the user, not
+                        # said by a model: it is not part of the dialogue.
+                        if not m.get("failed")
                     )
                 except KeyError as exc:
                     raise ValueError(
