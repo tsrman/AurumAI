@@ -3,7 +3,6 @@ hands it to the conversation's Hermes session under its own key, with the
 run's correlation, and waits for that key's answer."""
 
 import asyncio
-from datetime import timedelta
 from typing import Any
 
 import pytest
