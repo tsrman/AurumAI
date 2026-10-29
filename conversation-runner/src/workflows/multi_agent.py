@@ -156,6 +156,7 @@ def _agent_snapshot(raw: dict[str, Any]) -> AgentExecutionSnapshot:
             {"id": str(item["id"]), "name": str(item["name"])}
             for item in knowledge_bases
         ),
+        kind=str(raw.get("kind") or "agent"),
     )
 
 

@@ -118,6 +118,11 @@ class WorkflowDefinitionService:
         missing = sorted(agent_ids - set(agents_by_id), key=str)
         if missing:
             raise WorkflowDependencyNotFound(missing[0])
+        # The supervisor plans and synthesizes in the text protocol; Hermes
+        # Agent runs nodes only.
+        supervisor = agents_by_id[data.supervisor_agent_definition_id]
+        if supervisor.kind != "agent":
+            raise WorkflowGraphError("hermes_supervisor")
 
         for agent_id in sorted(agent_ids, key=str):
             agent = agents_by_id[agent_id]

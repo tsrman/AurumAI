@@ -134,6 +134,8 @@ export interface Source {
 }
 
 export interface ConstructorState {
+  // "hermes": a workflow node run by Hermes Agent; fixed once created.
+  kind: "agent" | "hermes";
   name: string;
   description: string;
   model: string;

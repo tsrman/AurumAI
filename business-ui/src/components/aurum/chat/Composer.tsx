@@ -289,12 +289,13 @@ export function Composer({
     } else {
       onSend?.(trimmed);
     }
-    if (workflowId) setMode({ kind: "chat" });
+    // A workflow is chosen for one turn: then the conversation's own agent again.
+    if (workflowId) setChoice(null);
     setText("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, onSend, isStreaming, isDisabled, workflowId, agent, pendingImages, imagesAllowed, setMode]);
+  }, [text, onSend, isStreaming, isDisabled, workflowId, agent, pendingImages, imagesAllowed]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

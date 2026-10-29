@@ -55,6 +55,19 @@ class HermesTurn:
     parent_workflow_id: str
     parent_task_queue: str
     deadline_seconds: int = 7200
+    # A workflow node's turn (phase 6): several nodes of one chat turn share
+    # its turn_id, so each execution has its own key for the queue, the run
+    # and the answer; the binding bills it to the run, phase and node; and
+    # its progress stays off the conversation's chat stream.
+    run_key: str = ""
+    workflow_run_id: str | None = None
+    workflow_phase: str | None = None
+    workflow_node_key: str | None = None
+    publish_progress: bool = True
+
+
+def _key(turn: HermesTurn) -> str:
+    return turn.run_key or turn.turn_id
 
 
 @dataclass
@@ -82,8 +95,8 @@ class HermesSessionWorkflow:
 
     @workflow.signal(name=TURN_SIGNAL)
     def turn(self, turn: HermesTurn) -> None:
-        known = {queued.turn_id for queued in self._pending} | set(self._handled) | {self._running}
-        if turn.turn_id not in known:
+        known = {_key(queued) for queued in self._pending} | set(self._handled) | {self._running}
+        if _key(turn) not in known:
             self._pending.append(turn)
 
     @workflow.signal(name=CANCEL_SIGNAL)
@@ -99,7 +112,7 @@ class HermesSessionWorkflow:
     async def run(self, start: HermesSessionInput) -> None:
         self._handled = list(start.handled)[-_RECENT_TURNS:]
         self._pending = [
-            turn for turn in list(start.pending) + self._pending if turn.turn_id not in self._handled
+            turn for turn in list(start.pending) + self._pending if _key(turn) not in self._handled
         ]
         session_id, parent_queue = start.session_id, start.parent_task_queue
         handled = 0
@@ -115,17 +128,18 @@ class HermesSessionWorkflow:
                 session_id = None
             turn = self._pending.pop(0)
             parent_queue = turn.parent_task_queue
-            if turn.turn_id in self._cancelled:
+            key = _key(turn)
+            if key in self._cancelled:
                 result: dict[str, Any] = {"status": "cancelled"}
             else:
-                self._running = turn.turn_id
+                self._running = key
                 session_id, result = await self._run_turn(start, turn, session_id)
                 self._running = None
-            self._cancelled.discard(turn.turn_id)
-            self._handled = (self._handled + [turn.turn_id])[-_RECENT_TURNS:]
+            self._cancelled.discard(key)
+            self._handled = (self._handled + [key])[-_RECENT_TURNS:]
             try:
                 await workflow.get_external_workflow_handle(turn.parent_workflow_id).signal(
-                    RESULT_SIGNAL, {"turn_id": turn.turn_id, **result}
+                    RESULT_SIGNAL, {"turn_id": key, **result}
                 )
             except Exception:
                 # The conversation workflow is gone (reset or terminated);
@@ -171,9 +185,12 @@ class HermesSessionWorkflow:
             retry_policy=_RETRY,
             result_type=str,
         )
+        correlation = (
+            (turn.workflow_run_id, turn.workflow_phase, turn.workflow_node_key) if turn.workflow_run_id else ()
+        )
         await workflow.execute_activity(
             "hermes_bind_turn",
-            args=(await self._token(turn.parent_task_queue), session_id, turn.turn_id, turn.execution_id),
+            args=(await self._token(turn.parent_task_queue), session_id, turn.turn_id, turn.execution_id, *correlation),
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=_RETRY,
         )
@@ -209,7 +226,7 @@ class HermesSessionWorkflow:
                     raise
             raise ApplicationError("hermes_interrupted")
         except ActivityError as exc:
-            if turn.turn_id in self._cancelled:
+            if _key(turn) in self._cancelled:
                 return session_id, {"status": "cancelled"}
             return session_id, {"status": "failed", "error": _code(exc) or "hermes_interrupted"}
         except ApplicationError as exc:
@@ -256,11 +273,13 @@ class HermesSessionWorkflow:
             "hermes_run_turn",
             args=(
                 session_id,
-                turn.turn_id,
+                # The run's key, and the turn its questions belong to.
+                _key(turn),
                 start.conversation_id,
                 turn.text,
                 turn.history,
-                start.org_id,
+                # Without an organization the worker publishes no progress.
+                start.org_id if turn.publish_progress else "",
                 turn.parent_workflow_id,
             ),
             # The deadline covers every attempt, not each one.
@@ -273,14 +292,14 @@ class HermesSessionWorkflow:
         )
         while True:
             woken = asyncio.ensure_future(
-                workflow.wait_condition(lambda: turn.turn_id in self._cancelled or bool(self._answers))
+                workflow.wait_condition(lambda: _key(turn) in self._cancelled or bool(self._answers))
             )
             done, _ = await workflow.wait([run, woken], return_when=asyncio.FIRST_COMPLETED)
             if run in done:
                 woken.cancel()
                 self._answers.clear()
                 return dict(await run)
-            if turn.turn_id in self._cancelled:
+            if _key(turn) in self._cancelled:
                 run.cancel()
                 try:
                     await run

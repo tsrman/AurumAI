@@ -9,6 +9,7 @@ import {
   chooseHermes,
   chooseHermesModel,
   enableHermes,
+  hermesWorkflow,
   loginAt,
   section,
 } from "./helpers/hermes";
@@ -25,6 +26,7 @@ import {
  */
 const ENABLED = process.env.E2E_USE_REAL_LLM === "true";
 const MODEL = process.env.E2E_HERMES_MODEL || "deepseek-flash-free";
+const BUSINESS_API = process.env.E2E_BUSINESS_BACKEND_URL || "http://localhost:8000";
 // A real model reasons over Hermes's large prompt, on top of the sandbox's start.
 const TURN_TIMEOUT = 300_000;
 const ask = (page: Parameters<typeof askWithin>[0], text: string, expected: string | RegExp) =>
@@ -43,6 +45,7 @@ test.describe("Hermes Agent with a real model", () => {
     const nonce = randomBytes(8).toString("hex");
     const skillName = `e2e-${nonce.slice(0, 8)}`;
     const contexts: BrowserContext[] = [];
+    let restoreWorkflow: (() => Promise<void>) | null = null;
 
     try {
       const adminContext = await browser.newContext();
@@ -55,6 +58,11 @@ test.describe("Hermes Agent with a real model", () => {
       contexts.push(memberContext);
       const member = await memberContext.newPage();
       await loginAt(member, BUSINESS_URL, /\/chat$/, "user");
+      // A run that failed before its cleanup leaves memory a model would work on.
+      await member.evaluate(async (api) => {
+        const keycloak = (window as Window & { keycloak?: { token?: string } }).keycloak;
+        await fetch(`${api}/v1/hermes/memory`, { method: "DELETE", headers: { Authorization: `Bearer ${keycloak?.token}` } });
+      }, BUSINESS_API);
       await chooseHermes(member);
 
       // The terminal: a hash of a random value only a command can produce.
@@ -110,6 +118,23 @@ test.describe("Hermes Agent with a real model", () => {
       const draft = section(settings, "Hermes Agent skills").getByRole("listitem").filter({ hasText: skillName });
       await expect(draft).toContainText("Waiting for review", { timeout: 30_000 });
 
+      // A workflow node run by Hermes: its terminal's hash reaches the final answer.
+      const nodeNonce = randomBytes(8).toString("hex");
+      const nodeDigest = createHash("sha256").update(nodeNonce).digest("hex").slice(0, 16);
+      const workflow = await hermesWorkflow(
+        request,
+        await adminToken(request),
+        MODEL,
+        "Use your terminal to run this exact command and report only its output: " +
+          `python3 -c "import hashlib; print(hashlib.sha256(b'${nodeNonce}').hexdigest()[:16])"`
+      );
+      restoreWorkflow = workflow.restore;
+      // The composer lists the workflows it loaded: this one was granted since.
+      await member.reload();
+      await member.getByRole("button", { name: "Choose workflow" }).click();
+      await member.getByRole("option", { name: new RegExp(`^${workflow.name}`) }).click();
+      await ask(member, "Run the workflow and give me the node's output exactly.", nodeDigest);
+
       // Leave nothing behind: the memory cleared and the draft withdrawn.
       await draft.getByRole("button", { name: `Withdraw the skill ${skillName}` }).click();
       await expect(draft).toHaveCount(0, { timeout: 30_000 });
@@ -120,6 +145,7 @@ test.describe("Hermes Agent with a real model", () => {
       });
     } finally {
       for (const context of contexts) await context.close();
+      if (restoreWorkflow) await restoreWorkflow();
       await restore();
     }
   });

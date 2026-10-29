@@ -458,3 +458,18 @@ async def test_without_the_list_the_platform_skills_are_cleared_and_a_failed_cle
         await ActivityEnvironment().run(hermes_activities.hermes_hydrate_skills, "t", SESSION)
 
     assert failed.value.type == "hermes_skills_failed"
+
+
+@pytest.mark.asyncio
+async def test_a_workflow_node_turn_is_bound_with_its_run_phase_and_node(http) -> None:
+    router = http({("PUT", f"/v1/internal/hermes/sessions/{SESSION_UUID}/turn"): httpx.Response(204)})
+
+    await ActivityEnvironment().run(
+        hermes_activities.hermes_bind_turn, "t", SESSION, "turn-1", "exec-1", "run-9", "node", "research"
+    )
+    await ActivityEnvironment().run(hermes_activities.hermes_bind_turn, "t", SESSION, "turn-2", "exec-2")
+
+    assert [request[2] for request in router.requests] == [
+        {"turnId": "turn-1", "executionId": "exec-1", "workflowRunId": "run-9", "workflowPhase": "node", "workflowNodeKey": "research"},
+        {"turnId": "turn-2", "executionId": "exec-2"},
+    ]

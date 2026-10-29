@@ -8,6 +8,7 @@ import {
   chooseHermes,
   chooseHermesModel,
   enableHermes,
+  hermesWorkflow,
   loginAt,
   section,
 } from "./helpers/hermes";
@@ -45,6 +46,7 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
     // Drafts are kept per user by their content: a fresh name per run.
     const skillName = `e2e-${Date.now().toString(36)}`;
     const contexts: BrowserContext[] = [];
+    let restoreWorkflow: (() => Promise<void>) | null = null;
 
     try {
       const adminContext = await browser.newContext();
@@ -117,6 +119,21 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       // Approved, it is a platform code skill of its author: in the next turn's sandbox.
       await ask(member, `HERMES_SKILLS_LIST:${skillName}`, "HERMES_PLATFORM_SKILL_SEEN");
 
+      // An agent definition can be a Hermes Agent, for workflow nodes, on the
+      // organization's Hermes model and without tools of its own.
+      await admin.goto(`${ADMIN_UI_URL}/admin/agents/new`);
+      await admin.getByLabel("Type").selectOption("hermes");
+      await expect(admin.getByText(`Runs on the organization's Hermes model: ${MODEL}`)).toBeVisible();
+      await expect(admin.getByRole("heading", { name: "Tools" })).toHaveCount(0);
+
+      // A workflow node that a Hermes Agent runs, in this conversation's sandbox.
+      const workflow = await hermesWorkflow(request, await adminToken(request), MODEL, "MULTI_AGENT_NODE:build");
+      restoreWorkflow = workflow.restore;
+      await member.reload();
+      await member.getByRole("button", { name: "Choose workflow" }).click();
+      await member.getByRole("option", { name: new RegExp(`^${workflow.name}`) }).click();
+      await ask(member, "Build it with the workflow", "MULTI_AGENT_FINAL:build HERMES");
+
       // A provider out of quota ends the turn with a reason the member can act
       // on, and its message, with its address, never reaches the member.
       const replies = member.getByTestId("assistant-content");
@@ -138,6 +155,7 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       });
     } finally {
       for (const context of contexts) await context.close();
+      if (restoreWorkflow) await restoreWorkflow();
       const fresh = await adminToken(request);
       const skills = await adminApi<{ id: string; name: string }[]>(request, fresh, "GET", "/v1/skills/");
       for (const skill of skills.filter((item) => item.name === skillName)) {

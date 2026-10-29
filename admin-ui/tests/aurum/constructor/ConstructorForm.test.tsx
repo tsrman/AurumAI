@@ -22,6 +22,7 @@ const skills = [
 ];
 
 const DEFAULT_STATE: ConstructorState = {
+  kind: "agent",
   name: "",
   description: "",
   model: "pro",
@@ -158,5 +159,50 @@ describe("ConstructorForm", () => {
 
     expect(screen.getByText("Dependency access denied")).toBeInTheDocument();
     expect(screen.queryByText(/does not save the agent on the server/i)).not.toBeInTheDocument();
+  });
+
+  it("a Hermes Agent runs on the organization's Hermes model, without tools or knowledge bases", () => {
+    render(
+      <ConstructorForm
+        state={{ ...DEFAULT_STATE, kind: "hermes" }}
+        setField={setField}
+        toggleTool={toggleTool}
+        toggleBase={toggleBase}
+        models={models}
+        skills={skills}
+        knowledgeBases={knowledgeBases}
+        hermesModel="hermes-model"
+        isValid
+        save={save}
+        isSaving={false}
+        saveError={null}
+      />
+    );
+
+    expect(screen.getByText("Runs on the organization's Hermes model: hermes-model")).toBeInTheDocument();
+    expect(screen.queryByText("Tools")).not.toBeInTheDocument();
+    expect(screen.queryByText("Knowledge bases")).not.toBeInTheDocument();
+    expect(screen.queryByText("Web search")).not.toBeInTheDocument();
+  });
+
+  it("the type is fixed once the agent exists", () => {
+    render(
+      <ConstructorForm
+        state={DEFAULT_STATE}
+        setField={setField}
+        toggleTool={toggleTool}
+        toggleBase={toggleBase}
+        models={models}
+        skills={skills}
+        knowledgeBases={knowledgeBases}
+        kindLocked
+        isValid
+        save={save}
+        isSaving={false}
+        saveError={null}
+      />
+    );
+
+    expect(screen.getByLabelText("Type")).toBeDisabled();
   });
 });

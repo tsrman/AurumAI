@@ -18,6 +18,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
         "pre_memory_hermes_session_v1.json",
         "pre_skill_drafts_hermes_session_v1.json",
         "pre_platform_skills_hermes_session_v1.json",
+        "pre_workflow_nodes_hermes_session_v1.json",
     ],
 )
 async def test_a_session_recorded_before_a_later_hermes_step_replays(fixture: str) -> None:

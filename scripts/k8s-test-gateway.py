@@ -255,7 +255,9 @@ def _multi_agent_response(messages: list[Message]) -> str | None:
             answer = " ANSWER:IANA" if "ANSWER:IANA" in last else ""
             return f"MULTI_AGENT_WEB_FINAL:{','.join(web_nodes)}{answer}{citations}"
         node_keys = sorted(set(_MULTI_AGENT_NODE_RESULT.findall(last)))
-        return f"MULTI_AGENT_FINAL:{','.join(node_keys)}"
+        # A node Hermes Agent ran says so (_hermes_node_response).
+        hermes = " HERMES" if "HERMES_NODE_SEEN" in last else ""
+        return f"MULTI_AGENT_FINAL:{','.join(node_keys)}{hermes}"
     questions = _multi_agent_question_budget_response(messages)
     if questions is not None:
         return questions
@@ -860,6 +862,15 @@ def _hermes_skills_list_response(request: CompletionRequest) -> str | dict[str, 
     return {"name": "skills_list", "arguments": "{}"}
 
 
+def _hermes_node_response(request: CompletionRequest) -> str | None:
+    """A workflow node run by Hermes Agent (its request offers Hermes's own
+    tools): the node's ordinary result, marked as Hermes's."""
+    node = _MULTI_AGENT_NODE.search(_last_user_message(request.messages))
+    if node is None or "skills_list" not in {str((item.get("function") or {}).get("name")) for item in request.tools}:
+        return None
+    return f"MULTI_AGENT_NODE_RESULT:{node.group(1)} HERMES_NODE_SEEN"
+
+
 def _hermes_clarify_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """HERMES_CLARIFY: one question through Hermes's clarify tool, then the answer as text."""
     if "HERMES_CLARIFY" not in _last_user_message(request.messages):
@@ -1010,6 +1021,7 @@ async def chat_completions(request: CompletionRequest) -> Response:
         _hermes_memory_response(request)
         or _hermes_skill_response(request)
         or _hermes_skills_list_response(request)
+        or _hermes_node_response(request)
         or _hermes_clarify_response(request)
         or _hermes_mcp_response(request)
     )

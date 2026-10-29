@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
 vi.mock("@/hooks/useAdminModels", () => ({
   useAdminModels: () => ({ data: { data: { defaultModel: mocks.organizationDefault ?? null } } }),
+  useOrganizationHermesSettings: () => ({ data: { data: { model: "hermes-model" } } }),
 }));
 vi.mock("@/lib/api", () => ({
   createAgentDefinition: (payload: unknown) => mocks.createAgentDefinition(payload),
@@ -41,6 +42,7 @@ vi.mock("@/hooks/useSkills", () => ({
 }));
 
 const state: ConstructorState = {
+  kind: "agent",
   name: "Research agent",
   description: "Finds evidence",
   model: "provider/model-v1",
@@ -112,6 +114,21 @@ test("save persists canonical model, skill and knowledge-base IDs", async () => 
     temperature: 0.2,
     skillIds: ["11111111-1111-4111-8111-111111111111"],
     knowledgeBaseIds: ["22222222-2222-4222-8222-222222222222"],
+    kind: "agent",
   });
   expect(mocks.push).toHaveBeenCalledWith("/admin/agents");
+});
+
+test("a Hermes Agent is saved on the organization's Hermes model without tools", async () => {
+  const { result } = renderHook(() => useAgentConstructor(), { wrapper: Wrapper });
+  act(() => result.current.setField("kind", "hermes"));
+
+  await act(async () => {
+    await result.current.save();
+  });
+
+  // The tools chosen before switching the type are not sent.
+  expect(mocks.createAgentDefinition).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "hermes", modelId: "hermes-model", skillIds: [], knowledgeBaseIds: [] })
+  );
 });

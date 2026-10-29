@@ -38,6 +38,10 @@ class AgentDefinition(BaseModel):
     knowledge_base_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )
+    # "hermes": a workflow node run by Hermes Agent (docs/HERMES_AGENT.md,
+    # phase 6) on the organization's Hermes model, with its system prompt as
+    # instructions and no skills or knowledge bases of its own.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="agent", server_default="agent")
 
     __table_args__ = (
         CheckConstraint(
@@ -55,6 +59,11 @@ class AgentDefinition(BaseModel):
         CheckConstraint(
             "temperature >= 0 AND temperature <= 2",
             name="ck_agent_definitions_temperature",
+        ),
+        CheckConstraint("kind IN ('agent', 'hermes')", name="ck_agent_definitions_kind"),
+        CheckConstraint(
+            "kind = 'agent' OR (cardinality(skill_ids) = 0 AND cardinality(knowledge_base_ids) = 0)",
+            name="ck_agent_definitions_hermes_tools",
         ),
         UniqueConstraint("org_id", "name", name="uq_agent_definitions_org_name"),
         UniqueConstraint("org_id", "id", name="uq_agent_definitions_org_id_id"),

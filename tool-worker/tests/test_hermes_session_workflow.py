@@ -76,8 +76,8 @@ class Fakes:
             return SESSION
 
         @activity.defn(name="hermes_bind_turn")
-        async def bind(token: str, session_id: str, turn_id: str, execution_id: str) -> None:
-            self.calls.append(f"bind:{turn_id}:{execution_id}")
+        async def bind(token: str, session_id: str, turn_id: str, execution_id: str, *correlation: Any) -> None:
+            self.calls.append(":".join(["bind", turn_id, execution_id, *map(str, correlation)]))
 
         @activity.defn(name="hermes_unbind_turn")
         async def unbind(token: str, session_id: str) -> None:
@@ -94,7 +94,8 @@ class Fakes:
             parent_workflow_id: str,
         ) -> dict[str, Any]:
             self.calls.append(f"run:{turn_id}:{text}:{len(history)}")
-            assert org_id == "org-1"
+            # A workflow node's turn publishes no chat progress.
+            assert org_id == ("" if turn_id.startswith("node-") else "org-1")
             if self.run_errors:
                 code = self.run_errors.pop(0)
                 raise ApplicationError(code, type=code, non_retryable=True)
@@ -251,6 +252,31 @@ async def test_a_sandbox_gone_before_its_skills_are_hydrated_is_prepared_again_o
     assert [call.split(":")[0] for call in fakes.calls] == [
         "prepare", "bind", "load_memory", "hydrate_skills", "prepare", "bind", "load_memory", "hydrate_skills", "run",
         "save_memory", "save_skills", "unbind",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_workflow_nodes_of_one_turn_run_one_after_another_under_their_own_keys() -> None:
+    fakes = Fakes()
+    async with await WorkflowEnvironment.start_time_skipping() as env, _stack(env, fakes) as client:
+        parent, handle = await _parent(client, expected=2)
+        node = {"workflow_run_id": "run-9", "workflow_phase": "node", "publish_progress": False}
+        session = await _hand_off(
+            client, parent, _turn(parent, run_key="node-a", workflow_node_key="research", text="a", **node)
+        )
+        await session.signal(
+            TURN_SIGNAL, _turn(parent, run_key="node-b", workflow_node_key="writing", text="b", **node)
+        )
+
+        results = await handle.result()
+
+    # Same chat turn, two node executions: neither is taken for a repeat of the other.
+    assert [result["turn_id"] for result in results] == ["node-a", "node-b"]
+    assert [call for call in fakes.calls if call.startswith(("bind", "run"))] == [
+        "bind:turn-1:exec-1:run-9:node:research",
+        "run:node-a:a:1",
+        "bind:turn-1:exec-1:run-9:node:writing",
+        "run:node-b:b:1",
     ]
 
 

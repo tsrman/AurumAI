@@ -117,10 +117,20 @@ async def _prepare(token: str, org_id: str, conversation_id: str, model: str) ->
 
 
 @activity.defn(name="hermes_bind_turn")
-async def hermes_bind_turn(token: str, session_id: str, turn_id: str, execution_id: str) -> None:
-    response = await _backend(
-        "PUT", f"/sessions/{_uuid(session_id)}/turn", token, {"turnId": turn_id, "executionId": execution_id}
-    )
+async def hermes_bind_turn(
+    token: str,
+    session_id: str,
+    turn_id: str,
+    execution_id: str,
+    workflow_run_id: str | None = None,
+    workflow_phase: str | None = None,
+    workflow_node_key: str | None = None,
+) -> None:
+    body: dict[str, Any] = {"turnId": turn_id, "executionId": execution_id}
+    if workflow_run_id:
+        # A workflow node's turn: its model calls are billed to the run's step.
+        body.update(workflowRunId=workflow_run_id, workflowPhase=workflow_phase, workflowNodeKey=workflow_node_key)
+    response = await _backend("PUT", f"/sessions/{_uuid(session_id)}/turn", token, body)
     if response.status_code != 204:
         raise _failure(_code(response, "hermes_backend_unavailable"))
 
