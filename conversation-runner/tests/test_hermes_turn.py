@@ -33,6 +33,7 @@ class Session:
         self.turns: list[dict[str, Any]] = []
         self.cancelled: list[str] = []
         self.touched: list[str] = []
+        self.reasons: list[str | None] = []
 
     def activities(self) -> list[Any]:
         @activity.defn(name="hand_off_hermes_turn")
@@ -55,8 +56,9 @@ class Session:
             self.touched.append(turn_id)
 
         @activity.defn(name="fail_interaction_turn")
-        async def fail(turn_id: str) -> None:
+        async def fail(turn_id: str, reason: str | None = None) -> None:
             self.cancelled.append(f"failed:{turn_id}")
+            self.reasons.append(reason)
 
         return [hand_off, cancel, register, fail, touch]
 
@@ -149,8 +151,9 @@ async def test_a_turn_the_model_provider_refused_says_so() -> None:
     message_end = next(data for name, data in events if name == "message-end")
     assert "out of quota or rate limited" in message_end["content"]
     assert message_end["content"].endswith("(hermes_model_unavailable)")
-    # No history keeps the reason: the browser is told to hold on to it.
     assert message_end["failed"] is True
+    # The turn is closed with the reason the user is told, which the history keeps.
+    assert session.reasons == [message_end["content"]]
 
 
 @pytest.mark.asyncio

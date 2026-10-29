@@ -48,6 +48,8 @@ export interface MessageResponse {
   sourceIds?: string[];
   unsupportedSourceIds?: string[];
   imageIds?: string[];
+  // The reason a failed turn ended with, kept by the history.
+  failed?: boolean;
 }
 
 export type QuestionStatus = "pending" | "answered" | "expired" | "cancelled";
@@ -181,7 +183,7 @@ export type SSEEvent =
         turn_id: string | null;
       };
     }
-  // `failed`: the runner ended a failed turn with its reason, which no history keeps.
+  // `failed`: the runner ended a failed turn with its reason.
   | { type: "message-end"; data: { role: string; content: string; turn_id: string; failed?: boolean } }
   | { type: "done"; data: { turn_id: string; evaluation_pending?: boolean } }
   | {

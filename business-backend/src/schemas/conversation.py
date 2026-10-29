@@ -61,3 +61,5 @@ class MessageResponse(BaseModel):
     unsupportedSourceIds: List[str] = Field(default_factory=list)
     # Images this assistant turn generated, verified against the turn.
     imageIds: List[str] = Field(default_factory=list)
+    # The reason a failed turn ended with: shown, never sent back to a model.
+    failed: bool = False

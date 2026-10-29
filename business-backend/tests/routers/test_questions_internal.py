@@ -269,3 +269,29 @@ async def test_feature_flag_is_forwarded_to_question_reservation(monkeypatch) ->
     assert response.status_code == 201
     assert service.calls[-1][0] == "create"
     assert service.calls[-1][-1] is False
+
+
+async def test_a_failed_turn_keeps_its_reason_as_a_failed_assistant_message(monkeypatch) -> None:
+    from src.routers import questions_internal
+
+    identity, session, service = _identity(), _Session(), _Service()
+    app = _app(identity, session, service, monkeypatch)
+    kept: list[dict] = []
+
+    async def upsert(session, **values):  # noqa: ANN001, ANN003, ANN202
+        kept.append(values)
+
+    monkeypatch.setattr(questions_internal.message_repository, "upsert_assistant_by_turn", upsert)
+    turn_id, other_turn = uuid4(), uuid4()
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with_reason = await client.post(
+            f"/v1/internal/turns/{turn_id}/fail", json={"reason": "Could not get a model response. Reason: x"}
+        )
+        without = await client.post(f"/v1/internal/turns/{other_turn}/fail")
+
+    assert (with_reason.status_code, without.status_code) == (204, 204)
+    [message] = kept
+    assert message["turn_id"] == turn_id and message["role"] == "assistant"
+    assert message["content"] == "Could not get a model response. Reason: x"
+    assert message["extra"] == {"failed": True}
+    assert message["conversation_id"] == identity.raw_claims["conversation_id"]

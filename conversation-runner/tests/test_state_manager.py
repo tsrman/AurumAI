@@ -89,6 +89,28 @@ async def test_load_keeps_image_ids_of_user_messages_only(mock_client_with_respo
     ]
 
 
+@pytest.mark.asyncio
+async def test_load_leaves_a_failed_turns_reason_out_of_the_dialogue(mock_client_with_response):
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {"data": {"messages": {"data": [
+        {"role": "user", "content": "plan a trip", "turnId": "t1"},
+        {"role": "assistant", "content": "Could not get a model response.", "turnId": "t1", "failed": True},
+        {"role": "user", "content": "again", "turnId": "t2"},
+        {"role": "assistant", "content": "Here it is.", "turnId": "t2", "failed": False},
+    ]}}}
+    mock_client_with_response(response)
+
+    manager = StateManager()
+    await manager.load()
+
+    assert manager.messages == [
+        {"role": "user", "content": "plan a trip", "turn_id": "t1"},
+        {"role": "user", "content": "again", "turn_id": "t2"},
+        {"role": "assistant", "content": "Here it is.", "turn_id": "t2"},
+    ]
+
+
 def test_append_adds_message_to_list():
     manager = StateManager()
     manager.append({"role": "user", "content": "hi"})

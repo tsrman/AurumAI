@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import UserInfo, get_current_user_or_session
@@ -12,6 +13,7 @@ from src.core.authorization_types import AuthorizationSubject
 from src.core.config import settings
 from src.core.dependencies import get_service_db_session
 from src.models.interaction import InteractionExecution
+from src.repositories.message_repository import message_repository
 from src.schemas.common import ApiResponse, Meta
 from src.schemas.interaction import (
     AnswerRequest,
@@ -73,9 +75,18 @@ def _execution_response(row: InteractionExecution) -> ExecutionResponse:
     )
 
 
+class TurnFailure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # What the user is told; kept as the turn's answer, marked failed, so the
+    # history shows it and the runner never sends it back to a model.
+    reason: str | None = Field(default=None, min_length=1, max_length=4000)
+
+
 @router.post("/turns/{turn_id}/fail", status_code=status.HTTP_204_NO_CONTENT)
 async def fail_turn(
     turn_id: UUID,
+    data: TurnFailure | None = Body(default=None),
     user: UserInfo = Depends(get_current_user_or_session),
     session: AsyncSession = Depends(get_service_db_session),
 ) -> None:
@@ -89,6 +100,16 @@ async def fail_turn(
             turn_id,
             status="failed",
         )
+        if data is not None and data.reason:
+            await message_repository.upsert_assistant_by_turn(
+                session,
+                conversation_id=str(conversation_id),
+                turn_id=turn_id,
+                role="assistant",
+                content=data.reason,
+                org_id=str(subject.org_id),
+                extra={"failed": True},
+            )
         await session.commit()
     except (InteractionNotFound, InteractionAccessDenied, InteractionConflict) as exc:
         await session.rollback()

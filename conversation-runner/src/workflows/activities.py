@@ -425,8 +425,11 @@ async def expire_user_question(question_id: str) -> dict[str, Any]:
 
 @activity.defn
 @tracer.start_as_current_span("fail_interaction_turn")
-async def fail_interaction_turn(turn_id: str) -> None:
-    await _workflow_api_request("POST", f"/v1/internal/turns/{turn_id}/fail")
+async def fail_interaction_turn(turn_id: str, reason: str | None = None) -> None:
+    """Close the turn as failed; the reason the user is told is kept with it."""
+    await _workflow_api_request(
+        "POST", f"/v1/internal/turns/{turn_id}/fail", {"reason": reason} if reason else None
+    )
 
 
 _WEB_ERROR_CODES = {

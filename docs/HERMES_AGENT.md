@@ -340,7 +340,10 @@ It streams the gateway's `tool_calls` deltas back unchanged.
   forwarding the text: `hermes_model_unavailable` for 402 and 429 (quota, rate
   limit, payment), `hermes_model_error` for other statuses, and
   `hermes_run_failed` otherwise. The runner ends the failed turn with a reason
-  the user can act on, followed by the code.
+  the user can act on, followed by the code, and closes the turn with it: the
+  reason is kept as the turn's answer, marked failed, so the history shows it
+  and the runner never sends it back to a model (this holds for every failed
+  chat turn).
 
 `LLM_GATEWAY_URL` must forward native tools. Today the docs only state that it is
 OpenAI-compatible, so this becomes a documented gateway requirement. Startup does
