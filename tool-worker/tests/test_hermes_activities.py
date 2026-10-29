@@ -383,3 +383,65 @@ async def test_skills_are_submitted_as_drafts_and_only_counts_come_back(http) ->
         {"path": name, "files": files} for name in ("a", "b", "c")
     ]
     assert "secret steps" not in json.dumps(counts)
+
+
+@pytest.mark.asyncio
+async def test_platform_skills_are_hydrated_as_the_backend_lists_them(http) -> None:
+    router = http(
+        {
+            ("GET", "/v1/internal/hermes/platform-skills"): httpx.Response(
+                200,
+                json={"skills": [{"skillId": "s", "dir": "standup-1a", "bundleStorageKey": "skills/k.zip", "bundleChecksum": "c" * 64}]},
+            ),
+            ("PUT", f"/hermes/sandboxes/{SESSION}/platform-skills"): httpx.Response(200, json={"hydrated": 1, "skipped": 0}),
+        }
+    )
+
+    counts = await ActivityEnvironment().run(hermes_activities.hermes_hydrate_skills, "t", SESSION)
+
+    assert counts == {"hydrated": 1, "skipped": 0}
+    assert router.requests[1][2] == {
+        "skills": [{"dir": "standup-1a", "bundle_storage_key": "skills/k.zip", "bundle_checksum": "c" * 64}]
+    }
+
+
+@pytest.mark.asyncio
+async def test_hydration_fails_closed_by_clearing_the_platform_skills(http) -> None:
+    written: list[Any] = []
+
+    def put(request: httpx.Request) -> httpx.Response:
+        written.append(json.loads(request.content)["skills"])
+        return httpx.Response(502, json={"detail": {"code": "hermes_skills_failed"}}) if len(written) == 1 else httpx.Response(
+            200, json={"hydrated": 0, "skipped": 0}
+        )
+
+    http(
+        {
+            ("GET", "/v1/internal/hermes/platform-skills"): httpx.Response(
+                200, json={"skills": [{"dir": "a", "bundleStorageKey": "k", "bundleChecksum": "c" * 64}]}
+            ),
+            ("PUT", f"/hermes/sandboxes/{SESSION}/platform-skills"): put,
+        }
+    )
+
+    counts = await ActivityEnvironment().run(hermes_activities.hermes_hydrate_skills, "t", SESSION)
+
+    assert counts == {"hydrated": 0, "skipped": 0}
+    assert [len(item) for item in written] == [1, 0]
+
+
+@pytest.mark.asyncio
+async def test_without_the_list_the_platform_skills_are_cleared_and_a_failed_clear_stops_the_turn(http) -> None:
+    http(
+        {
+            ("GET", "/v1/internal/hermes/platform-skills"): httpx.Response(403, json={"detail": {"code": "hermes_turn_inactive"}}),
+            ("PUT", f"/hermes/sandboxes/{SESSION}/platform-skills"): httpx.Response(
+                502, json={"detail": {"code": "hermes_skills_failed"}}
+            ),
+        }
+    )
+
+    with pytest.raises(ApplicationError) as failed:
+        await ActivityEnvironment().run(hermes_activities.hermes_hydrate_skills, "t", SESSION)
+
+    assert failed.value.type == "hermes_skills_failed"

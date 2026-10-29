@@ -1232,3 +1232,24 @@ def test_hermes_skill_marker_creates_one_skill_then_reports_it() -> None:
     assert (arguments["action"], arguments["name"]) == ("create", "aurum-acceptance")
     assert "AURUM_SKILL_SENTINEL" in arguments["content"]
     assert "HERMES_SKILL_CREATED" in done.text and "HERMES_SKILL_NOT_OFFERED" in unoffered.text
+
+
+def test_hermes_skills_list_marker_reports_whether_the_platform_skill_was_listed() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "skills_list"}}]
+    asked = [{"role": "user", "content": "HERMES_SKILLS_LIST"}]
+
+    called = client.post("/v1/chat/completions", json={"messages": asked, "tools": tools})
+    [call] = json.loads(called.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+    listed = [{"role": "tool", "content": '{"skills": [{"name": "aurum-platform-skill"}]}', "tool_call_id": "c1"}]
+    seen = client.post("/v1/chat/completions", json={"messages": [*asked, *listed], "tools": tools})
+    unseen = client.post(
+        "/v1/chat/completions",
+        json={"messages": [*asked, {"role": "tool", "content": '{"skills": []}', "tool_call_id": "c1"}], "tools": tools},
+    )
+
+    assert call["function"]["name"] == "skills_list"
+    assert "HERMES_PLATFORM_SKILL_SEEN" in seen.text and "HERMES_PLATFORM_SKILL_UNSEEN" in unseen.text

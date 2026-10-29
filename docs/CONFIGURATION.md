@@ -215,7 +215,10 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   beyond its bundled ones are read after each turn as drafts per user
   (`hermes_skill_drafts`, bundles in the `S3_BUCKET` under `skills/{org}/`);
   organization administrators review every file on the Skills page of the Admin
-  UI, and an approved draft becomes an ordinary code skill.
+  UI, and an approved draft becomes an ordinary code skill. The code skills a user
+  may read are hydrated into the sandbox before each turn, read-only, from the
+  bundles skill-executor fetches with its `S3_*` credentials (read access to
+  `skills/`).
 - `POST /v1/hermes/mcp` is the platform tools' MCP endpoint (Streamable HTTP without
   a session: one JSON answer per POST, no server stream). It offers
   `knowledge_search` (only the files attached to the conversation), `web_search` and

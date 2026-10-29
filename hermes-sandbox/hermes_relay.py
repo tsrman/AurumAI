@@ -20,8 +20,12 @@ the agent can stop the server and answer in its place.
                    skill-executor, then removed) holds {"memory", "user"}
   memory-read      the memory files as Hermes left them: regular files only,
                    bounded, valid UTF-8, else null
-  skills-read      the skills Hermes holds beyond the image's bundled ones,
-                   one line each: bounded text files only, links never followed
+  skills-read      the skills Hermes holds beyond the image's bundled ones and
+                   unchanged copies of the platform's, one line each: bounded
+                   text files only, links never followed
+  skills-hydrate DIR replaces the platform skills with those in DIR (placed by
+                   skill-executor under .aurum/hydrate, then removed): an
+                   empty DIR removes them all
 """
 
 import hashlib
@@ -200,6 +204,8 @@ SKILL_MAX_DEPTH = 4
 # Skill directories looked at, bundled ones included (Hermes 0.22.5 ships 58).
 SKILL_DIRS_MAX = 512
 BUNDLED_SKILLS = os.environ.get("HERMES_RELAY_BUNDLED_SKILLS", "/opt/hermes/skills")
+# One of Hermes's skills.external_dirs; skill-executor creates it with the config.
+PLATFORM_SKILLS = os.path.join(STATE, "platform-skills")
 _PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # Caches and environments, which Hermes's skill scanners skip too.
 _IGNORED = {"__pycache__", "node_modules", "venv", "site-packages"}
@@ -305,9 +311,22 @@ def _newest(directory: str, depth: int = 1) -> float:
     return newest
 
 
+def _platform_copies() -> list[dict[str, str]]:
+    if not _is_dir(PLATFORM_SKILLS):
+        return []
+    copies = []
+    for _, directory in _skill_dirs(PLATFORM_SKILLS):
+        try:
+            copies.append(_skill_files(directory))
+        except Unusable:
+            continue
+    return copies
+
+
 def skills_read() -> int:
     root = os.path.join(HERMES_HOME, "skills")
     count = skipped = 0
+    platform = _platform_copies()
     if _is_dir(root):
         found = [(relative, directory) for _, (relative, directory) in zip(range(SKILL_DIRS_MAX), _skill_dirs(root))]
         # Most recently changed first: skills drafted on earlier turns, read
@@ -319,8 +338,8 @@ def skills_read() -> int:
             except Unusable:
                 skipped += 1
                 continue
-            # Copied from the image unchanged: not the agent's.
-            if files == _bundled(relative):
+            # Copied from the image or the platform unchanged: not the agent's.
+            if files == _bundled(relative) or files in platform:
                 continue
             if count == SKILLS_MAX:
                 skipped += 1
@@ -329,6 +348,57 @@ def skills_read() -> int:
             line = {"type": "skill", "path": relative, "files": [{"path": name, "content": text} for name, text in files.items()]}
             sys.stdout.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
     emit("skills", count=count, skipped=skipped)
+    return 0
+
+
+def _remove(path: str) -> None:
+    """Remove a path the agent may have replaced: a link or file is unlinked,
+    never followed; a directory is made writable again, as its owner, and removed."""
+    mode = os.lstat(path).st_mode
+    if not stat.S_ISDIR(mode):
+        os.unlink(path)
+        return
+    os.chmod(path, 0o700)
+    for entry in os.scandir(path):
+        _remove(entry.path)
+    os.rmdir(path)
+
+
+def _read_only(path: str) -> None:
+    for entry in os.scandir(path):
+        mode = entry.stat(follow_symlinks=False).st_mode
+        if stat.S_ISDIR(mode):
+            _read_only(entry.path)
+        elif stat.S_ISREG(mode):
+            os.chmod(entry.path, 0o555 if mode & 0o111 else 0o444)
+        else:
+            os.unlink(entry.path)
+    os.chmod(path, 0o555)
+
+
+def skills_hydrate(staging: str) -> int:
+    """Hermes reads the platform skills as an external directory, whose real
+    path it keeps: the directory stays, its entries are replaced."""
+    # The agent can replace .aurum itself: nothing is removed through a link.
+    hydrate = os.path.join(STATE, "hydrate")
+    if not (_is_dir(STATE) and _is_dir(hydrate) and _is_dir(staging)) or os.path.dirname(os.path.abspath(staging)) != hydrate:
+        emit("error", code="hermes_skills_staging_invalid")
+        return 3
+    # Staging left by an earlier hydration that failed would fill the workspace.
+    for entry in os.scandir(hydrate):
+        if entry.path != os.path.abspath(staging):
+            _remove(entry.path)
+    if os.path.lexists(PLATFORM_SKILLS) and not _is_dir(PLATFORM_SKILLS):
+        os.unlink(PLATFORM_SKILLS)
+    os.makedirs(PLATFORM_SKILLS, mode=0o755, exist_ok=True)
+    for entry in os.scandir(PLATFORM_SKILLS):
+        _remove(entry.path)
+    names = [entry.name for entry in os.scandir(staging) if _PART.match(entry.name) and entry.is_dir(follow_symlinks=False)]
+    for name in names:
+        os.rename(os.path.join(staging, name), os.path.join(PLATFORM_SKILLS, name))
+        _read_only(os.path.join(PLATFORM_SKILLS, name))
+    _remove(staging)
+    emit("skills-hydrated", count=len(names))
     return 0
 
 
@@ -375,6 +445,8 @@ def main(argv: list[str]) -> int:
         return memory_write(argv[1])
     if command == "memory-read" and len(argv) == 1:
         return memory_read()
+    if command == "skills-hydrate" and len(argv) == 2:
+        return skills_hydrate(argv[1])
     if command == "skills-read" and len(argv) == 1:
         return skills_read()
     if command == "active" and len(argv) == 1:
@@ -383,7 +455,7 @@ def main(argv: list[str]) -> int:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|active", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|skills-hydrate DIR|active", file=sys.stderr)
     return 2
 
 

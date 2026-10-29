@@ -181,6 +181,18 @@ class HermesSessionWorkflow:
             self._memory = await self._best_effort("hermes_load_memory", turn, session_id)
         return session_id
 
+    async def _hydrate(self, turn: HermesTurn, session_id: str) -> None:
+        """Not best effort: a sandbox whose platform skills cannot be brought
+        up to date, or cleared, does not run the turn."""
+        if workflow.patched("hermes-platform-skills"):
+            await workflow.execute_activity(
+                "hermes_hydrate_skills",
+                args=(await self._token(turn.parent_task_queue), session_id),
+                start_to_close_timeout=timedelta(minutes=6),
+                retry_policy=_RETRY,
+                result_type=dict,
+            )
+
     async def _run_turn(
         self, start: HermesSessionInput, turn: HermesTurn, session_id: str | None
     ) -> tuple[str | None, dict[str, Any]]:
@@ -188,6 +200,7 @@ class HermesSessionWorkflow:
             session_id = await self._prepare(start, turn)
             for attempt in range(2):
                 try:
+                    await self._hydrate(turn, session_id)
                     return session_id, await self._follow(start, turn, session_id)
                 except ActivityError as exc:
                     if attempt == 0 and _code(exc) in _REPLACED:

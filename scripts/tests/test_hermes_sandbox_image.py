@@ -299,6 +299,71 @@ def test_skills_read_reads_the_most_recently_changed_skills_first(relay, tmp_pat
     assert summary == {"type": "skills", "count": 16, "skipped": 1}
 
 
+def _staged(tmp_path: Path, name: str = "batch") -> Path:
+    staging = tmp_path / ".aurum" / "hydrate" / name
+    staging.mkdir(parents=True)
+    return staging
+
+
+def test_skills_hydrate_replaces_the_platform_skills_read_only(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    platform = tmp_path / ".aurum" / "platform-skills"
+    staging = _staged(tmp_path)
+    _skill(staging / "standup-1a2b3c4d", **{"scripts/run.sh": "echo hi\n"})
+    (staging / "standup-1a2b3c4d" / "scripts" / "run.sh").chmod(0o755)
+
+    assert run("skills-hydrate", str(staging)) == [{"type": "skills-hydrated", "count": 1}]
+    hydrated = platform / "standup-1a2b3c4d"
+    assert not staging.exists()
+    assert oct(hydrated.stat().st_mode & 0o777) == "0o555"
+    assert oct((hydrated / "SKILL.md").stat().st_mode & 0o777) == "0o444"
+    assert oct((hydrated / "scripts" / "run.sh").stat().st_mode & 0o777) == "0o555"
+
+    # A revoked skill is gone on the next hydration, as is what the agent added.
+    (platform / "added").mkdir()
+    assert run("skills-hydrate", str(_staged(tmp_path, "next"))) == [{"type": "skills-hydrated", "count": 0}]
+    assert list(platform.iterdir()) == []
+
+
+def test_skills_hydrate_follows_no_link_the_agent_placed(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    project = tmp_path / "home" / "project"
+    project.mkdir(parents=True)
+    (project / "kept.txt").write_text("user data")
+    platform = tmp_path / ".aurum" / "platform-skills"
+    platform.parent.mkdir(parents=True)
+    platform.symlink_to(project, target_is_directory=True)
+
+    assert run("skills-hydrate", str(_staged(tmp_path))) == [{"type": "skills-hydrated", "count": 0}]
+    assert (project / "kept.txt").read_text() == "user data"
+    assert platform.is_dir() and not platform.is_symlink()
+
+    (platform / "linked").symlink_to(project, target_is_directory=True)
+    run("skills-hydrate", str(_staged(tmp_path, "again")))
+    assert (project / "kept.txt").exists() and not (platform / "linked").exists()
+
+    stale = _staged(tmp_path, "stale")
+    (stale / "big.bin").write_bytes(b"x" * 1000)
+    run("skills-hydrate", str(_staged(tmp_path, "latest")))
+    assert list((tmp_path / ".aurum" / "hydrate").iterdir()) == []
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert run("skills-hydrate", str(outside))[0]["code"] == "hermes_skills_staging_invalid"
+
+
+def test_skills_read_skips_unchanged_copies_of_platform_skills(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    _skill(tmp_path / ".aurum" / "platform-skills" / "standup-1a2b3c4d")
+    skills = tmp_path / ".hermes" / "skills"
+    _skill(skills / "standup-1a2b3c4d")
+    _skill(skills / "changed" / "standup-1a2b3c4d", "Changed.")
+
+    *found, _ = run("skills-read")
+
+    assert [item["path"] for item in found] == ["changed/standup-1a2b3c4d"]
+
+
 def test_skills_read_takes_no_linked_skills_directory(relay, tmp_path: Path) -> None:
     run, _ = relay
     _skill(tmp_path / "real" / "mine")

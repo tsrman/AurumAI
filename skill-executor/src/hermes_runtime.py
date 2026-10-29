@@ -52,6 +52,7 @@ import aiodocker
 from aiodocker.exceptions import DockerError
 
 from src.config import Settings
+from src.hermes_platform_skills import PlatformSkill, staging_tar
 from src.hermes_snapshots import Snapshot, SnapshotError, SnapshotStore, to_thread_sanitize
 from src.hermes_snapshots import prefix as snapshot_prefix
 
@@ -113,6 +114,9 @@ class HermesSandbox:
 
 # hermes-relay's skills-read returns at most this many.
 SKILLS_MAX = 16
+# Hermes keeps the external directories it found when it started: this one
+# exists from the start, with the config, and only its entries change.
+PLATFORM_SKILLS_DIR = "/workspace/.aurum/platform-skills"
 
 
 def resource_name(session_id: str) -> str:
@@ -156,7 +160,9 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
         # them after every turn as drafts for an administrator
         # (business-backend's hermes_skill_drafts); Hermes's own approval is
         # no gate, since the terminal writes there too.
-        "skills": {"write_approval": False, "create_dir": "", "external_dirs": []},
+        # The platform's code skills the user may read are hydrated into an
+        # external directory before each turn (src/hermes_platform_skills.py).
+        "skills": {"write_approval": False, "create_dir": "", "external_dirs": [PLATFORM_SKILLS_DIR]},
         # Hermes connects when it starts and lists the tools once. The bridge
         # answers POST only, so there is no preflight probe, and a rare ping
         # keeps idle sandboxes from calling the backend between turns.
@@ -538,7 +544,13 @@ class DockerHermesSandboxes:
         proxy = f"http://hermes:{token}@{self._settings.hermes_proxy_address}"
         await container.put_archive(
             "/workspace",
-            _tar({".hermes/config.yaml": json.dumps(config, indent=1).encode(), ".aurum/proxy": proxy.encode()}),
+            _tar(
+                {
+                    ".hermes/config.yaml": json.dumps(config, indent=1).encode(),
+                    ".aurum/proxy": proxy.encode(),
+                    ".aurum/platform-skills/.platform": b"",
+                }
+            ),
         )
 
     async def _provision(
@@ -725,6 +737,25 @@ class DockerHermesSandboxes:
                     {"path": line["path"], "files": [{"path": item["path"], "content": item["content"]} for item in files]}
                 )
         raise HermesSandboxError("hermes_skills_failed")
+
+    async def hydrate_skills(
+        self, session_id: str, skills: list[PlatformSkill], fetch: Any = None
+    ) -> dict[str, int]:
+        """Replace the sandbox's platform skills with these; an empty list
+        removes them all, so a failure upstream can still revoke."""
+        if fetch is None:
+            from src.object_storage import object_storage
+
+            fetch = object_storage.get_bytes
+        sandbox = self.get_running(session_id)
+        staging = f".aurum/hydrate/{secrets.token_hex(16)}"
+        archive, hydrated, skipped = await staging_tar(skills, fetch, staging)
+        container = await self.docker.containers.get(sandbox.container_id)
+        await container.put_archive("/workspace", archive)  # type: ignore[no-untyped-call]
+        _, output = await self._exec(sandbox, ["hermes-relay", "skills-hydrate", f"/workspace/{staging}"])
+        if b'"skills-hydrated"' not in output:
+            raise HermesSandboxError("hermes_skills_failed")
+        return {"hydrated": hydrated, "skipped": skipped}
 
     async def clarify(self, session_id: str, run_id: str, body: dict[str, Any]) -> None:
         """Answer a run's pending question. The answer is the user's text, so it

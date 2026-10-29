@@ -7,7 +7,7 @@ also after Hermes is switched off. A Hermes token cannot reach these
 routes: get_current_user_or_session rejects it before any handler runs.
 """
 
-from typing import Literal, NoReturn
+from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -25,7 +25,7 @@ from src.services.hermes_access import (
     active_hermes_turn,
     require_hermes_capabilities,
 )
-from src.services import hermes_memory, hermes_skill_drafts
+from src.services import hermes_memory, hermes_skill_drafts, hermes_skills
 from src.services.session_manager import session_manager
 from src.services.hermes_sessions import (
     HermesSessionError,
@@ -303,3 +303,13 @@ async def submit_hermes_skill_draft(
         raise HTTPException(status_code=422, detail={"code": exc.code}) from None
     await session.commit()
     return {"outcome": outcome}
+
+
+@router.get("/hermes/platform-skills", dependencies=[Depends(require_hermes_enabled)])
+async def hermes_platform_skills_for_turn(
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> dict[str, list[dict[str, Any]]]:
+    """The conversation owner's code skills, to hydrate into the sandbox for the turn."""
+    subject = await _turn_owner(user, session)
+    return {"skills": await hermes_skills.platform_code_skills(session, subject)}
