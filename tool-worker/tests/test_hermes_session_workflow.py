@@ -122,6 +122,11 @@ class Fakes:
             self.calls.append(f"save_memory:{loaded['memory']['version']}")
             return {"memory": "stored", "user": "unchanged"}
 
+        @activity.defn(name="hermes_save_skills")
+        async def save_skills(token: str, session_id: str) -> dict[str, int]:
+            self.calls.append("save_skills")
+            return {"drafted": 1}
+
         @activity.defn(name="hermes_retire_sandbox")
         async def retire(session_id: str) -> None:
             self.calls.append(f"retire:{session_id}")
@@ -130,7 +135,7 @@ class Fakes:
         async def close(token: str, session_id: str) -> None:
             self.calls.append(f"close:{session_id}")
 
-        return [prepare, bind, unbind, run, answer, load_memory, save_memory, retire, close], [get_session_token]
+        return [prepare, bind, unbind, run, answer, load_memory, save_memory, save_skills, retire, close], [get_session_token]
 
 
 @asynccontextmanager
@@ -191,13 +196,15 @@ async def test_a_turn_is_prepared_bound_run_and_unbound() -> None:
         [result] = await handle.result()
 
     assert result == {"turn_id": "turn-1", "status": "completed", "output": "answer to hello"}
-    # The memory goes in after binding and comes back before unbinding.
+    # The memory goes in after binding and comes back, with the skills the
+    # turn wrote, before unbinding.
     assert fakes.calls == [
         "prepare:runner-token:hermes-model",
         "bind:turn-1:exec-1",
         "load_memory",
         "run:turn-1:hello:1",
         "save_memory:1",
+        "save_skills",
         "unbind",
     ]
 
@@ -250,7 +257,7 @@ async def test_a_sandbox_retired_before_the_run_is_prepared_again_once() -> None
 
     assert result["status"] == "completed"
     assert [call.split(":")[0] for call in fakes.calls] == [
-        "prepare", "bind", "load_memory", "run", "prepare", "bind", "load_memory", "run", "save_memory", "unbind",
+        "prepare", "bind", "load_memory", "run", "prepare", "bind", "load_memory", "run", "save_memory", "save_skills", "unbind",
     ]
 
 

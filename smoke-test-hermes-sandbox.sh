@@ -24,7 +24,10 @@
 # chat turn: a conversation runner hands a Hermes turn to the session workflow
 # on tool-worker, which prepares a sandbox, binds the turn and persists the
 # answer through the runner, leaving the session unbound; the next turn reuses
-# the running sandbox and its session without rotating the token.
+# the running sandbox and its session without rotating the token. Phase 5b
+# adds skill drafts: no turn drafts the bundled skills, a skill Hermes writes
+# is drafted once for the user without the sandbox's secrets, and neither an
+# unchanged skill nor a withdrawn draft comes back on later turns.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000/58090, no other
 # aurum-ai-hermes-egress-guard container. Never point this at a shared stack.
@@ -407,6 +410,33 @@ chat_turn "$SHOW_TURN" HERMES_MEMORY_SHOW 6 false
   || fail "a fresh sandbox did not get the user's memory"
 CHAT_SESSION=$(sql "SELECT replace(id::text,'-','') FROM hermes_sessions WHERE conversation_id='$CHAT_CONVERSATION' AND state='open'")
 [[ -n "$CHAT_SESSION" ]] || fail "the memory turn left no open session"
+
+log "a skill Hermes writes becomes the user's draft once; bundled skills never do"
+drafts() { sql "SELECT count(*) FROM hermes_skill_drafts WHERE org_id='$ORG'"; }
+[[ "$(drafts)" == 0 ]] || fail "turns that wrote no skill left drafts: $(sql "SELECT path FROM hermes_skill_drafts WHERE org_id='$ORG'")"
+SKILL_TURN=$(fixture chat-turn "$CHAT_CONVERSATION" HERMES_SKILL_CREATE)
+chat_turn "$SKILL_TURN" HERMES_SKILL_CREATE 7 false
+[[ "$(sql "SELECT content FROM messages WHERE turn_id='$SKILL_TURN' AND role='assistant'")" == *HERMES_SKILL_CREATED* ]] \
+  || fail "Hermes did not create the skill"
+DRAFT=$(sql "SELECT id FROM hermes_skill_drafts WHERE org_id='$ORG' AND user_id='$(journal user)' AND path='acceptance/aurum-acceptance' AND name='aurum-acceptance' AND status='pending'")
+[[ -n "$DRAFT" && "$(drafts)" == 1 ]] || fail "the skill was not drafted once for the user: $(sql "SELECT path, status FROM hermes_skill_drafts WHERE org_id='$ORG'")"
+BUNDLE="local/aurum-ai-business/$(sql "SELECT bundle_storage_key FROM hermes_skill_drafts WHERE id='$DRAFT'")"
+mc_ cat "$BUNDLE" | grep -aq AURUM_SKILL_SENTINEL || fail "the draft's bundle does not hold the skill"
+# The sandbox's session token and API key live next to the skills; neither enters a draft.
+mc_ cat "$BUNDLE" | grep -aqE 'eyJ[A-Za-z0-9_-]{10,}|config\.yaml' && fail "a draft's bundle carries a secret or the config"
+LISTED=$(curl -fsS http://127.0.0.1:58000/v1/hermes/skill-drafts -H "Authorization: Bearer $USER_TOKEN") \
+  || fail "the user could not list their drafts"
+[[ "$LISTED" == *'"name":"aurum-acceptance"'*'"status":"pending"'* ]] || fail "the user does not see the draft: $LISTED"
+UPDATED=$(sql "SELECT updated_at FROM hermes_skill_drafts WHERE id='$DRAFT'")
+chat_turn "$(fixture chat-turn "$CHAT_CONVERSATION")" "Say hello again." 8 false
+[[ "$(drafts)" == 1 && "$(sql "SELECT updated_at FROM hermes_skill_drafts WHERE id='$DRAFT'")" == "$UPDATED" ]] \
+  || fail "the unchanged skill was drafted again"
+withdrawn=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "http://127.0.0.1:58000/v1/hermes/skill-drafts/$DRAFT" \
+  -H "Authorization: Bearer $USER_TOKEN")
+[[ "$withdrawn" == 204 ]] || fail "withdrawing the draft failed: $withdrawn"
+chat_turn "$(fixture chat-turn "$CHAT_CONVERSATION")" "Say hello again." 9 false
+[[ "$(drafts)" == 1 && "$(sql "SELECT status FROM hermes_skill_drafts WHERE id='$DRAFT'")" == dismissed ]] \
+  || fail "a withdrawn draft came back while the sandbox keeps the skill"
 
 log "the archive purge's workflow removes the conversation's sandbox and every snapshot"
 CHAT_PREFIX="local/aurum-ai-business/hermes-sessions/$ORG/$CHAT_CONVERSATION"

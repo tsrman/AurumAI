@@ -659,6 +659,51 @@ export async function putOrganizationHermesSettings(settings: {
   >();
 }
 
+export type HermesSkillDraftStatus = "pending" | "approved" | "rejected";
+
+/** A skill Hermes Agent wrote for itself in a user's sandbox. */
+export interface HermesSkillDraft {
+  id: string;
+  path: string;
+  name: string;
+  description: string;
+  status: HermesSkillDraftStatus;
+  fileCount: number;
+  sizeBytes: number;
+  skillId: string | null;
+  authorEmail: string | null;
+  // A decision names the version it was made on: a later turn can replace the files.
+  bundleChecksum: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HermesSkillDraftDetail extends HermesSkillDraft {
+  files: { path: string; content: string }[];
+}
+
+export async function listHermesSkillDrafts(status: HermesSkillDraftStatus) {
+  return (await api.get("admin/hermes/skill-drafts", { searchParams: { status } })).json<
+    ApiResponse<HermesSkillDraft[]>
+  >();
+}
+
+export async function getHermesSkillDraft(id: string) {
+  return (await api.get(`admin/hermes/skill-drafts/${id}`)).json<ApiResponse<HermesSkillDraftDetail>>();
+}
+
+export async function approveHermesSkillDraft(id: string, decision: { bundleChecksum: string; name?: string }) {
+  return (await api.post(`admin/hermes/skill-drafts/${id}/approve`, { json: decision })).json<
+    ApiResponse<HermesSkillDraft>
+  >();
+}
+
+export async function rejectHermesSkillDraft(id: string, decision: { bundleChecksum: string }) {
+  return (await api.post(`admin/hermes/skill-drafts/${id}/reject`, { json: decision })).json<
+    ApiResponse<HermesSkillDraft>
+  >();
+}
+
 function explicitSearchParams<T extends object>(
   values: T
 ): Record<string, string | number> {

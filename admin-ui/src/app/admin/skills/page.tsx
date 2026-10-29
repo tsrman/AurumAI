@@ -5,6 +5,7 @@ import { Plus, Wrench } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button, ConfirmDialog, SegmentedControl } from "@/components/primitives";
 import { AccessDialog, type AccessTarget } from "@/components/authorization/AccessDialog";
+import { HermesSkillDrafts } from "@/components/aurum/admin/HermesSkillDrafts";
 import { SkillFormDialog } from "@/components/aurum/admin/SkillFormDialog";
 import { SkillsTable } from "@/components/aurum/admin/SkillsTable";
 import { AdminGate, EmptyState, Notice, PageBody, PageHeader, SearchInput } from "@/components/ui";
@@ -60,6 +61,7 @@ function SkillsContent({ canWrite }: { canWrite: boolean }) {
         }
       />
       <PageBody>
+        <HermesSkillDrafts canWrite={canWrite} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SearchInput value={search} onChange={setSearch} placeholder={t("search")} />
           <SegmentedControl<TypeFilter>

@@ -34,6 +34,10 @@ const uploadReset = vi.fn();
 const replaceBundleMutate = vi.fn();
 const replaceBundleReset = vi.fn();
 
+vi.mock("@/components/aurum/admin/HermesSkillDrafts", () => ({
+  HermesSkillDrafts: () => null,
+}));
+
 vi.mock("@/hooks/useAdminAccess", () => ({
   useAdminAccess: () => adminAccess,
 }));

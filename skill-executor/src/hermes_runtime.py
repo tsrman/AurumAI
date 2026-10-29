@@ -111,6 +111,10 @@ class HermesSandbox:
     workspace_full: bool = False
 
 
+# hermes-relay's skills-read returns at most this many.
+SKILLS_MAX = 16
+
+
 def resource_name(session_id: str) -> str:
     return f"aurum-ai-hermes-{session_id}"
 
@@ -148,6 +152,11 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
             "user_char_limit": 1375,
             "provider": "",
         },
+        # Skills land in HERMES_HOME/skills unstaged, where the platform reads
+        # them after every turn as drafts for an administrator
+        # (business-backend's hermes_skill_drafts); Hermes's own approval is
+        # no gate, since the terminal writes there too.
+        "skills": {"write_approval": False, "create_dir": "", "external_dirs": []},
         # Hermes connects when it starts and lists the tools once. The bridge
         # answers POST only, so there is no preflight probe, and a rare ping
         # keeps idle sandboxes from calling the backend between turns.
@@ -695,6 +704,27 @@ class DockerHermesSandboxes:
         if found is None:
             raise HermesSandboxError("hermes_memory_failed")
         return {kind: value if isinstance(value, str) else None for kind, value in found.items() if kind in ("memory", "user")}
+
+    async def read_skills(self, session_id: str) -> dict[str, Any]:
+        """The skills the sandbox holds beyond the bundled ones, as the relay
+        bounds them; one per line, since together they outgrow an exec's output."""
+        sandbox = self.get_running(session_id)
+        skills: list[dict[str, Any]] = []
+        async for line in self._stream(sandbox, ["hermes-relay", "skills-read"]):
+            if line.get("type") == "skills":
+                return {"skills": skills, "skipped": int(line.get("skipped") or 0)}
+            files = line.get("files")
+            if (
+                line.get("type") == "skill"
+                and isinstance(line.get("path"), str)
+                and isinstance(files, list)
+                and len(skills) < SKILLS_MAX
+                and all(isinstance(item, dict) and isinstance(item.get("path"), str) and isinstance(item.get("content"), str) for item in files)
+            ):
+                skills.append(
+                    {"path": line["path"], "files": [{"path": item["path"], "content": item["content"]} for item in files]}
+                )
+        raise HermesSandboxError("hermes_skills_failed")
 
     async def clarify(self, session_id: str, run_id: str, body: dict[str, Any]) -> None:
         """Answer a run's pending question. The answer is the user's text, so it

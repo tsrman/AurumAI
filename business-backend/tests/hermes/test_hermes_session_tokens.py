@@ -328,3 +328,34 @@ async def test_a_turn_reads_its_users_memory_and_stores_it_on_the_version_it_rea
     assert stale.status_code == 409 and "hermes_memory_conflict" in stale.text
     assert read.json()["user"] == {"content": "likes tea", "version": 1}
     assert after_turn.status_code == 403 and "hermes_turn_inactive" in after_turn.text
+
+
+async def test_a_turn_drafts_the_skills_its_sandbox_holds_for_its_user(hermes_env, monkeypatch) -> None:
+    from sqlalchemy import select, text
+
+    from src.models.hermes_skill_draft import HermesSkillDraft
+    from src.services import hermes_skill_drafts
+
+    async def put_bytes(key: str, data: bytes, **_: object) -> None:
+        return None
+
+    monkeypatch.setattr(hermes_skill_drafts.object_storage, "put_bytes", put_bytes)
+    skill = {
+        "path": "notes/standup",
+        "files": [{"path": "SKILL.md", "content": "---\nname: standup\ndescription: Write the standup\n---\nSteps.\n"}],
+    }
+    drafted = await hermes_env.internal("PUT", "/skill-drafts", json=skill)
+    again = await hermes_env.internal("PUT", "/skill-drafts", json=skill)
+    invalid = await hermes_env.internal(
+        "PUT", "/skill-drafts", json={"path": "notes/x", "files": [{"path": "SKILL.md", "content": "no frontmatter"}]}
+    )
+    await hermes_env.finish_turn()
+    after_turn = await hermes_env.internal("PUT", "/skill-drafts", json={**skill, "path": "notes/other"})
+    async with hermes_env.sessions() as check:
+        await check.execute(text("SELECT set_config('app.current_org_id', :org, false)"), {"org": str(hermes_env.org_id)})
+        owners = (await check.execute(select(HermesSkillDraft.user_id))).scalars().all()
+
+    assert drafted.json() == {"outcome": "drafted"} and again.json() == {"outcome": "unchanged"}
+    assert invalid.status_code == 422 and "hermes_skill_invalid" in invalid.text
+    assert after_turn.status_code == 403 and "hermes_turn_inactive" in after_turn.text
+    assert owners == [hermes_env.user_id]

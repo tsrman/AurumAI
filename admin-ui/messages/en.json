@@ -603,6 +603,24 @@
       "deleteTitle": "Delete the skill?",
       "deleteDescription": "“{skill}” will no longer be available to the LLM in chat.",
       "delete": "Delete"
+    },
+    "hermesDrafts": {
+      "title": "Skills Hermes Agent wrote",
+      "description": "Hermes Agent writes skills for itself in users' sandboxes. Read every file: an approved skill becomes a code skill of the organization that its author can use, and you grant it to others as usual.",
+      "columns": {
+        "skill": "Skill",
+        "author": "Written for",
+        "actions": "Actions"
+      },
+      "unknownAuthor": "Unknown user",
+      "review": "Review",
+      "reviewAria": "Review the skill {skill}",
+      "reviewTitle": "Review {skill}",
+      "reviewDescription": "Every file of the skill as Hermes Agent wrote it. Nothing in it runs until you approve it.",
+      "name": "Skill name (optional)",
+      "approve": "Approve",
+      "reject": "Decline",
+      "loading": "Loading the files..."
     }
   },
   "analytics": {

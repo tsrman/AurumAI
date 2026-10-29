@@ -316,6 +316,20 @@
       "confirmDescription": "Hermes Agent forgets its notes and what it knows about you. A conversation already open keeps what it read until it ends.",
       "loadFailed": "Could not load the memory",
       "clearFailed": "Could not clear the memory"
+    },
+    "hermesSkills": {
+      "title": "Hermes Agent skills",
+      "description": "Skills Hermes Agent wrote for itself in your conversations. An administrator reviews each one before anyone can use it as a platform skill.",
+      "empty": "Hermes Agent has written no skills yet.",
+      "status": {
+        "pending": "Waiting for review",
+        "approved": "Approved",
+        "rejected": "Declined"
+      },
+      "withdraw": "Withdraw",
+      "withdrawAria": "Withdraw the skill {name}",
+      "loadFailed": "Could not load the skills",
+      "withdrawFailed": "Could not withdraw the skill"
     }
   },
   "sidebar": {
