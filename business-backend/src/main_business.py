@@ -46,6 +46,7 @@ from src.routers import (
     hermes_internal,
     hermes_mcp,
     hermes_memory,
+    hermes_skill_drafts,
     workflow_runs_internal,
     workflows,
 )
@@ -135,6 +136,7 @@ app = create_app(
         (hermes.router, "/v1", "hermes"),
         (hermes_mcp.router, "/v1", "hermes"),
         (hermes_memory.router, "/v1", "hermes-memory"),
+        (hermes_skill_drafts.router, "/v1", "hermes-skill-drafts"),
         (hermes_internal.router, "/v1/internal", "internal-hermes"),
         (hermes_egress_internal.router, "/v1/internal", "internal-hermes-egress"),
         (turns.router, "/v1", "turns"),

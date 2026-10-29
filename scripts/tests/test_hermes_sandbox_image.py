@@ -127,6 +127,7 @@ def relay(tmp_path: Path):  # noqa: ANN201
         "HERMES_RELAY_STATE": str(tmp_path / ".aurum"),
         "HERMES_RELAY_API": f"http://127.0.0.1:{server.server_address[1]}",
         "HERMES_RELAY_POLL_SECONDS": "0.05",
+        "HERMES_RELAY_BUNDLED_SKILLS": str(tmp_path / "bundled"),
     }
 
     def run(*args: str) -> list[dict]:
@@ -230,6 +231,80 @@ def test_memory_is_written_and_read_back_only_from_regular_files(relay, tmp_path
     (memories / "MEMORY.md").write_text("x" * 100_000)
     [read] = run("memory-read")
     assert read["user"] is None and read["memory"] is None
+
+
+def _skill(directory: Path, body: str = "Steps.", **extra: str) -> None:
+    directory.mkdir(parents=True)
+    (directory / "SKILL.md").write_text(f"---\nname: {directory.name}\ndescription: d\n---\n{body}\n")
+    for name, text in extra.items():
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(text)
+
+
+def test_skills_read_returns_only_what_differs_from_the_bundled_skills(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    skills, bundled = tmp_path / ".hermes" / "skills", tmp_path / "bundled"
+    assert run("skills-read") == [{"type": "skills", "count": 0, "skipped": 0}]
+
+    for root in (skills, bundled):
+        _skill(root / "research" / "arxiv")
+        _skill(root / "notes" / "standup", "Bundled steps.")
+    (skills / ".bundled_manifest").write_text("arxiv:abc")
+    (skills / ".hub").mkdir()
+    (skills / "notes" / "standup" / "SKILL.md").write_text("---\nname: standup\ndescription: d\n---\nChanged.\n")
+    _skill(skills / "mine", "Mine.", **{"scripts/run.py": "print(1)\n"})
+    (skills / "mine" / "__pycache__").mkdir()
+    (skills / "mine" / "__pycache__" / "run.pyc").write_bytes(b"\x00\x01")
+
+    *found, summary = run("skills-read")
+
+    assert summary == {"type": "skills", "count": 2, "skipped": 0}
+    assert {item["path"]: {f["path"]: f["content"] for f in item["files"]} for item in found} == {
+        "mine": {"SKILL.md": "---\nname: mine\ndescription: d\n---\nMine.\n", "scripts/run.py": "print(1)\n"},
+        "notes/standup": {"SKILL.md": "---\nname: standup\ndescription: d\n---\nChanged.\n"},
+    }
+
+
+def test_skills_read_skips_links_binaries_and_oversized_skills(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    skills = tmp_path / ".hermes" / "skills"
+    _skill(skills / "linked", **{"config.yaml": "x"})
+    (skills / "linked" / "config.yaml").unlink()
+    (skills / "linked" / "config.yaml").symlink_to(tmp_path / ".hermes" / "config.yaml")
+    _skill(skills / "binary")
+    (skills / "binary" / "blob.bin").write_bytes(b"\x7fELF\x00")
+    _skill(skills / "big", **{"a.md": "x" * 60_000, "b.md": "y" * 60_000})
+    _skill(skills / "elsewhere")
+    (skills / "outside").symlink_to(skills / "elsewhere", target_is_directory=True)
+
+    *found, summary = run("skills-read")
+
+    assert [item["path"] for item in found] == ["elsewhere"]
+    assert summary == {"type": "skills", "count": 1, "skipped": 3}
+
+
+def test_skills_read_reads_the_most_recently_changed_skills_first(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    skills = tmp_path / ".hermes" / "skills"
+    for index in range(17):
+        _skill(skills / f"s{index:02d}")
+        os.utime(skills / f"s{index:02d}" / "SKILL.md", (1_000 + index, 1_000 + index))
+        os.utime(skills / f"s{index:02d}", (1_000 + index, 1_000 + index))
+    # The alphabetically first skill changed last.
+    (skills / "s00" / "notes.md").write_text("new")
+
+    *found, summary = run("skills-read")
+
+    assert found[0]["path"] == "s00" and "s01" not in [item["path"] for item in found]
+    assert summary == {"type": "skills", "count": 16, "skipped": 1}
+
+
+def test_skills_read_takes_no_linked_skills_directory(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    _skill(tmp_path / "real" / "mine")
+    (tmp_path / ".hermes" / "skills").symlink_to(tmp_path / "real", target_is_directory=True)
+
+    assert run("skills-read") == [{"type": "skills", "count": 0, "skipped": 0}]
 
 
 def test_active_lists_the_recent_runs_hermes_still_runs(relay) -> None:

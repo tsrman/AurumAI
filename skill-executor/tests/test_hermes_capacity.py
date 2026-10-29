@@ -343,3 +343,33 @@ async def test_memory_goes_into_the_sandbox_as_a_file_and_comes_back_bounded(mak
     [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
     assert b"likes tea" in archive
     assert read == {"memory": "notes", "user": None}
+
+
+@pytest.mark.asyncio
+async def test_skills_come_back_one_per_line_and_only_in_their_shape(make, monkeypatch) -> None:
+    sandboxes, _, _, _ = make()
+    await _create(sandboxes, 1)
+    commands: list[list[str]] = []
+    lines = [
+        {"type": "skill", "path": "mine", "files": [{"path": "SKILL.md", "content": "---\nname: mine\n---\n"}]},
+        {"type": "skill", "path": "odd", "files": [{"path": "SKILL.md", "content": 7}]},
+        {"type": "event", "event": {"event": "run.completed"}},
+        {"type": "skills", "count": 2, "skipped": 1},
+    ]
+
+    async def stream(sandbox: Any, cmd: list[str]):  # noqa: ANN202
+        commands.append(cmd)
+        for line in lines:
+            yield line
+
+    monkeypatch.setattr(sandboxes, "_stream", stream)
+
+    read = await sandboxes.read_skills(_session(1))
+
+    assert commands == [["hermes-relay", "skills-read"]]
+    assert read == {"skills": [{"path": "mine", "files": lines[0]["files"]}], "skipped": 1}
+
+    lines.pop()
+    with pytest.raises(HermesSandboxError) as failed:
+        await sandboxes.read_skills(_session(1))
+    assert failed.value.code == "hermes_skills_failed"

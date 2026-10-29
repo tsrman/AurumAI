@@ -211,7 +211,11 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   (its `clarify` tool) become the turn's question cards under the same limits;
   without it they are answered `skip`. Hermes's memory is kept per user in the
   platform (`hermes_memories`), written into the sandbox before each turn and read
-  back after it; users see and clear it in their settings.
+  back after it; users see and clear it in their settings. Skills Hermes writes
+  beyond its bundled ones are read after each turn as drafts per user
+  (`hermes_skill_drafts`, bundles in the `S3_BUCKET` under `skills/{org}/`);
+  organization administrators review every file on the Skills page of the Admin
+  UI, and an approved draft becomes an ordinary code skill.
 - `POST /v1/hermes/mcp` is the platform tools' MCP endpoint (Streamable HTTP without
   a session: one JSON answer per POST, no server stream). It offers
   `knowledge_search` (only the files attached to the conversation), `web_search` and

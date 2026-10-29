@@ -1209,3 +1209,26 @@ def test_hermes_memory_markers_write_a_sentinel_and_report_seeing_it() -> None:
     assert call["function"]["name"] == "memory"
     assert "AURUM_MEMORY_SENTINEL" in json.loads(call["function"]["arguments"])["content"]
     assert "HERMES_MEMORY_SEEN" in seen.text and "HERMES_MEMORY_UNSEEN" in unseen.text
+
+
+def test_hermes_skill_marker_creates_one_skill_then_reports_it() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "skill_manage"}}]
+    asked = [{"role": "user", "content": "HERMES_SKILL_CREATE"}]
+
+    called = client.post("/v1/chat/completions", json={"messages": asked, "tools": tools})
+    [call] = json.loads(called.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+    done = client.post(
+        "/v1/chat/completions",
+        json={"messages": [*asked, {"role": "tool", "content": "{}", "tool_call_id": "c1"}], "tools": tools},
+    )
+    unoffered = client.post("/v1/chat/completions", json={"messages": asked})
+
+    arguments = json.loads(call["function"]["arguments"])
+    assert call["function"]["name"] == "skill_manage"
+    assert (arguments["action"], arguments["name"]) == ("create", "aurum-acceptance")
+    assert "AURUM_SKILL_SENTINEL" in arguments["content"]
+    assert "HERMES_SKILL_CREATED" in done.text and "HERMES_SKILL_NOT_OFFERED" in unoffered.text

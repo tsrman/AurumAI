@@ -373,8 +373,8 @@ points at it with `tools.include`.
   The memory can be viewed and cleared in the user's settings, and it is deleted
   when the user is deleted. It is excluded from conversation archives, with a
   documented lifecycle position.
-- **Skill drafts.** When a session closes, the platform diffs `HERMES_HOME/skills`
-  against what it hydrated. New or changed skills become drafts in a new
+- **Skill drafts.** After every turn (phase 5b; the design said when a session
+  closes), the platform diffs `HERMES_HOME/skills` against what it hydrated. New or changed skills become drafts in a new
   `hermes_skill_drafts` table owned by the user.
   - Hermes's `skills.write_approval` is not trusted as the gate, because the
     terminal can write the directory directly.
@@ -754,7 +754,62 @@ Each phase is a separate PR behind the flag:
        it starts again, at the latest after its idle time;
      - users see and clear their own memory in their settings
        (`GET`/`DELETE /v1/hermes/memory`), shown where Hermes can be used.
-   - 5b: skill drafts and their approval by an administrator.
+   - 5b, implemented: skill drafts and their approval by an administrator.
+     `hermes_skill_drafts` (organization, author, the skill's directory, name
+     and description from `SKILL.md`, a hash of the file set, the bundle, a
+     status of `pending`, `approved`, `rejected` or `dismissed`, and the skill
+     an approval made) has FORCE RLS by organization; the user routes also
+     name the author, and rows cascade with the user. Drafts are user data, not
+     conversation data: conversation archives neither carry nor remove them.
+     Accepted at runtime by `./smoke-test-hermes-sandbox.sh`: none of the turns
+     before drafts bundled skills, a skill Hermes writes with `skill_manage` is
+     drafted once for the user without the sandbox's secrets, and neither the
+     unchanged skill nor the draft the user withdrew comes back on later turns.
+     The approval itself is covered by the backend's tests, since the
+     acceptance stack has no admin backend. How it works, and where it departs
+     from the design above:
+     - the skills are read after every turn, while the turn is still bound,
+       not when the session closes: `.hermes/skills` is not in snapshots and
+       skill-executor retires sandboxes on its own, so a read at close would
+       miss skills. The session workflow's `hermes_save_skills` step follows
+       the memory read-back, is gated by
+       `workflow.patched("hermes-skill-drafts")`, carries only counts, and
+       never fails the turn;
+     - the baseline is the image's read-only `/opt/hermes/skills`, not
+       Hermes's `.bundled_manifest`, which the agent can rewrite: a skill
+       directory whose files equal the bundled copy's is skipped, a changed or
+       new one is read. Hermes's own state at the root of `skills/` (dot
+       files, `.hub`, `.archive`, `.locks`) and caches are never read;
+     - `hermes-relay skills-read` reads the same way as `memory-read`: a
+       `skills` directory that is a link is no skills, links are never
+       followed, and only regular, valid UTF-8 text files count. A skill
+       with anything else (a link, a binary, more than 32 files, a file over
+       64 KiB or more than 96 KiB in all) is skipped whole, and at most 16
+       skills are read per turn, one line each, the most recently changed
+       first, so skills read on earlier turns do not crowd out a new one;
+     - the backend checks the paths and bounds again, builds the bundle
+       itself (stored zip entries, fixed timestamps, so the same files give
+       the same checksum) and validates it as an uploaded code skill. A
+       draft is keyed by its file set's hash per user across every status,
+       so a skill seen again after a rejection or a withdrawal is not
+       drafted again; a changed skill replaces its directory's open draft,
+       and a user has at most 50 open drafts. Hermes's own
+       `skills.write_approval` stays off: the terminal writes the directory
+       anyway;
+     - administrators review on the Admin UI's Skills page, which shows every
+       file. A decision names the bundle checksum of the version on screen
+       and is refused (`hermes_skill_draft_changed`) if a later turn replaced
+       the draft's files meanwhile. Approval checks the stored bundle against
+       its checksum and
+       makes a code skill owned by the reviewer, with read access for the
+       author, both grants audited as the reviewer's; others get access
+       through ordinary grants. Approving a later
+       version of an approved skill directory replaces that skill's bundle
+       instead of adding a skill. Users see their drafts in their settings
+       and can withdraw an open one (`GET`/`DELETE /v1/hermes/skill-drafts`);
+     - bundles are stored like uploaded ones, by checksum under
+       `skills/{org}/`, and like a replaced bundle, a declined or withdrawn
+       draft's object is not removed.
    - 5c: platform code skills in the sandbox, read-only.
 6. **Workflow node.** A `hermes` node type, billing and replay tests, and the
    choice for parallel Hermes nodes (see the open questions).

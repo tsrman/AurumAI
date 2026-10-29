@@ -46,6 +46,7 @@ _STATUS = {
     "hermes_clarify_failed": 502,
     "hermes_snapshot_key_invalid": 400,
     "hermes_memory_failed": 502,
+    "hermes_skills_failed": 502,
 }
 
 
@@ -209,6 +210,15 @@ async def read_memory(session_id: str) -> dict[str, str | None]:
     _available()
     try:
         return await sandboxes.read_memory(session_id)
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+
+
+@router.get("/sandboxes/{session_id}/skills")
+async def read_skills(session_id: str) -> dict[str, Any]:
+    _available()
+    try:
+        return await sandboxes.read_skills(session_id)
     except HermesSandboxError as exc:
         raise _error(exc) from None
 

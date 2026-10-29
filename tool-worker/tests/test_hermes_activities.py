@@ -354,3 +354,32 @@ async def test_unreadable_memory_files_are_not_stored(http) -> None:
     )
 
     assert outcome == {"memory": "unreadable"}
+
+
+@pytest.mark.asyncio
+async def test_skills_are_submitted_as_drafts_and_only_counts_come_back(http) -> None:
+    files = [{"path": "SKILL.md", "content": "---\nname: mine\ndescription: d\n---\nsecret steps"}]
+    outcomes = iter(
+        [
+            httpx.Response(200, json={"outcome": "drafted"}),
+            httpx.Response(200, json={"outcome": "unchanged"}),
+            httpx.Response(422, json={"detail": {"code": "hermes_skill_invalid"}}),
+        ]
+    )
+    router = http(
+        {
+            ("GET", f"/hermes/sandboxes/{SESSION}/skills"): httpx.Response(
+                200,
+                json={"skills": [{"path": name, "files": files} for name in ("a", "b", "c")], "skipped": 2},
+            ),
+            ("PUT", "/v1/internal/hermes/skill-drafts"): lambda request: next(outcomes),
+        }
+    )
+
+    counts = await ActivityEnvironment().run(hermes_activities.hermes_save_skills, "t", SESSION)
+
+    assert counts == {"drafted": 1, "updated": 0, "unchanged": 1, "refused": 1, "skipped": 2}
+    assert [request[2] for request in router.requests if request[0] == "PUT"] == [
+        {"path": name, "files": files} for name in ("a", "b", "c")
+    ]
+    assert "secret steps" not in json.dumps(counts)

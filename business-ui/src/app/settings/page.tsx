@@ -10,6 +10,7 @@ import { useModels } from "@/hooks/useModels";
 import { useAuth } from "@/providers/AuthProvider";
 import { useTranslations } from "next-intl";
 import { HermesMemorySection } from "@/components/aurum/settings/HermesMemorySection";
+import { HermesSkillDraftsSection } from "@/components/aurum/settings/HermesSkillDraftsSection";
 
 export default function SettingsPage() {
   const t = useTranslations("settings");
@@ -129,6 +130,7 @@ export default function SettingsPage() {
         )}
       </form>
       <HermesMemorySection />
+      <HermesSkillDraftsSection />
     </div>
   );
 }

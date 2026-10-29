@@ -268,6 +268,29 @@ async def hermes_save_memory(token: str, session_id: str, loaded: dict[str, dict
     return outcome
 
 
+@activity.defn(name="hermes_save_skills")
+async def hermes_save_skills(token: str, session_id: str) -> dict[str, int]:
+    """Submit the skills the sandbox holds beyond the bundled ones as drafts
+    for an administrator. Only counts come back: the skills stay out of the
+    workflow's history. The backend drafts a skill once, so a skill seen
+    again after every turn is no new draft."""
+    response = await _executor("GET", f"/sandboxes/{session_id}/skills", timeout=120.0)
+    if response.status_code != 200:
+        raise _failure(_code(response, "hermes_sandbox_unavailable"))
+    body = response.json()
+    counts = {"drafted": 0, "updated": 0, "unchanged": 0, "refused": 0, "skipped": int(body.get("skipped") or 0)}
+    for skill in body.get("skills") or []:
+        stored = await _backend("PUT", "/skill-drafts", token, {"path": skill["path"], "files": skill["files"]})
+        if stored.status_code == 200 and stored.json().get("outcome") in counts:
+            counts[stored.json()["outcome"]] += 1
+        elif stored.status_code == 422:
+            # Not a bounded text skill, or the user's open drafts are at the limit.
+            counts["refused"] += 1
+        else:
+            raise _failure(_code(stored, "hermes_backend_unavailable"))
+    return counts
+
+
 @activity.defn(name="hermes_purge_conversation")
 async def hermes_purge_conversation(org_id: str, conversation_id: str) -> dict[str, int]:
     response = await _executor("DELETE", f"/conversations/{org_id}/{conversation_id}", timeout=600.0)

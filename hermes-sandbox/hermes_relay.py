@@ -20,11 +20,14 @@ the agent can stop the server and answer in its place.
                    skill-executor, then removed) holds {"memory", "user"}
   memory-read      the memory files as Hermes left them: regular files only,
                    bounded, valid UTF-8, else null
+  skills-read      the skills Hermes holds beyond the image's bundled ones,
+                   one line each: bounded text files only, links never followed
 """
 
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import time
@@ -188,6 +191,147 @@ def memory_read() -> int:
     return 0
 
 
+# business-backend's hermes_skill_drafts keeps to the same bounds.
+SKILLS_MAX = 16
+SKILL_MAX_FILES = 32
+SKILL_FILE_MAX_BYTES = 64 * 1024
+SKILL_MAX_BYTES = 96 * 1024
+SKILL_MAX_DEPTH = 4
+# Skill directories looked at, bundled ones included (Hermes 0.22.5 ships 58).
+SKILL_DIRS_MAX = 512
+BUNDLED_SKILLS = os.environ.get("HERMES_RELAY_BUNDLED_SKILLS", "/opt/hermes/skills")
+_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Caches and environments, which Hermes's skill scanners skip too.
+_IGNORED = {"__pycache__", "node_modules", "venv", "site-packages"}
+_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+class Unusable(Exception):
+    """A skill that is not a bounded set of text files."""
+
+
+def _ignored(name: str) -> bool:
+    return name.startswith(".") or name in _IGNORED
+
+
+def _is_dir(path: str) -> bool:
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _text_file(path: str) -> str:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise Unusable() from None
+    with os.fdopen(descriptor, "rb") as skill_file:
+        if not stat.S_ISREG(os.fstat(skill_file.fileno()).st_mode):
+            raise Unusable()
+        data = skill_file.read(SKILL_FILE_MAX_BYTES + 1)
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Unusable() from None
+    if len(data) > SKILL_FILE_MAX_BYTES or _TEXT.search(text):
+        raise Unusable()
+    return text
+
+
+def _skill_files(directory: str) -> dict[str, str]:
+    files: dict[str, str] = {}
+    size = 0
+
+    def walk(path: str, prefix: str, depth: int) -> None:
+        nonlocal size
+        for entry in sorted(os.scandir(path), key=lambda item: item.name):
+            if _ignored(entry.name):
+                continue
+            relative = f"{prefix}{entry.name}"
+            if not _PART.match(entry.name) or depth > SKILL_MAX_DEPTH:
+                raise Unusable()
+            if entry.is_dir(follow_symlinks=False):
+                walk(entry.path, f"{relative}/", depth + 1)
+                continue
+            files[relative] = _text_file(entry.path)
+            size += len(files[relative].encode())
+            if len(files) > SKILL_MAX_FILES or size > SKILL_MAX_BYTES:
+                raise Unusable()
+
+    walk(directory, "", 1)
+    return files
+
+
+def _skill_dirs(root: str):  # noqa: ANN202
+    """Directories holding a SKILL.md; a skill's own subdirectories belong to it."""
+
+    def walk(path: str, prefix: str, depth: int):  # noqa: ANN202
+        for entry in sorted(os.scandir(path), key=lambda item: item.name):
+            if _ignored(entry.name) or not _PART.match(entry.name) or not entry.is_dir(follow_symlinks=False):
+                continue
+            relative = f"{prefix}{entry.name}"
+            if os.path.lexists(os.path.join(entry.path, "SKILL.md")):
+                yield relative, entry.path
+            elif depth < SKILL_MAX_DEPTH:
+                yield from walk(entry.path, f"{relative}/", depth + 1)
+
+    yield from walk(root, "", 1)
+
+
+def _bundled(relative: str) -> dict[str, str] | None:
+    directory = os.path.join(BUNDLED_SKILLS, relative)
+    if not _is_dir(directory):
+        return None
+    try:
+        return _skill_files(directory)
+    except Unusable:
+        return None
+
+
+def _newest(directory: str, depth: int = 1) -> float:
+    """The latest change in a skill's tree, links not followed."""
+    try:
+        newest = os.lstat(directory).st_mtime
+        for entry in os.scandir(directory):
+            if _ignored(entry.name):
+                continue
+            newest = max(newest, entry.stat(follow_symlinks=False).st_mtime)
+            if depth < SKILL_MAX_DEPTH and entry.is_dir(follow_symlinks=False):
+                newest = max(newest, _newest(entry.path, depth + 1))
+    except OSError:
+        # Changed while read; the skill is read, or skipped, after the others.
+        return 0.0
+    return newest
+
+
+def skills_read() -> int:
+    root = os.path.join(HERMES_HOME, "skills")
+    count = skipped = 0
+    if _is_dir(root):
+        found = [(relative, directory) for _, (relative, directory) in zip(range(SKILL_DIRS_MAX), _skill_dirs(root))]
+        # Most recently changed first: skills drafted on earlier turns, read
+        # again every turn, do not crowd out a new one.
+        found.sort(key=lambda item: _newest(item[1]), reverse=True)
+        for relative, directory in found:
+            try:
+                files = _skill_files(directory)
+            except Unusable:
+                skipped += 1
+                continue
+            # Copied from the image unchanged: not the agent's.
+            if files == _bundled(relative):
+                continue
+            if count == SKILLS_MAX:
+                skipped += 1
+                continue
+            count += 1
+            line = {"type": "skill", "path": relative, "files": [{"path": name, "content": text} for name, text in files.items()]}
+            sys.stdout.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
+    emit("skills", count=count, skipped=skipped)
+    return 0
+
+
 def active() -> int:
     runs = os.path.join(STATE, "runs")
     try:
@@ -231,13 +375,15 @@ def main(argv: list[str]) -> int:
         return memory_write(argv[1])
     if command == "memory-read" and len(argv) == 1:
         return memory_read()
+    if command == "skills-read" and len(argv) == 1:
+        return skills_read()
     if command == "active" and len(argv) == 1:
         return active()
     if command == "stop" and len(argv) == 2:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|active", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|active", file=sys.stderr)
     return 2
 
 

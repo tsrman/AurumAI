@@ -25,7 +25,7 @@ from src.services.hermes_access import (
     active_hermes_turn,
     require_hermes_capabilities,
 )
-from src.services import hermes_memory
+from src.services import hermes_memory, hermes_skill_drafts
 from src.services.session_manager import session_manager
 from src.services.hermes_sessions import (
     HermesSessionError,
@@ -74,6 +74,21 @@ class MemoryWrite(BaseModel):
     # What the sandbox wrote; cut to Hermes's limit when stored.
     content: str = Field(max_length=64_000)
     base_version: int = Field(alias="baseVersion", ge=0)
+
+
+class SkillDraftFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=200)
+    content: str = Field(max_length=hermes_skill_drafts.MAX_FILE_BYTES)
+
+
+class SkillDraftSubmit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # The skill's directory under Hermes's skills; checked again when drafted.
+    path: str = Field(min_length=1, max_length=200)
+    files: list[SkillDraftFile] = Field(min_length=1, max_length=hermes_skill_drafts.MAX_FILES)
 
 
 def _runner(user: UserInfo) -> tuple[AuthorizationSubject, UUID]:
@@ -224,7 +239,7 @@ async def close_hermes_session(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def _memory_turn(user: UserInfo, session: AsyncSession) -> AuthorizationSubject:
+async def _turn_owner(user: UserInfo, session: AsyncSession) -> AuthorizationSubject:
     """The token's user, while a Hermes turn of its conversation is active."""
     subject, conversation_id = _runner(user)
     try:
@@ -241,7 +256,7 @@ async def hermes_memory_for_turn(
     session: AsyncSession = Depends(get_service_db_session),
 ) -> dict[str, MemoryView]:
     """The conversation owner's memory, to write into the sandbox for the turn."""
-    subject = await _memory_turn(user, session)
+    subject = await _turn_owner(user, session)
     memory = await hermes_memory.read(session, subject.org_id, subject.user_id)
     return {kind: MemoryView(content=item.content, version=item.version) for kind, item in memory.items()}
 
@@ -254,7 +269,7 @@ async def store_hermes_memory(
 ) -> MemoryView:
     """What the turn left in the sandbox; refused when the memory changed since
     it was written there (another conversation's turn, or the user cleared it)."""
-    subject = await _memory_turn(user, session)
+    subject = await _turn_owner(user, session)
     try:
         version = await hermes_memory.write(
             session, subject.org_id, subject.user_id, data.kind, data.content, data.base_version
@@ -264,3 +279,27 @@ async def store_hermes_memory(
         raise HTTPException(status_code=409, detail={"code": "hermes_memory_conflict"}) from None
     await session.commit()
     return MemoryView(content=hermes_memory.bounded(data.kind, data.content), version=version)
+
+
+@router.put("/hermes/skill-drafts", dependencies=[Depends(require_hermes_enabled)])
+async def submit_hermes_skill_draft(
+    data: SkillDraftSubmit,
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> dict[str, str]:
+    """A skill the turn left in the sandbox beyond the bundled ones, drafted
+    for the conversation owner until an administrator decides on it."""
+    subject = await _turn_owner(user, session)
+    try:
+        outcome = await hermes_skill_drafts.submit(
+            session,
+            subject.org_id,
+            subject.user_id,
+            data.path,
+            [hermes_skill_drafts.DraftFile(item.path, item.content) for item in data.files],
+        )
+    except hermes_skill_drafts.DraftError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail={"code": exc.code}) from None
+    await session.commit()
+    return {"outcome": outcome}
