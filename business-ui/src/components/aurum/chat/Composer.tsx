@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, ArrowUp, Square, Paperclip, SlidersHorizontal, X } from "lucide-react";
 import { IconButton } from "@/components/primitives/IconButton";
 import { useAppShell } from "@/hooks/useAppShell";
+import { useChatAgents } from "@/hooks/useChatAgents";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { ModelPickerMenu } from "./ModelPickerMenu";
 import { ModelSettingsDialog } from "./ModelSettingsDialog";
@@ -68,15 +69,26 @@ export function Composer({
   const isDisabled = Boolean(disabled || blockedByActiveTurn);
   const { agents, myAgents, activeAgentId, conversations, models, activeModelId } = useAppShell();
   const visionModel = Boolean(models.find((model) => model.id === activeModelId)?.vision);
-  // An agent stays chosen for the conversation, whose workspace it keeps;
-  // a workflow is chosen for one turn.
-  // A new chat's first send creates its conversation, which keeps the choice.
-  const [mode, setMode] = useState<ChatMode>({ kind: "chat" });
-  const [modeConversationId, setModeConversationId] = useState(conversationId);
-  if (modeConversationId !== conversationId) {
-    setModeConversationId(conversationId);
-    if (modeConversationId != null) setMode({ kind: "chat" });
+  // An agent stays chosen for the conversation, whose workspace it keeps,
+  // also after a reload: the conversation names it. A workflow is chosen for
+  // one turn. A new chat's first send creates its conversation, which keeps
+  // the choice.
+  const { data: chatAgents = [] } = useChatAgents();
+  const [choice, setChoice] = useState<{ conversationId: string | null; mode: ChatMode } | null>(null);
+  if (choice && choice.conversationId == null && conversationId != null) {
+    setChoice({ conversationId, mode: choice.mode });
   }
+  const conversationAgent = conversations.find((c) => c.id === conversationId)?.agent;
+  const mode: ChatMode =
+    choice && choice.conversationId === (conversationId ?? null)
+      ? choice.mode
+      : conversationAgent === "hermes" && chatAgents.some((item) => item.id === "hermes")
+        ? { kind: "agent", agent: "hermes" }
+        : { kind: "chat" };
+  const setMode = useCallback(
+    (next: ChatMode) => setChoice({ conversationId: conversationId ?? null, mode: next }),
+    [conversationId]
+  );
   const workflowId = mode.kind === "workflow" ? mode.workflowId : null;
   const agent = mode.kind === "agent" ? mode.agent : undefined;
   // A workflow's agents use their own models; the backend inlines images
@@ -282,7 +294,7 @@ export function Composer({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, onSend, isStreaming, isDisabled, workflowId, agent, pendingImages, imagesAllowed]);
+  }, [text, onSend, isStreaming, isDisabled, workflowId, agent, pendingImages, imagesAllowed, setMode]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

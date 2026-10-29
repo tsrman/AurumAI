@@ -1253,3 +1253,25 @@ def test_hermes_skills_list_marker_reports_whether_the_platform_skill_was_listed
 
     assert call["function"]["name"] == "skills_list"
     assert "HERMES_PLATFORM_SKILL_SEEN" in seen.text and "HERMES_PLATFORM_SKILL_UNSEEN" in unseen.text
+
+
+def test_hermes_skill_markers_may_name_the_skill() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "skill_manage"}}, {"type": "function", "function": {"name": "skills_list"}}]
+
+    called = client.post(
+        "/v1/chat/completions", json={"messages": [{"role": "user", "content": "HERMES_SKILL_CREATE:e2e-1a2b"}], "tools": tools}
+    )
+    [call] = json.loads(called.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+    asked = [{"role": "user", "content": "HERMES_SKILLS_LIST:e2e-1a2b"}]
+    listed = client.post(
+        "/v1/chat/completions",
+        json={"messages": [*asked, {"role": "tool", "content": '[{"name": "e2e-1a2b"}]', "tool_call_id": "c"}], "tools": tools},
+    )
+
+    arguments = json.loads(call["function"]["arguments"])
+    assert arguments["name"] == "e2e-1a2b" and "name: e2e-1a2b" in arguments["content"]
+    assert "HERMES_PLATFORM_SKILL_SEEN" in listed.text

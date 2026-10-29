@@ -77,6 +77,7 @@ from src.services.quota import (
     get_quota_service,
 )
 from src.models.conversation import Conversation
+from src.models.hermes_session import HermesSession
 from src.models.message import Message
 from src.models.workflow_run import WorkflowRun, WorkflowRunStatus
 from src.repositories.conversation_repository import conversation_repository
@@ -107,7 +108,21 @@ def _meta() -> Meta:
     )
 
 
-def _conv_response(conv: Conversation, org_default_temperature: float | None) -> ConversationResponse:
+async def _hermes_conversations(session: AsyncSession, org_id: str, ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Those of the conversations a Hermes Agent session was opened for."""
+    if not ids:
+        return set()
+    rows = await session.scalars(
+        select(HermesSession.conversation_id)
+        .where(HermesSession.org_id == uuid.UUID(org_id), HermesSession.conversation_id.in_(ids))
+        .distinct()
+    )
+    return set(rows)
+
+
+def _conv_response(
+    conv: Conversation, org_default_temperature: float | None, *, hermes: bool = False
+) -> ConversationResponse:
     return ConversationResponse(
         id=str(conv.id),
         title=conv.title,
@@ -116,6 +131,7 @@ def _conv_response(conv: Conversation, org_default_temperature: float | None) ->
         lastMessageAt=conv.last_message_at.isoformat() if conv.last_message_at else None,
         createdAt=conv.created_at.isoformat(),
         temperature=resolve_temperature(conv.temperature, org_default_temperature),
+        agent="hermes" if hermes else None,
     )
 
 
@@ -1196,8 +1212,9 @@ async def list_conversations(
     org_default_temperature = await organization_model_settings_service.default_temperature(
         session, uuid.UUID(user.org_id or "")
     )
+    hermes = await _hermes_conversations(session, user.org_id or "", [c.id for c in conversations])
     return ApiResponse(
-        data=[_conv_response(c, org_default_temperature) for c in conversations],
+        data=[_conv_response(c, org_default_temperature, hermes=c.id in hermes) for c in conversations],
         meta=_meta(),
         pagination=Pagination(cursor=next_cursor, hasMore=has_more),
     )
@@ -1237,9 +1254,10 @@ async def get_conversation(
     org_default_temperature = await organization_model_settings_service.default_temperature(
         session, uuid.UUID(user.org_id or "")
     )
+    hermes = await _hermes_conversations(session, user.org_id or "", [conv.id])
     return ApiResponse(
         data={
-            **_conv_response(conv, org_default_temperature).model_dump(),
+            **_conv_response(conv, org_default_temperature, hermes=conv.id in hermes).model_dump(),
             "messages": {
                 "data": [_msg_response(m) for m in messages],
                 "pagination": {
@@ -1272,7 +1290,8 @@ async def update_conversation(
     org_default_temperature = await organization_model_settings_service.default_temperature(
         session, uuid.UUID(user.org_id or "")
     )
-    return ApiResponse(data=_conv_response(conv, org_default_temperature), meta=_meta())
+    hermes = await _hermes_conversations(session, user.org_id or "", [conv.id])
+    return ApiResponse(data=_conv_response(conv, org_default_temperature, hermes=conv.id in hermes), meta=_meta())
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)

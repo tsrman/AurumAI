@@ -815,14 +815,18 @@ def _hermes_memory_response(request: CompletionRequest) -> str | dict[str, Any] 
     return {"name": "memory", "arguments": json.dumps(entry)}
 
 
-_HERMES_SKILL = (
-    "---\nname: aurum-acceptance\ndescription: A skill Hermes wrote in the acceptance\n---\n"
-    "AURUM_SKILL_SENTINEL: greet the user.\n"
-)
+_HERMES_SKILL_NAME = re.compile(r"HERMES_SKILL(?:_CREATE|S_LIST)(?::([a-z0-9-]{1,48}))?")
+
+
+def _hermes_skill_name(request: CompletionRequest, default: str) -> str:
+    """The skill a marker names (`HERMES_SKILL_CREATE:name`), so that runs
+    which keep their drafts can each write a new skill."""
+    match = _HERMES_SKILL_NAME.search(_last_user_message(request.messages))
+    return match.group(1) if match and match.group(1) else default
 
 
 def _hermes_skill_response(request: CompletionRequest) -> str | dict[str, Any] | None:
-    """HERMES_SKILL_CREATE: Hermes's skill_manage creates one skill, then the turn ends."""
+    """HERMES_SKILL_CREATE[:name]: Hermes's skill_manage creates one skill, then the turn ends."""
     if "HERMES_SKILL_CREATE" not in _last_user_message(request.messages):
         return None
     last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
@@ -830,20 +834,26 @@ def _hermes_skill_response(request: CompletionRequest) -> str | dict[str, Any] |
         return "HERMES_SKILL_CREATED"
     if "skill_manage" not in {str((item.get("function") or {}).get("name")) for item in request.tools}:
         return "HERMES_SKILL_NOT_OFFERED"
-    arguments = {"action": "create", "name": "aurum-acceptance", "category": "acceptance", "content": _HERMES_SKILL}
+    name = _hermes_skill_name(request, "aurum-acceptance")
+    content = (
+        f"---\nname: {name}\ndescription: A skill Hermes wrote in the acceptance\n---\n"
+        "AURUM_SKILL_SENTINEL: greet the user.\n"
+    )
+    arguments = {"action": "create", "name": name, "category": "acceptance", "content": content}
     return {"name": "skill_manage", "arguments": json.dumps(arguments)}
 
 
 def _hermes_skills_list_response(request: CompletionRequest) -> str | dict[str, Any] | None:
-    """HERMES_SKILLS_LIST: Hermes's skills_list, then whether it listed the platform skill."""
+    """HERMES_SKILLS_LIST[:name]: Hermes's skills_list, then whether it listed the skill."""
     if "HERMES_SKILLS_LIST" not in _last_user_message(request.messages):
         return None
+    name = _hermes_skill_name(request, "aurum-platform-skill")
     last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
     results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
     if results:
-        seen = any("aurum-platform-skill" in str(content) for content in results)
+        seen = any(name in str(content) for content in results)
         # Whether the session's prompt index lists it too, for the launcher's log.
-        prompt = any(message.role == "system" and "aurum-platform-skill" in message.content for message in request.messages)
+        prompt = any(message.role == "system" and name in message.content for message in request.messages)
         return f"{'HERMES_PLATFORM_SKILL_SEEN' if seen else 'HERMES_PLATFORM_SKILL_UNSEEN'} PROMPT_INDEX:{'yes' if prompt else 'no'}"
     if "skills_list" not in {str((item.get("function") or {}).get("name")) for item in request.tools}:
         return "HERMES_SKILLS_LIST_NOT_OFFERED"

@@ -423,3 +423,30 @@ async def test_message_history_validates_pagination(client, db, test_org, test_u
     await db.commit()
     response = await client.get(f"/v1/conversations/{conv.id}", params=params)
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_conversations_with_a_hermes_session_name_their_agent(client, db, test_user, test_org):
+    from src.models.hermes_session import HermesSession
+
+    hermes = Conversation(org_id=test_org.id, user_id=test_user.id, title="Hermes", model="gpt-4o-mini")
+    plain = Conversation(org_id=test_org.id, user_id=test_user.id, title="Plain", model="gpt-4o-mini")
+    db.add_all([hermes, plain])
+    await db.flush()
+    # Closed sessions count too: the composer keeps Hermes for the conversation.
+    db.add(
+        HermesSession(
+            id=uuid.uuid4(), org_id=test_org.id, user_id=test_user.id, conversation_id=hermes.id,
+            expires_at=datetime.datetime.now(datetime.timezone.utc), state="closed",
+            closed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+    )
+    await db.flush()
+
+    listed = {item["title"]: item["agent"] for item in (await client.get("/v1/conversations")).json()["data"]}
+    detail = (await client.get(f"/v1/conversations/{hermes.id}")).json()["data"]
+    renamed = (await client.patch(f"/v1/conversations/{plain.id}", json={"title": "Renamed"})).json()["data"]
+
+    assert listed["Hermes"] == "hermes" and listed["Plain"] is None
+    assert detail["agent"] == "hermes"
+    assert renamed["agent"] is None

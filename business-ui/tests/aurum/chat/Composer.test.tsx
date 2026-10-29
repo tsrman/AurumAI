@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import { beforeEach, vi } from "vitest";
+import { useAppShell } from "@/hooks/useAppShell";
 import { AppShellProvider } from "@/providers/AppShellProvider";
 import { Composer } from "@/components/aurum/chat/Composer";
 import * as chatApi from "@/lib/chat-api";
@@ -159,6 +161,47 @@ test("another conversation starts in the ordinary chat", () => {
   expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent(
     "Plain chat"
   );
+});
+
+function HermesConversation({ children }: { children: React.ReactNode }) {
+  const { setConversations } = useAppShell();
+  useEffect(() => {
+    setConversations([
+      {
+        id: "conversation-1",
+        agentId: "general",
+        title: "Repo work",
+        date: "Today",
+        time: "10:00",
+        messages: [],
+        model: "gpt-4o-mini",
+        temperature: 0.7,
+        lastMessageAt: "2026-10-29T10:00:00Z",
+        status: "active",
+        messageCount: 2,
+        agent: "hermes",
+      },
+    ]);
+  }, [setConversations]);
+  return <>{children}</>;
+}
+
+test("a conversation that runs on Hermes Agent reopens with it chosen", async () => {
+  const onSend = vi.fn();
+  render(
+    <HermesConversation>
+      <Composer onSend={onSend} conversationId="conversation-1" />
+    </HermesConversation>,
+    { wrapper: Wrapper }
+  );
+
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent("Hermes Agent")
+  );
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Run the tests again" } });
+  fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+
+  expect(onSend.mock.calls).toEqual([["Run the tests again", undefined, undefined, "hermes"]]);
 });
 
 test("Shift+Enter does not call onSend", () => {

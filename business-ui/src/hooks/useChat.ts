@@ -1331,6 +1331,8 @@ export function useChat(): UseChatReturn {
             temperature: conversation.temperature,
             lastMessageAt: conversation.lastMessageAt ?? conversation.createdAt,
             messageCount: messages.length + survivingWorkflowMessages.length,
+            // The composer keeps the conversation's agent chosen after a reload.
+            agent: conversation.agent ?? null,
           };
           if (existing) {
             return prev.map((c) => (c.id === conversation.id ? updated : c));

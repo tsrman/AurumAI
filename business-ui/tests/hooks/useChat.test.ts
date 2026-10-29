@@ -986,3 +986,32 @@ test("hydrating a conversation keeps the images attached to user messages", asyn
     window.keycloak = originalKeycloak;
   }
 });
+
+test("hydrating a conversation keeps the agent it runs on", async () => {
+  vi.useRealTimers();
+  const originalKeycloak = window.keycloak;
+  window.keycloak = { token: "token", updateToken: vi.fn().mockResolvedValue(true) };
+  const { useAppShell } = await import("@/hooks/useAppShell");
+  const { getConversation } = await import("@/lib/chat-api");
+  const conversation = {
+    id: "conv-hermes", title: "Hermes", model: "pro", temperature: 0.7, status: "active" as const,
+    lastMessageAt: null, createdAt: "2026-06-19T10:00:00Z", messageCount: 0, tokenCount: 0, costUsd: 0,
+    agent: "hermes" as const,
+  };
+  vi.mocked(getConversation).mockReset();
+  vi.mocked(getConversation).mockResolvedValue({ conversation, messages: [] });
+  try {
+    const { result } = renderHook(
+      () => ({ chat: useChat(), shell: useAppShell() }),
+      { wrapper: Wrapper }
+    );
+    act(() => {
+      result.current.shell.setActiveConversationId("conv-hermes");
+    });
+    await waitFor(() =>
+      expect(result.current.shell.conversations.find((c) => c.id === "conv-hermes")?.agent).toBe("hermes")
+    );
+  } finally {
+    window.keycloak = originalKeycloak;
+  }
+});
