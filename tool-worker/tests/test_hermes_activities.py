@@ -473,3 +473,19 @@ async def test_a_workflow_node_turn_is_bound_with_its_run_phase_and_node(http) -
         {"turnId": "turn-1", "executionId": "exec-1", "workflowRunId": "run-9", "workflowPhase": "node", "workflowNodeKey": "research"},
         {"turnId": "turn-2", "executionId": "exec-2"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_closing_with_an_expired_runner_token_leaves_the_session_to_the_backend(http) -> None:
+    http({("POST", f"/v1/internal/hermes/sessions/{SESSION_UUID}/close"): httpx.Response(401)})
+
+    # No failure, so no retries: the backend closes sessions left open.
+    await ActivityEnvironment().run(hermes_activities.hermes_close_session, "expired", SESSION)
+
+
+@pytest.mark.asyncio
+async def test_closing_still_fails_when_the_backend_is_down(http) -> None:
+    http({("POST", f"/v1/internal/hermes/sessions/{SESSION_UUID}/close"): httpx.Response(503)})
+
+    with pytest.raises(ApplicationError):
+        await ActivityEnvironment().run(hermes_activities.hermes_close_session, "t", SESSION)

@@ -145,6 +145,12 @@ async def hermes_unbind_turn(token: str, session_id: str) -> None:
 @activity.defn(name="hermes_close_session")
 async def hermes_close_session(token: str, session_id: str) -> None:
     response = await _backend("POST", f"/sessions/{_uuid(session_id)}/close", token)
+    if response.status_code == 401:
+        # The runner's token lives as long as the sandbox's idle time and
+        # expired with it; the backend closes sessions left open
+        # (hermes_sessions.close_idle_sessions), so this is no failure.
+        activity.logger.info("Runner token expired; the backend closes the idle Hermes session")
+        return
     if response.status_code not in (204, 404):
         raise _failure(_code(response, "hermes_backend_unavailable"))
 

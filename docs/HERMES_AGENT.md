@@ -907,6 +907,19 @@ Each phase is a separate PR behind the flag:
 
 Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
 
+### Idle sessions
+
+The session workflow retires an idle sandbox after its idle time (1800 s) and
+then closes the session with the conversation runner's token. That token
+lives thirty minutes and only chat requests renew it, so by then it has
+expired, and the close is refused: tool-worker leaves it at that instead of
+retrying. The backend closes the sessions left open itself: every
+maintenance interval it closes sessions open without a turn for
+`APP_HERMES_SESSION_IDLE_CLOSE_SECONDS` (2700, at least 900) in every
+organization, through the bounded `close_idle_hermes_sessions` function, which
+clears the binding and revokes every token as closing does. A session bound to
+a turn is never closed this way.
+
 ## Validation
 
 - **Code.** TDD per phase. Replay tests for the `hermes-v1` gate. RLS tests for the

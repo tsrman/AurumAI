@@ -190,7 +190,9 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   do. Completions are billed to the bound turn's workflow correlation, never to
   anything in the request. A token holds identity only and has its own audience that
   no other route accepts; a session and its tokens end after
-  `APP_HERMES_SESSION_MAX_LIFETIME_SECONDS` (86400) even if nothing closes them.
+  `APP_HERMES_SESSION_MAX_LIFETIME_SECONDS` (86400) even if nothing closes them. A
+  session left open without a turn for `APP_HERMES_SESSION_IDLE_CLOSE_SECONDS` (2700,
+  at least 900) is closed by the backend, which revokes its tokens.
 - **Chat.** `POST /v1/chat/stream` with `"agent": "hermes"` (instead of a workflow)
   runs the turn on Hermes Agent, on the organization's Hermes model: an organization
   administrator sets it with `PUT /v1/admin/settings/hermes` (`{"model": ...}`, a
