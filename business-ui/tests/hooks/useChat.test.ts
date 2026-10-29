@@ -1015,3 +1015,51 @@ test("hydrating a conversation keeps the agent it runs on", async () => {
     window.keycloak = originalKeycloak;
   }
 });
+
+test("a failed turn's reason survives the history reload that follows it", async () => {
+  vi.useRealTimers();
+  const originalKeycloak = window.keycloak;
+  window.keycloak = { token: "token", updateToken: vi.fn().mockResolvedValue(true) };
+  const { useAppShell } = await import("@/hooks/useAppShell");
+  const { getConversation } = await import("@/lib/chat-api");
+  const conversation = {
+    id: "conv-failed", title: "Failed", model: "pro", temperature: 0.7, status: "active" as const,
+    lastMessageAt: null, createdAt: "2026-06-19T10:00:00Z", messageCount: 1, tokenCount: 0, costUsd: 0,
+  };
+  vi.mocked(getConversation).mockReset();
+  // The backend keeps the user's message, never the failed turn's reason.
+  vi.mocked(getConversation).mockResolvedValue({
+    conversation,
+    messages: [
+      {
+        id: "m-user", role: "user", content: "plan a trip", model: null, tokensIn: 0, tokensOut: 0,
+        costUsd: 0, latencyMs: null, toolCalls: null, toolResults: null, createdAt: "2026-06-19T10:00:00Z",
+      },
+    ],
+  });
+  const reason: AssistantMessageView = {
+    id: "local-reason", role: "assistant", agentId: "general", thinking: "", tools: [], widgets: [], sources: [],
+    content: "Could not get a model response. Reason: x (hermes_model_unavailable)",
+    contentShown: "Could not get a model response. Reason: x (hermes_model_unavailable)",
+    thinkingShown: "", phase: "done", thinkingOpen: false, thinkingSeconds: 1, startedAt: Date.now(), failed: true,
+  };
+  try {
+    const { result } = renderHook(() => ({ chat: useChat(), shell: useAppShell() }), { wrapper: Wrapper });
+    act(() => {
+      result.current.shell.setConversations([
+        {
+          id: "conv-failed", agentId: "general", title: "Failed", date: "Today", time: "10:00",
+          messages: [{ id: "local-user", role: "user", content: "plan a trip" }, reason],
+          model: "pro", temperature: 0.7, lastMessageAt: "2026-06-19T10:00:00Z", status: "active", messageCount: 2,
+        },
+      ]);
+      result.current.shell.setActiveConversationId("conv-failed");
+    });
+    await waitFor(() => expect(getConversation).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(result.current.chat.messages.map((message) => message.id)).toEqual(["m-user", "local-reason"])
+    );
+  } finally {
+    window.keycloak = originalKeycloak;
+  }
+});

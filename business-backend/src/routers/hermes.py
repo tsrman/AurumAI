@@ -130,6 +130,8 @@ async def hermes_chat_completions(
         model=request.model,
         generation=generation,
         log=logger,
+        # The sandbox is the agent's: the provider's text and addresses stay in our logs.
+        expose_upstream=False,
     )
     if request.stream:
         return create_streaming_response(events)

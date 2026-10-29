@@ -11,6 +11,7 @@ hermes_progress).
 import asyncio
 import hashlib
 import json
+import re
 from typing import Any
 
 import httpx
@@ -359,11 +360,25 @@ def _parse(line: str) -> dict[str, Any]:
     return message if isinstance(message, dict) else {}
 
 
+# The backend's bounded model error (completion_stream.bounded_upstream_error),
+# which Hermes puts in a failed run's text. The text is the sandbox's: it only
+# picks one of the fixed codes and goes no further.
+_UPSTREAM = re.compile(r"\bupstream_error (\d{3})\b")
+
+
+def _failure_code(output: object) -> str:
+    match = _UPSTREAM.search(output) if isinstance(output, str) else None
+    if match is None:
+        return "hermes_run_failed"
+    # The provider refuses: out of quota, rate limited or unpaid.
+    return "hermes_model_unavailable" if match.group(1) in {"402", "429"} else "hermes_model_error"
+
+
 def _outcome(message: dict[str, Any], progress: TurnProgress) -> dict[str, Any]:
     status = message.get("status")
     output = message.get("output")
     if status != "completed" or not isinstance(output, str) or not output.strip():
-        return {"status": "failed", "error": "hermes_run_failed"}
+        return {"status": "failed", "error": _failure_code(output)}
     outcome: dict[str, Any] = {"status": "completed", "output": output[:_MAX_OUTPUT_CHARS]}
     if progress.calls:
         outcome["tool_calls"] = progress.calls

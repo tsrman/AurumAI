@@ -1275,3 +1275,14 @@ def test_hermes_skill_markers_may_name_the_skill() -> None:
     arguments = json.loads(call["function"]["arguments"])
     assert arguments["name"] == "e2e-1a2b" and "name: e2e-1a2b" in arguments["content"]
     assert "HERMES_PLATFORM_SKILL_SEEN" in listed.text
+
+
+def test_hermes_provider_refuses_marker_answers_like_a_provider_out_of_quota() -> None:
+    from fastapi.testclient import TestClient
+
+    client = TestClient(_load_gateway().app)
+
+    refused = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "HERMES_PROVIDER_REFUSES"}]})
+
+    assert refused.status_code == 402
+    assert refused.json()["error"]["type"] == "free_request_quota_exhausted"
