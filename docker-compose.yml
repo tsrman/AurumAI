@@ -5,6 +5,7 @@ services:
     build: ./infra/postgres
     image: aurum-ai-postgres:latest
     container_name: aurum-ai-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -36,6 +37,7 @@ services:
   redis:
     image: redis:7.2-alpine
     container_name: aurum-ai-redis
+    restart: unless-stopped
     # Authentication is required: Langfuse sends AUTH even when REDIS_AUTH
     # is empty; without a matching password its queue connections fail.
     # Explicit authentication also protects the Redis endpoint.
@@ -67,6 +69,7 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.2
     container_name: aurum-ai-keycloak
+    restart: unless-stopped
     command: start-dev --import-realm
     environment:
       # Renamed in Keycloak 26: KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD became
@@ -127,6 +130,7 @@ services:
   temporal:
     image: temporalio/server:1.32.0
     container_name: aurum-ai-temporal
+    restart: unless-stopped
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -192,6 +196,7 @@ services:
   temporal-ui:
     image: temporalio/ui:2.54.1
     container_name: aurum-ai-temporal-ui
+    restart: unless-stopped
     environment:
       TEMPORAL_ADDRESS: temporal:7233
     ports:
@@ -212,6 +217,7 @@ services:
       context: ./business-backend
       dockerfile: Dockerfile
     container_name: aurum-ai-backend
+    restart: unless-stopped
     # Compose-only bootstrap: entrypoint maps the host socket GID, then drops
     # to image user appuser before migrations and Gunicorn — and refuses to
     # start if appuser still cannot reach the socket afterwards, rather than
@@ -340,6 +346,7 @@ services:
       context: ./business-backend
       dockerfile: Dockerfile
     container_name: aurum-ai-backend-admin
+    restart: unless-stopped
     ports:
       # admin-ui's browser JS calls this directly (RUNTIME_API_URL); it follows
       # PUBLIC_BIND_ADDRESS like keycloak above. The org_admin role plus
@@ -519,6 +526,7 @@ services:
       context: ./business-ui
       dockerfile: Dockerfile
     container_name: aurum-ai-frontend
+    restart: unless-stopped
     ports:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:3000:3000"
     environment:
@@ -548,6 +556,7 @@ services:
       context: ./admin-ui
       dockerfile: Dockerfile
     container_name: aurum-ai-admin-ui
+    restart: unless-stopped
     ports:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:3100:3000"
     environment:
@@ -580,6 +589,7 @@ services:
       dockerfile: Dockerfile
     image: business-tool-worker:latest
     container_name: aurum-ai-tool-worker
+    restart: unless-stopped
     environment:
       TOOL_WORKER_TEMPORAL_HOST: "temporal:7233"
       TOOL_WORKER_TEMPORAL_NAMESPACE: "default"
@@ -611,6 +621,7 @@ services:
       dockerfile: Dockerfile
     image: business-skill-executor:latest
     container_name: aurum-ai-skill-executor
+    restart: unless-stopped
     profiles: ["skills-exec"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -655,6 +666,7 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:26.6.1.1193
     container_name: aurum-ai-clickhouse
+    restart: unless-stopped
     environment:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
@@ -675,6 +687,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: aurum-ai-minio
+    restart: unless-stopped
     environment:
       MINIO_ROOT_USER: minio
       # Dev-only fallback — see .env.example.
@@ -731,6 +744,7 @@ services:
   langfuse-server:
     image: langfuse/langfuse:3.225.7
     container_name: aurum-ai-langfuse-server
+    restart: unless-stopped
     networks:
       - default
       - runner-net
@@ -804,6 +818,7 @@ services:
   langfuse-worker:
     image: langfuse/langfuse-worker:3.225.7
     container_name: aurum-ai-langfuse-worker
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
       NEXTAUTH_URL: "http://${PUBLIC_HOST:-localhost}:3001"
@@ -857,6 +872,7 @@ services:
   etcd:
     image: quay.io/coreos/etcd:v3.5.25
     container_name: aurum-ai-etcd
+    restart: unless-stopped
     profiles: ["rag", "archive"]
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
@@ -872,6 +888,7 @@ services:
   milvus:
     image: milvusdb/milvus:v2.5.27
     container_name: aurum-ai-milvus
+    restart: unless-stopped
     profiles: ["rag", "archive"]
     command: ["milvus", "run", "standalone"]
     environment:
@@ -1036,6 +1053,7 @@ services:
   reranker:
     image: michaelf34/infinity:0.0.77
     container_name: aurum-ai-reranker
+    restart: unless-stopped
     profiles: ["rag"]
     command: v2 --model-id Alibaba-NLP/gte-Qwen2-1.5B-instruct --port 7997
     environment:
@@ -1060,6 +1078,7 @@ services:
       context: ./mcp/everything
     image: mcp-everything:latest
     container_name: aurum-ai-mcp-everything
+    restart: unless-stopped
     profiles: ["mcp"]
     environment:
       - PORT=3001
@@ -1071,6 +1090,7 @@ services:
       context: ./mcp/fetch
     image: mcp-fetch:latest
     container_name: aurum-ai-mcp-fetch
+    restart: unless-stopped
     profiles: ["mcp"]
     # an unauthenticated SSRF primitive by design — this
     # reference server fetches whatever URL it's given, no host/network

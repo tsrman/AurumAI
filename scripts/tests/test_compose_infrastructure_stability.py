@@ -106,3 +106,28 @@ def test_deterministic_overlay_keeps_explicit_wrapper_rate_limits(tmp_path: Path
     for environment in _e2e_backend_environment(tmp_path, extra).values():
         assert environment["APP_RATE_LIMIT_PER_MINUTE"] == "1234"
         assert environment["APP_RATE_LIMIT_PER_MINUTE_STREAM"] == "56"
+
+
+def test_long_running_services_all_come_back_after_a_docker_restart(tmp_path: Path) -> None:
+    # A worker that restarts on its own while its database, Temporal or
+    # Milvus stay down only loops on connection errors (rag-api after a host
+    # reboot): every long-running service shares one policy. One-shot jobs
+    # keep their bounded retries, and build-only images never run.
+    env_file = tmp_path / ".env"
+    env_file.write_text("APP_SECRET_KEY=stability-contract\nKEYCLOAK_ADMIN_PASSWORD=stability-contract\n")
+    profiles = ["--profile", "*"]
+    result = subprocess.run(
+        ["docker", "compose", "--env-file", str(env_file), "-f", str(ROOT / "docker-compose.yml"), *profiles,
+         "config", "--format", "json"],
+        env={key: value for key, value in os.environ.items() if key not in {"APP_SECRET_KEY", "KEYCLOAK_ADMIN_PASSWORD"}},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    one_shot = {"temporal-admin-tools", "temporal-create-namespace", "rag-migrate"}
+    build_only = {"runner", "skill-sandbox"}
+    policies = {name: service.get("restart") for name, service in json.loads(result.stdout)["services"].items()}
+
+    assert {name: policy for name, policy in policies.items() if name not in one_shot | build_only} == {
+        name: "unless-stopped" for name in policies if name not in one_shot | build_only
+    }
+    assert policies["rag-migrate"] in (None, "no")
