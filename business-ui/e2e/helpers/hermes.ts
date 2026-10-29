@@ -126,8 +126,15 @@ export async function ask(page: Page, text: string, expected: string | RegExp, t
   await page.getByLabel("Message").fill(text);
   await page.getByLabel("Send").click();
   await expect(replies).toHaveCount(before + 1, { timeout });
+  await expect(replies.last()).toContainText(/\S/u, { timeout });
+  // A failed turn ends with its reason: report it now instead of waiting out the timeout.
+  const reply = (await replies.last().textContent()) ?? "";
+  expect(reply, "the turn failed").not.toContain(TURN_FAILED);
   await expect(replies.last()).toContainText(expected, { timeout });
 }
+
+/** How the runner ends a failed turn (conversation-runner's _fail_turn). */
+export const TURN_FAILED = "Could not get a model response";
 
 export function section(page: Page, title: string): Locator {
   return page.getByRole("heading", { name: title, exact: true }).locator("xpath=ancestor::section[1]");

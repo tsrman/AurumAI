@@ -103,6 +103,8 @@ export interface AssistantMessageState {
   // evaluator (if enabled) finishes; null score means it ran but failed.
   faithfulnessScore?: number | null;
   faithfulnessReason?: string | null;
+  // The reason a failed turn ended with; only the live stream carries it.
+  failed?: boolean;
   workflow?: WorkflowProgressState;
 }
 

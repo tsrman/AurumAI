@@ -464,5 +464,23 @@ async def test_an_unstreamed_request_reports_upstream_failure(hermes_env) -> Non
         response = await _post(hermes_env, await _token(hermes_env), body)
 
     assert response.status_code == 502
-    assert "boom" in response.json()["error"]["message"]
+    assert response.json()["error"]["message"] == "upstream_error 500"
     assert hermes_env.quota.cancelled == [hermes_env.quota.reservations[0]["request_id"]]
+
+
+async def test_an_upstream_failure_reaches_the_sandbox_as_status_and_type_only(hermes_env) -> None:
+    async def refused(request, *, on_accepted=None):  # noqa: ANN001, ANN202
+        response = httpx.Response(
+            402,
+            request=httpx.Request("POST", "https://provider.example/v1/chat/completions"),
+            json={"error": {"message": "free quota at https://provider.example is gone", "type": "free_request_quota_exhausted"}},
+        )
+        raise httpx.HTTPStatusError("Client error '402' for url 'https://provider.example'", request=response.request, response=response)
+        yield ""  # pragma: no cover
+
+    with patch("src.services.completion_stream.llm_client.stream_chat", side_effect=refused):
+        response = await _post(hermes_env, await _token(hermes_env), _body())
+
+    [error] = [json.loads(line[6:])["error"] for line in response.text.splitlines() if line.startswith("data: {")]
+    assert error == {"message": "upstream_error 402 free_request_quota_exhausted", "type": "upstream_error"}
+    assert "provider.example" not in response.text

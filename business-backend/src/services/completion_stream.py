@@ -7,6 +7,7 @@ accept/complete/cancel lifecycle of the request's quota reservation.
 
 import asyncio
 import json
+import re
 import logging
 import uuid
 from collections.abc import AsyncGenerator
@@ -116,6 +117,24 @@ class CompletionOutput:
         return output
 
 
+_ERROR_TYPE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def bounded_upstream_error(status: int | None, body: str) -> str:
+    """The gateway's failure as its status and its error type only, for a
+    caller that must not see the provider's text or addresses (Hermes's
+    sandbox): `upstream_error 402 free_request_quota_exhausted`."""
+    try:
+        error = json.loads(body).get("error")
+        kind = error.get("type") or error.get("code") if isinstance(error, dict) else None
+    except (ValueError, AttributeError):
+        kind = None
+    parts = ["upstream_error", str(status or 502)]
+    if isinstance(kind, str) and _ERROR_TYPE.match(kind):
+        parts.append(kind)
+    return " ".join(parts)
+
+
 async def proxy_completion_events(
     llm_request: dict[str, Any],
     *,
@@ -125,6 +144,7 @@ async def proxy_completion_events(
     model: str,
     generation: Any,
     log: logging.Logger,
+    expose_upstream: bool = True,
 ) -> AsyncGenerator[str, None]:
     output = CompletionOutput()
     provider_accepted = False
@@ -170,8 +190,13 @@ async def proxy_completion_events(
             # The gateway's own body goes to the caller too, not just to our
             # logs: "Client error '404 Not Found'" alone never explains that
             # the selected model can't do chat completions.
-            message = f"{exc} — {body[:2000]}" if body else str(exc)
-            yield f"data: {json.dumps({'error': {'message': message}})}\n\n"
+            if expose_upstream:
+                message = f"{exc} — {body[:2000]}" if body else str(exc)
+                yield f"data: {json.dumps({'error': {'message': message}})}\n\n"
+            else:
+                status = exc.response.status_code if exc.response is not None else None
+                error = {"message": bounded_upstream_error(status, body), "type": "upstream_error"}
+                yield f"data: {json.dumps({'error': error})}\n\n"
         else:
             if last_usage is not None:
                 # Guarded exactly like the cancel() below: by this point

@@ -141,6 +141,19 @@ async def test_a_failed_hermes_turn_ends_with_a_reason_and_no_answer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_turn_the_model_provider_refused_says_so() -> None:
+    session = Session({"status": "failed", "error": "hermes_model_unavailable"})
+
+    _, events, _ = await _turn(session, _message())
+
+    message_end = next(data for name, data in events if name == "message-end")
+    assert "out of quota or rate limited" in message_end["content"]
+    assert message_end["content"].endswith("(hermes_model_unavailable)")
+    # No history keeps the reason: the browser is told to hold on to it.
+    assert message_end["failed"] is True
+
+
+@pytest.mark.asyncio
 async def test_cancelling_a_hermes_turn_cancels_it_in_the_session() -> None:
     session = Session(None)
 

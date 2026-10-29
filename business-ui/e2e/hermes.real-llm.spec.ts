@@ -3,6 +3,7 @@ import { expect, test, type BrowserContext } from "@playwright/test";
 import {
   ADMIN_UI_URL,
   BUSINESS_URL,
+  TURN_FAILED,
   adminToken,
   ask as askWithin,
   chooseHermes,
@@ -78,7 +79,9 @@ test.describe("Hermes Agent with a real model", () => {
       );
       await member.getByLabel("Send").click();
       const rome = member.getByRole("button", { name: /^Rome/ });
-      await expect(rome.first()).toBeVisible({ timeout: TURN_TIMEOUT });
+      const failed = member.getByTestId("assistant-content").filter({ hasText: TURN_FAILED });
+      await expect(rome.or(failed).first()).toBeVisible({ timeout: TURN_TIMEOUT });
+      await expect(failed, "the turn failed").toHaveCount(0);
       await rome.first().click();
       await expect(member.getByTestId("assistant-content").last()).toContainText("Rome", { timeout: TURN_TIMEOUT });
 

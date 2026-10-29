@@ -21,7 +21,8 @@ import {
  * chosen; answers its question card; finds its memory in their settings and
  * clears it; and finds a skill it wrote waiting for review. The administrator
  * reads the draft's files and approves it, and the member's next turn has the
- * skill in the sandbox. The organization's capabilities, model grant and
+ * skill in the sandbox; a provider out of quota ends a turn with a reason the
+ * member can act on. The organization's capabilities, model grant and
  * Hermes settings are restored and the approved skill is removed.
  */
 const ENABLED = process.env.E2E_HERMES_UI === "true";
@@ -115,6 +116,18 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
 
       // Approved, it is a platform code skill of its author: in the next turn's sandbox.
       await ask(member, `HERMES_SKILLS_LIST:${skillName}`, "HERMES_PLATFORM_SKILL_SEEN");
+
+      // A provider out of quota ends the turn with a reason the member can act
+      // on, and its message, with its address, never reaches the member.
+      const replies = member.getByTestId("assistant-content");
+      const before = await replies.count();
+      await expect(member.getByLabel("Message")).toBeEnabled({ timeout: TURN_TIMEOUT });
+      await member.getByLabel("Message").fill("HERMES_PROVIDER_REFUSES");
+      await member.getByLabel("Send").click();
+      await expect(replies).toHaveCount(before + 1, { timeout: TURN_TIMEOUT });
+      await expect(replies.last()).toContainText("out of quota or rate limited", { timeout: TURN_TIMEOUT });
+      await expect(replies.last()).toContainText("(hermes_model_unavailable)");
+      await expect(replies.last()).not.toContainText("provider.invalid");
     } finally {
       for (const context of contexts) await context.close();
       const fresh = await adminToken(request);

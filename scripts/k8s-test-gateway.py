@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, model_validator
 
 MODEL_ID = os.getenv("TEST_GATEWAY_MODEL_ID", "k8s-test")
@@ -983,8 +983,14 @@ async def image_edits(request: Request) -> dict[str, Any]:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: CompletionRequest) -> StreamingResponse:
+async def chat_completions(request: CompletionRequest) -> Response:
     last = _last_user_message(request.messages)
+    if "HERMES_PROVIDER_REFUSES" in last:
+        # A provider out of quota, its message naming an address the sandbox must not see.
+        return JSONResponse(
+            status_code=402,
+            content={"error": {"message": "quota gone, see https://provider.invalid/billing", "type": "free_request_quota_exhausted"}},
+        )
     if last == "WEB_E2E_REVOKE":
         if not _web_barrier["armed"] or not _web_advertised(request.messages):
             raise HTTPException(409, "admitted web turn barrier prerequisite absent")

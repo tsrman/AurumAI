@@ -332,6 +332,15 @@ It streams the gateway's `tool_calls` deltas back unchanged.
   workflow-run, phase and node correlation for nodes.
 - **Langfuse.** Sanitization covers the new message shapes.
 - **Existing route.** Its schema and the text tool protocol stay unchanged.
+- **Upstream failures.** The sandbox gets only `upstream_error <status> <type>`,
+  where the type is the provider's error type when it is a short token
+  (`upstream_error 402 free_request_quota_exhausted`). The provider's message and
+  the gateway's addresses stay in the backend's log. Hermes puts this text in
+  the failed run's output, and tool-worker turns it into a fixed code, never
+  forwarding the text: `hermes_model_unavailable` for 402 and 429 (quota, rate
+  limit, payment), `hermes_model_error` for other statuses, and
+  `hermes_run_failed` otherwise. The runner ends the failed turn with a reason
+  the user can act on, followed by the code.
 
 `LLM_GATEWAY_URL` must forward native tools. Today the docs only state that it is
 OpenAI-compatible, so this becomes a documented gateway requirement. Startup does

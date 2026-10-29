@@ -181,7 +181,8 @@ export type SSEEvent =
         turn_id: string | null;
       };
     }
-  | { type: "message-end"; data: { role: string; content: string; turn_id: string } }
+  // `failed`: the runner ended a failed turn with its reason, which no history keeps.
+  | { type: "message-end"; data: { role: string; content: string; turn_id: string; failed?: boolean } }
   | { type: "done"; data: { turn_id: string; evaluation_pending?: boolean } }
   | {
       type: "workflow-run-status";

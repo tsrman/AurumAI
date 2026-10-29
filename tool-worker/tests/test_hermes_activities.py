@@ -167,6 +167,19 @@ async def test_a_run_returns_only_its_bounded_outcome(http) -> None:
     [
         ([{"type": "result", "status": "failed", "output": None}], {"status": "failed", "error": "hermes_run_failed"}),
         ([{"type": "result", "status": "completed", "output": "  "}], {"status": "failed", "error": "hermes_run_failed"}),
+        # Hermes puts the platform's bounded model error in the failed run's text.
+        (
+            [{"type": "result", "status": "failed", "output": "API failed: upstream_error 402 free_request_quota_exhausted"}],
+            {"status": "failed", "error": "hermes_model_unavailable"},
+        ),
+        (
+            [{"type": "result", "status": "failed", "output": "Rate limited: upstream_error 429"}],
+            {"status": "failed", "error": "hermes_model_unavailable"},
+        ),
+        (
+            [{"type": "result", "status": "failed", "output": "upstream_error 500 after 3 retries"}],
+            {"status": "failed", "error": "hermes_model_error"},
+        ),
     ],
 )
 async def test_an_unusable_result_is_a_failed_run(http, lines: list[dict[str, Any]], outcome: dict[str, Any]) -> None:

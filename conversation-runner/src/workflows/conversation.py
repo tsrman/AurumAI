@@ -149,6 +149,18 @@ def _message_image_ids(message: dict[str, Any]) -> list[str]:
     return [item for item in value[:4] if isinstance(item, str)]
 
 
+# What a failed Hermes Agent turn's code means for the user; the code follows
+# for support.
+_FAILURE_REASONS = {
+    "hermes_model_unavailable": (
+        "the model provider refused the request (out of quota or rate limited). Try again "
+        "later, or ask an administrator to choose another model for Hermes Agent"
+    ),
+    "hermes_model_error": "the model provider returned an error. Try again later",
+    "hermes_run_failed": "Hermes Agent could not finish the turn. Try again",
+}
+
+
 @workflow.defn
 class ConversationWorkflow:
     def __init__(self) -> None:
@@ -282,9 +294,15 @@ class ConversationWorkflow:
                     f"Could not publish done for turn {turn_id}: {publish_exc}"
                 )
             return
-        text = f"Could not get a model response. Reason: {root}"
+        reason = _FAILURE_REASONS.get(str(root))
+        text = (
+            f"Could not get a model response. Reason: {reason} ({root})"
+            if reason
+            else f"Could not get a model response. Reason: {root}"
+        )
         for event, data in (
-            ("message-end", {"role": "assistant", "content": text, "turn_id": turn_id}),
+            # `failed`: no history keeps this text, so the browser holds on to it.
+            ("message-end", {"role": "assistant", "content": text, "turn_id": turn_id, "failed": True}),
             ("done", {"turn_id": turn_id, "evaluation_pending": False}),
         ):
             try:
