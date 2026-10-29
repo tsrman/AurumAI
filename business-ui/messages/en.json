@@ -174,7 +174,9 @@
       "mayBeInaccurate": "May be inaccurate",
       "fallbackName": "Assistant",
       "copy": "Copy answer",
-      "regenerate": "Regenerate"
+      "regenerate": "Regenerate",
+      "failed": "The answer could not be completed",
+      "tryAgain": "Try again"
     },
     "sources": {
       "label": "Sources:",

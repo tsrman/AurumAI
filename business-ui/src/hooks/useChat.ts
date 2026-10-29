@@ -1193,6 +1193,8 @@ export function useChat(): UseChatReturn {
         messages: [{ role: "user", content: userMessage.content }],
         model: activeModelId,
         options: { temperature: 0.7, max_tokens: 4096 },
+        // A conversation on Hermes Agent is answered again by Hermes.
+        ...(activeConversation.agent === "hermes" ? { agent: "hermes" as const } : {}),
         onOpen: () => {
           void queryClient.invalidateQueries({
             queryKey: questionKeys.list(activeConversationId),

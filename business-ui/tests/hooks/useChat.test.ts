@@ -1057,3 +1057,56 @@ test("a failed turn's reason comes back from the history, marked failed", async 
     window.keycloak = originalKeycloak;
   }
 });
+
+test("trying a failed turn again in a Hermes conversation asks Hermes again", async () => {
+  vi.useRealTimers();
+  const originalApiUrl = process.env.NEXT_PUBLIC_API_URL;
+  process.env.NEXT_PUBLIC_API_URL = "http://localhost:8000/v1";
+  const originalKeycloak = window.keycloak;
+  window.keycloak = { token: "token", updateToken: vi.fn().mockResolvedValue(true) };
+  const { useAppShell } = await import("@/hooks/useAppShell");
+  const { getConversation, streamChat } = await import("@/lib/chat-api");
+  const conversation = {
+    id: "conv-retry", title: "Retry", model: "pro", temperature: 0.7, status: "active" as const,
+    lastMessageAt: null, createdAt: "2026-06-19T10:00:00Z", messageCount: 2, tokenCount: 0, costUsd: 0,
+    agent: "hermes" as const,
+  };
+  vi.mocked(getConversation).mockReset();
+  vi.mocked(getConversation).mockResolvedValue({
+    conversation,
+    messages: [
+      {
+        id: "m-user", role: "user", content: "plan a trip", model: null, tokensIn: 0, tokensOut: 0,
+        costUsd: 0, latencyMs: null, toolCalls: null, toolResults: null, createdAt: "2026-06-19T10:00:00Z",
+      },
+      {
+        id: "m-reason", role: "assistant", content: "Could not get a model response.", model: null,
+        tokensIn: 0, tokensOut: 0, costUsd: 0, latencyMs: null, toolCalls: null, toolResults: null,
+        createdAt: "2026-06-19T10:00:01Z", failed: true,
+      },
+    ],
+  });
+  vi.mocked(streamChat).mockReset();
+  vi.mocked(streamChat).mockImplementation(() => ({ cancel: vi.fn() }));
+  try {
+    const { result } = renderHook(() => ({ chat: useChat(), shell: useAppShell() }), { wrapper: Wrapper });
+    act(() => {
+      result.current.shell.setActiveConversationId("conv-retry");
+    });
+    await waitFor(() => expect(result.current.chat.messages.some((m) => m.id === "m-reason")).toBe(true));
+
+    act(() => {
+      result.current.chat.regenerate("m-reason");
+    });
+
+    await waitFor(() => expect(streamChat).toHaveBeenCalled());
+    expect(vi.mocked(streamChat).mock.calls[0][0]).toMatchObject({
+      conversation_id: "conv-retry",
+      messages: [{ role: "user", content: "plan a trip" }],
+      agent: "hermes",
+    });
+  } finally {
+    process.env.NEXT_PUBLIC_API_URL = originalApiUrl;
+    window.keycloak = originalKeycloak;
+  }
+});

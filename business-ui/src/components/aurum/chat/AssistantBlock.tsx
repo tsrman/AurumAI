@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { Copy, Check, RotateCcw, ShieldCheck, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Copy, Check, RotateCcw, ShieldCheck, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/primitives/Badge";
 import { IconButton } from "@/components/primitives/IconButton";
@@ -128,14 +128,25 @@ export function AssistantBlock({ message, onRegenerate }: AssistantBlockProps) {
           </div>
         )}
 
-        {message.contentShown && (
+        {message.contentShown && message.failed ? (
+          // The reason a turn failed, not an answer: plain text, set apart.
+          <div className="flex gap-2 rounded-card border border-aurum-err-fg/30 bg-aurum-err-bg px-3 py-2 text-sm text-aurum-err-fg">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="font-semibold">{t("failed")}</p>
+              <p data-testid="assistant-content" className="whitespace-pre-wrap">
+                {message.contentShown}
+              </p>
+            </div>
+          </div>
+        ) : message.contentShown ? (
           <div data-testid="assistant-content">
             <Markdown
               content={message.contentShown}
               streaming={message.phase === "answer"}
             />
           </div>
-        )}
+        ) : null}
 
         {message.images && message.images.length > 0 && (
           <ConversationImages imageIds={message.images} />
@@ -154,24 +165,37 @@ export function AssistantBlock({ message, onRegenerate }: AssistantBlockProps) {
         {message.sources.length > 0 && <SourceCitations sources={message.sources} />}
 
         <div className="flex items-center gap-2">
-          <IconButton
-            bare
-            aria-label={t("copy")}
-            onClick={handleCopy}
-          >
-            {copied ? (
-              <Check className="h-4 w-4" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </IconButton>
-          <IconButton
-            bare
-            aria-label={t("regenerate")}
-            onClick={() => onRegenerate?.(message.id)}
-          >
-            <RotateCcw className="h-4 w-4" />
-          </IconButton>
+          {message.failed ? null : (
+            <IconButton
+              bare
+              aria-label={t("copy")}
+              onClick={handleCopy}
+            >
+              {copied ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </IconButton>
+          )}
+          {message.failed ? (
+            <button
+              type="button"
+              onClick={() => onRegenerate?.(message.id)}
+              className="inline-flex items-center gap-1.5 rounded-btn px-2 py-1 text-xs font-medium text-aurum-text-2 hover:bg-aurum-surface-3 hover:text-aurum-text"
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              {t("tryAgain")}
+            </button>
+          ) : (
+            <IconButton
+              bare
+              aria-label={t("regenerate")}
+              onClick={() => onRegenerate?.(message.id)}
+            >
+              <RotateCcw className="h-4 w-4" />
+            </IconButton>
+          )}
           {message.phase === "done" &&
             typeof message.faithfulnessScore === "number" && (
               <FaithfulnessBadge

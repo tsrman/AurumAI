@@ -232,3 +232,32 @@ test("calls onRegenerate when regenerate button clicked", () => {
   fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
   expect(onRegenerate).toHaveBeenCalledWith("a1");
 });
+
+test("a failed turn's reason is set apart as plain text and offers to try again", () => {
+  const onRegenerate = vi.fn();
+  const message: AssistantMessageView = {
+    ...baseMessage,
+    thinking: "",
+    thinkingShown: "",
+    content: "Could not get a model response. Reason: **quota** (hermes_model_unavailable)",
+    contentShown: "Could not get a model response. Reason: **quota** (hermes_model_unavailable)",
+    failed: true,
+  };
+  render(React.createElement(AssistantBlock, { message, onRegenerate }), { wrapper: Wrapper });
+
+  expect(screen.getByText("The answer could not be completed")).toBeInTheDocument();
+  // Not rendered as Markdown: the reason is shown as it is.
+  expect(screen.getByTestId("assistant-content")).toHaveTextContent("Reason: **quota**");
+  expect(screen.queryByRole("button", { name: "Copy answer" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Regenerate" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(onRegenerate).toHaveBeenCalledWith("a1");
+});
+
+test("an ordinary answer keeps its copy and regenerate actions", () => {
+  render(React.createElement(AssistantBlock, { message: baseMessage }), { wrapper: Wrapper });
+
+  expect(screen.getByRole("button", { name: "Copy answer" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Regenerate" })).toBeInTheDocument();
+  expect(screen.queryByText("The answer could not be completed")).not.toBeInTheDocument();
+});
