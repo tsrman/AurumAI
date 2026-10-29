@@ -57,6 +57,8 @@ class Fakes:
         self.calls: list[str] = []
         self.run_errors: list[str] = []
         self.prepare_error: str | None = None
+        self.hydrate_fails = False
+        self.hydrate_gone = False
         self.block_run = False
         self.run_cancelled = False
         self.answered: list[tuple[Any, ...]] = []
@@ -122,6 +124,16 @@ class Fakes:
             self.calls.append(f"save_memory:{loaded['memory']['version']}")
             return {"memory": "stored", "user": "unchanged"}
 
+        @activity.defn(name="hermes_hydrate_skills")
+        async def hydrate_skills(token: str, session_id: str) -> dict[str, int]:
+            self.calls.append("hydrate_skills")
+            if self.hydrate_gone:
+                self.hydrate_gone = False
+                raise ApplicationError("hermes_sandbox_not_found", type="hermes_sandbox_not_found", non_retryable=True)
+            if self.hydrate_fails:
+                raise ApplicationError("hermes_skills_failed", type="hermes_skills_failed", non_retryable=True)
+            return {"hydrated": 1, "skipped": 0}
+
         @activity.defn(name="hermes_save_skills")
         async def save_skills(token: str, session_id: str) -> dict[str, int]:
             self.calls.append("save_skills")
@@ -135,7 +147,7 @@ class Fakes:
         async def close(token: str, session_id: str) -> None:
             self.calls.append(f"close:{session_id}")
 
-        return [prepare, bind, unbind, run, answer, load_memory, save_memory, save_skills, retire, close], [get_session_token]
+        return [prepare, bind, unbind, run, answer, load_memory, save_memory, hydrate_skills, save_skills, retire, close], [get_session_token]
 
 
 @asynccontextmanager
@@ -202,10 +214,43 @@ async def test_a_turn_is_prepared_bound_run_and_unbound() -> None:
         "prepare:runner-token:hermes-model",
         "bind:turn-1:exec-1",
         "load_memory",
+        "hydrate_skills",
         "run:turn-1:hello:1",
         "save_memory:1",
         "save_skills",
         "unbind",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_whose_platform_skills_cannot_be_brought_up_to_date_does_not_run() -> None:
+    fakes = Fakes()
+    fakes.hydrate_fails = True
+    async with await WorkflowEnvironment.start_time_skipping() as env, _stack(env, fakes) as client:
+        parent, handle = await _parent(client)
+        await _hand_off(client, parent, _turn(parent))
+
+        [result] = await handle.result()
+
+    assert result["status"] == "failed" and result["error"] == "hermes_skills_failed"
+    assert not any(call.startswith("run") for call in fakes.calls)
+    assert fakes.calls[-1] == "unbind"
+
+
+@pytest.mark.asyncio
+async def test_a_sandbox_gone_before_its_skills_are_hydrated_is_prepared_again_once() -> None:
+    fakes = Fakes()
+    fakes.hydrate_gone = True
+    async with await WorkflowEnvironment.start_time_skipping() as env, _stack(env, fakes) as client:
+        parent, handle = await _parent(client)
+        await _hand_off(client, parent, _turn(parent))
+
+        [result] = await handle.result()
+
+    assert result["status"] == "completed"
+    assert [call.split(":")[0] for call in fakes.calls] == [
+        "prepare", "bind", "load_memory", "hydrate_skills", "prepare", "bind", "load_memory", "hydrate_skills", "run",
+        "save_memory", "save_skills", "unbind",
     ]
 
 
@@ -257,7 +302,8 @@ async def test_a_sandbox_retired_before_the_run_is_prepared_again_once() -> None
 
     assert result["status"] == "completed"
     assert [call.split(":")[0] for call in fakes.calls] == [
-        "prepare", "bind", "load_memory", "run", "prepare", "bind", "load_memory", "run", "save_memory", "save_skills", "unbind",
+        "prepare", "bind", "load_memory", "hydrate_skills", "run", "prepare", "bind", "load_memory", "hydrate_skills", "run",
+        "save_memory", "save_skills", "unbind",
     ]
 
 

@@ -264,7 +264,11 @@ def test_generated_config_bounds_memory_as_the_platform_stores_it() -> None:
 def test_generated_config_writes_skills_where_the_platform_reads_drafts() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 
-    assert config["skills"] == {"write_approval": False, "create_dir": "", "external_dirs": []}
+    assert config["skills"] == {
+        "write_approval": False,
+        "create_dir": "",
+        "external_dirs": ["/workspace/.aurum/platform-skills"],
+    }
 
 
 def test_generated_config_lets_hermes_ask_the_user_until_the_platform_question_expires() -> None:

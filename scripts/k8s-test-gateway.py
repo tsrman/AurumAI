@@ -834,6 +834,22 @@ def _hermes_skill_response(request: CompletionRequest) -> str | dict[str, Any] |
     return {"name": "skill_manage", "arguments": json.dumps(arguments)}
 
 
+def _hermes_skills_list_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_SKILLS_LIST: Hermes's skills_list, then whether it listed the platform skill."""
+    if "HERMES_SKILLS_LIST" not in _last_user_message(request.messages):
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
+    if results:
+        seen = any("aurum-platform-skill" in str(content) for content in results)
+        # Whether the session's prompt index lists it too, for the launcher's log.
+        prompt = any(message.role == "system" and "aurum-platform-skill" in message.content for message in request.messages)
+        return f"{'HERMES_PLATFORM_SKILL_SEEN' if seen else 'HERMES_PLATFORM_SKILL_UNSEEN'} PROMPT_INDEX:{'yes' if prompt else 'no'}"
+    if "skills_list" not in {str((item.get("function") or {}).get("name")) for item in request.tools}:
+        return "HERMES_SKILLS_LIST_NOT_OFFERED"
+    return {"name": "skills_list", "arguments": "{}"}
+
+
 def _hermes_clarify_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """HERMES_CLARIFY: one question through Hermes's clarify tool, then the answer as text."""
     if "HERMES_CLARIFY" not in _last_user_message(request.messages):
@@ -977,6 +993,7 @@ async def chat_completions(request: CompletionRequest) -> StreamingResponse:
     hermes = (
         _hermes_memory_response(request)
         or _hermes_skill_response(request)
+        or _hermes_skills_list_response(request)
         or _hermes_clarify_response(request)
         or _hermes_mcp_response(request)
     )

@@ -382,7 +382,7 @@ points at it with `tools.include`.
     scripts, under the existing code-skill bundle validation.
   - Ordinary resource grants then control who can use them.
 - **Hydrated skills.** The platform skills the user can access are hydrated
-  read-only.
+  read-only (phase 5c: code skills, before every turn).
 - **`state.db` and session search.** `state.db` lives in the conversation's
   snapshot, so session search covers that conversation. Search across the user's
   other conversations can later be offered as a platform tool scoped to the user's
@@ -810,7 +810,53 @@ Each phase is a separate PR behind the flag:
      - bundles are stored like uploaded ones, by checksum under
        `skills/{org}/`, and like a replaced bundle, a declined or withdrawn
        draft's object is not removed.
-   - 5c: platform code skills in the sandbox, read-only.
+   - 5c, implemented: platform code skills in the sandbox, read-only. Accepted
+     at runtime by `./smoke-test-hermes-sandbox.sh`: a code skill granted to
+     the user is in the running sandbox before the next turn with read-only
+     files the sandbox cannot write, Hermes's `skills_list` lists it, it is no
+     draft, and once the grant is revoked the next turn's sandbox no longer
+     has it and Hermes no longer lists it. How it works:
+     - after binding and before the run, the session workflow's
+       `hermes_hydrate_skills` step (gated by
+       `workflow.patched("hermes-platform-skills")`) lists the conversation
+       owner's code skills (`GET /v1/internal/hermes/platform-skills`: the
+       code skills the user may read, without per-conversation ones, at most
+       32), and skill-executor fetches each bundle, checks it against its
+       checksum, and unpacks it into a staging directory, which `hermes-relay
+       skills-hydrate` swaps into `/workspace/.aurum/platform-skills`, one
+       directory per skill (`{name}-{id prefix}`);
+     - it fails closed. A skill that does not verify or fit the bounds (512
+       entries, 8 MiB each, 32 MiB in all, well below the workspace limit;
+       bundles are fetched again for every turn) is left out, staging that
+       a failed hydration left behind is removed by the next one; when the list cannot be had or written, the directory is
+       emptied instead; and when even that fails, the turn does not run, so
+       a revoked skill is not offered from the next turn on (a turn already
+       running, which a question can keep open for over an hour, keeps what
+       it started with). Revoking cannot take back what the
+       agent already copied elsewhere in its workspace, which snapshots keep;
+     - the directory is one of Hermes's `skills.external_dirs`. Hermes keeps
+       the external directories it found at its start, by their real path,
+       so skill-executor creates the directory with the config and only its
+       entries change; a sandbox adopted from before this change sees the
+       skills after its next start. Hermes's `skills_list` and `skill_view`
+       read the directory on every call, but the skill index in a running
+       session's prompt does not show a skill granted after the session
+       started (seen in the acceptance): Hermes finds it when it lists its
+       skills, and in the index after it starts again;
+     - "read-only" means the copy is restored from the platform before every
+       turn and never written back: the files are 0444 (0555 when
+       executable) in 0555 directories, and Hermes's curator does not touch
+       external skills, but the sandbox user owns them and could change the
+       modes. The relay replaces the directory's entries without following
+       links, so a link the agent put there never makes it remove anything
+       else;
+     - an unchanged copy of a platform skill in Hermes's own skills is no
+       draft; a changed copy is a draft of a new skill, since a draft updates
+       only the skill its own directory became. Edits to the hydrated copy
+       itself are never drafted, unlike the design above, which diffed
+       against what was hydrated;
+     - the skills' scripts run in Hermes's terminal under the sandbox's
+       egress mode, not the skill's `network_policy`.
 6. **Workflow node.** A `hermes` node type, billing and replay tests, and the
    choice for parallel Hermes nodes (see the open questions).
 

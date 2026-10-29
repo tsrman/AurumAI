@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
+from src.hermes_platform_skills import MAX_SKILLS, PlatformSkill
 from src.hermes_runtime import DockerHermesSandboxes, HermesSandbox, HermesSandboxError
 from src.hermes_snapshots import Snapshot
 
@@ -79,6 +80,20 @@ class MemoryFiles(BaseModel):
 
     memory: str = Field(max_length=2200)
     user: str = Field(max_length=1375)
+
+
+class PlatformSkillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dir: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    bundle_storage_key: str = Field(min_length=1, max_length=500)
+    bundle_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class PlatformSkills(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skills: list[PlatformSkillRequest] = Field(max_length=MAX_SKILLS)
 
 
 class ClarifyRequest(BaseModel):
@@ -210,6 +225,17 @@ async def read_memory(session_id: str) -> dict[str, str | None]:
     _available()
     try:
         return await sandboxes.read_memory(session_id)
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+
+
+@router.put("/sandboxes/{session_id}/platform-skills")
+async def hydrate_skills(session_id: str, data: PlatformSkills) -> dict[str, int]:
+    _available()
+    try:
+        return await sandboxes.hydrate_skills(
+            session_id, [PlatformSkill(**item.model_dump()) for item in data.skills]
+        )
     except HermesSandboxError as exc:
         raise _error(exc) from None
 

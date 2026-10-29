@@ -27,7 +27,10 @@
 # the running sandbox and its session without rotating the token. Phase 5b
 # adds skill drafts: no turn drafts the bundled skills, a skill Hermes writes
 # is drafted once for the user without the sandbox's secrets, and neither an
-# unchanged skill nor a withdrawn draft comes back on later turns.
+# unchanged skill nor a withdrawn draft comes back on later turns. Phase 5c
+# adds platform code skills: one granted to the user is in the sandbox,
+# read-only, Hermes lists it and it is no draft; revoked, it is gone on the
+# next turn.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000/58090, no other
 # aurum-ai-hermes-egress-guard container. Never point this at a shared stack.
@@ -365,7 +368,12 @@ wait_answer() {
       && break
     sleep 3
   done
-  [[ "$(sql "SELECT status FROM interaction_turns WHERE id='$1'")" == completed ]] || fail "the Hermes chat turn $1 did not complete"
+  if [[ "$(sql "SELECT status FROM interaction_turns WHERE id='$1'")" != completed ]]; then
+    # Before the stack is removed: what the session workflow and the runner last did.
+    docker logs "$PROJECT-tool-worker-1" 2>&1 | tail -40 >&2
+    docker logs "$PROJECT-runner" 2>&1 | tail -20 >&2
+    fail "the Hermes chat turn $1 did not complete ($(sql "SELECT status FROM interaction_turns WHERE id='$1'"))"
+  fi
 }
 USER=$(fixture user-token)
 python3 -c "import json,sys; print(json.dumps(json.loads(sys.argv[1])['jwks']))" "$USER" \
@@ -437,6 +445,30 @@ withdrawn=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "http://127.0.0.1:
 chat_turn "$(fixture chat-turn "$CHAT_CONVERSATION")" "Say hello again." 9 false
 [[ "$(drafts)" == 1 && "$(sql "SELECT status FROM hermes_skill_drafts WHERE id='$DRAFT'")" == dismissed ]] \
   || fail "a withdrawn draft came back while the sandbox keeps the skill"
+
+log "the platform code skills the user may read are in the sandbox read-only, and gone once revoked"
+CODE_SKILL=$(fixture code-skill)
+code_field() { python3 -c "import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])" "$CODE_SKILL" "$1"; }
+docker exec -i "$PROJECT-minio-1" mc pipe "local/aurum-ai-business/$(code_field key)" < "$(code_field file)" >/dev/null \
+  || fail "the code skill's bundle was not stored"
+HYDRATED=/workspace/.aurum/platform-skills/aurum-platform-skill-$(code_field id | tr -d - | cut -c1-8)
+LIST_TURN=$(fixture chat-turn "$CHAT_CONVERSATION" HERMES_SKILLS_LIST)
+chat_turn "$LIST_TURN" HERMES_SKILLS_LIST 10 false
+[[ "$(sql "SELECT content FROM messages WHERE turn_id='$LIST_TURN' AND role='assistant'")" == *HERMES_PLATFORM_SKILL_SEEN* ]] \
+  || fail "Hermes did not list the platform skill: $(sql "SELECT content FROM messages WHERE turn_id='$LIST_TURN' AND role='assistant'")"
+[[ "$(inside "$CHAT_SESSION" "stat -c %a $HYDRATED/SKILL.md $HYDRATED/scripts/hello.sh $HYDRATED" | tr '\n' ' ')" == "444 555 555 " ]] \
+  || fail "the platform skill is not read-only in the sandbox"
+inside "$CHAT_SESSION" "echo changed >> $HYDRATED/SKILL.md" 2>/dev/null && fail "the sandbox could write a platform skill"
+[[ "$(drafts)" == 1 ]] || fail "a platform skill became a draft"
+fixture revoke-skill "$(code_field id)"
+GONE_TURN=$(fixture chat-turn "$CHAT_CONVERSATION" HERMES_SKILLS_LIST)
+chat_turn "$GONE_TURN" HERMES_SKILLS_LIST 11 false
+[[ "$(sql "SELECT content FROM messages WHERE turn_id='$GONE_TURN' AND role='assistant'")" == *HERMES_PLATFORM_SKILL_UNSEEN* ]] \
+  || fail "Hermes still listed the revoked platform skill"
+inside "$CHAT_SESSION" "test -e $HYDRATED" && fail "the revoked platform skill is still in the sandbox"
+for turn in "$LIST_TURN" "$GONE_TURN"; do
+  log "platform skill in the prompt's index: $(sql "SELECT content FROM messages WHERE turn_id='$turn' AND role='assistant'" | grep -o 'PROMPT_INDEX:[a-z]*')"
+done
 
 log "the archive purge's workflow removes the conversation's sandbox and every snapshot"
 CHAT_PREFIX="local/aurum-ai-business/hermes-sessions/$ORG/$CHAT_CONVERSATION"

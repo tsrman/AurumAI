@@ -359,3 +359,49 @@ async def test_a_turn_drafts_the_skills_its_sandbox_holds_for_its_user(hermes_en
     assert invalid.status_code == 422 and "hermes_skill_invalid" in invalid.text
     assert after_turn.status_code == 403 and "hermes_turn_inactive" in after_turn.text
     assert owners == [hermes_env.user_id]
+
+
+async def test_a_turn_lists_the_code_skills_its_user_may_read_to_hydrate(hermes_env) -> None:
+    from sqlalchemy import text
+
+    from src.core.authorization_types import GrantSource
+    from src.models.access_grant import AccessGrant
+    from src.models.skill import Skill
+
+    granted, hidden, mcp = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with hermes_env.sessions() as setup:
+        await setup.execute(text("SELECT set_config('app.current_org_id', :org, false)"), {"org": str(hermes_env.org_id)})
+        code = {"type": "code", "input_schema": {}, "bundle_checksum": "c" * 64}
+        setup.add_all(
+            [
+                Skill(id=granted, org_id=hermes_env.org_id, name="Daily Stand-up!", bundle_skill_name="Daily Stand-up!",
+                      bundle_storage_key=f"skills/{hermes_env.org_id}/{'c' * 64}.zip", **code),
+                Skill(id=hidden, org_id=hermes_env.org_id, name="hidden", bundle_storage_key="skills/x.zip", **code),
+                Skill(id=mcp, org_id=hermes_env.org_id, name="mcp", type="mcp", input_schema={}),
+            ]
+        )
+        await setup.flush()
+        setup.add_all(
+            AccessGrant(
+                org_id=hermes_env.org_id, resource_type="skill", resource_id=str(skill), principal_type="user",
+                principal_id=hermes_env.user_id, permission="read", created_via=GrantSource.PROVISIONING.value,
+            )
+            for skill in (granted, mcp)
+        )
+        await setup.commit()
+
+    listed = await hermes_env.internal("GET", "/platform-skills")
+    await hermes_env.finish_turn()
+    after_turn = await hermes_env.internal("GET", "/platform-skills")
+
+    assert listed.json() == {
+        "skills": [
+            {
+                "skillId": str(granted),
+                "dir": f"daily-stand-up-{granted.hex[:8]}",
+                "bundleStorageKey": f"skills/{hermes_env.org_id}/{'c' * 64}.zip",
+                "bundleChecksum": "c" * 64,
+            }
+        ]
+    }
+    assert after_turn.status_code == 403 and "hermes_turn_inactive" in after_turn.text

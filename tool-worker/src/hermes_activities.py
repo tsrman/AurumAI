@@ -268,6 +268,39 @@ async def hermes_save_memory(token: str, session_id: str, loaded: dict[str, dict
     return outcome
 
 
+@activity.defn(name="hermes_hydrate_skills")
+async def hermes_hydrate_skills(token: str, session_id: str) -> dict[str, int]:
+    """Put the platform code skills the user may read into the sandbox before
+    the turn. It fails closed: when the list cannot be had or written, the
+    sandbox's platform skills are cleared instead, so a revoked skill is
+    never left in place; only when even that fails does the turn not run."""
+    skills: list[dict[str, str]] = []
+    try:
+        listed = await _backend("GET", "/platform-skills", token)
+        if listed.status_code == 200:
+            skills = [
+                {
+                    "dir": str(item["dir"]),
+                    "bundle_storage_key": str(item["bundleStorageKey"]),
+                    "bundle_checksum": str(item["bundleChecksum"]),
+                }
+                for item in listed.json().get("skills") or []
+            ]
+    except (httpx.HTTPError, KeyError, ValueError):
+        skills = []
+    code = "hermes_skills_unavailable"
+    for attempt in (skills, []) if skills else ([],):
+        try:
+            written = await _executor("PUT", f"/sandboxes/{session_id}/platform-skills", {"skills": attempt}, timeout=300.0)
+        except httpx.HTTPError:
+            continue
+        if written.status_code == 200:
+            counts = written.json()
+            return {"hydrated": int(counts.get("hydrated") or 0), "skipped": int(counts.get("skipped") or 0)}
+        code = _code(written, code)
+    raise _failure(code)
+
+
 @activity.defn(name="hermes_save_skills")
 async def hermes_save_skills(token: str, session_id: str) -> dict[str, int]:
     """Submit the skills the sandbox holds beyond the bundled ones as drafts

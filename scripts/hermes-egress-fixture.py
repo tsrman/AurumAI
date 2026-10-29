@@ -11,6 +11,10 @@ bind         bind it to the turn again
 close        close the session
 skill        an MCP skill on the reference server (get-sum), granted to the
              user; prints its id
+code-skill   a code skill granted to the user, its bundle written next to the
+             journal for the launcher to store; prints {"id", "key", "file"}
+revoke-skill ID
+             remove the user's grant on skill ID
 chat         a second conversation with an active turn and its user message,
              the organization's Hermes model, and a runner token for it;
              prints them as JSON
@@ -230,6 +234,44 @@ async def main(argv: list[str]) -> None:
                 uuid4(), org, str(skill), UUID(state["user"]),
             )
             print(skill)
+        elif argv == ["code-skill"]:
+            import hashlib
+            import io
+            import zipfile
+
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr(
+                    "SKILL.md",
+                    "---\nname: aurum-platform-skill\ndescription: A platform code skill for the acceptance\n---\n"
+                    "Run scripts/hello.sh.\n",
+                )
+                script = zipfile.ZipInfo("scripts/hello.sh")
+                script.external_attr = 0o100755 << 16
+                archive.writestr(script, "echo hello\n")
+            bundle = buffer.getvalue()
+            checksum = hashlib.sha256(bundle).hexdigest()
+            key = f"skills/{org}/{checksum}.zip"
+            path = STATE.parent / "code-skill.zip"
+            path.write_bytes(bundle)
+            skill = uuid4()
+            await db.execute(
+                "INSERT INTO skills(id,org_id,name,description,type,input_schema,bundle_storage_key,bundle_checksum,"
+                "bundle_size_bytes,bundle_skill_name,created_at,updated_at) VALUES($1,$2,'aurum-platform-skill',"
+                "'A platform code skill for the acceptance','code','{}',$3,$4,$5,'aurum-platform-skill',now(),now())",
+                skill, org, key, checksum, len(bundle),
+            )
+            await db.execute(
+                "INSERT INTO access_grants(id,org_id,resource_type,resource_id,principal_type,principal_id,permission,created_via) "
+                "VALUES($1,$2,'skill',$3,'user',$4,'read','provisioning')",
+                uuid4(), org, str(skill), UUID(state["user"]),
+            )
+            print(json.dumps({"id": str(skill), "key": key, "file": str(path)}))
+        elif len(argv) == 2 and argv[0] == "revoke-skill":
+            await db.execute(
+                "DELETE FROM access_grants WHERE org_id=$1 AND resource_type='skill' AND resource_id=$2 AND principal_id=$3",
+                org, argv[1], UUID(state["user"]),
+            )
         elif argv == ["close"]:
             await db.execute(
                 "UPDATE hermes_sessions SET state='closed',closed_at=now(),active_turn_id=NULL,active_execution_id=NULL,"
@@ -238,7 +280,8 @@ async def main(argv: list[str]) -> None:
             )
         else:
             raise SystemExit(
-                "usage: prepare | mode M | web-access on|off | end-turn | bind | close | skill | chat"
+                "usage: prepare | mode M | web-access on|off | end-turn | bind | close | skill | code-skill"
+                " | revoke-skill ID | chat"
                 " | chat-turn C [TEXT] | user-token"
             )
     finally:

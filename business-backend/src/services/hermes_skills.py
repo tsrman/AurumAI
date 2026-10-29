@@ -15,6 +15,7 @@ conversation, minted here, as the runner itself passes one.
 
 import asyncio
 import json
+import re
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -46,6 +47,37 @@ _DESCRIPTION_CHARS = 2000
 OUTPUT_CHARS = 50_000
 # Long enough for execute_skill's bounded retries; a run nobody waits for ends.
 _EXECUTION_TIMEOUT = timedelta(minutes=10)
+
+
+# Hydrated into the sandbox read-only (phase 5c); skill-executor bounds them again.
+PLATFORM_SKILLS_MAX = 32
+_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def _hydrated_dir(skill: Skill) -> str:
+    slug = _SLUG.sub("-", (skill.bundle_skill_name or skill.name).lower()).strip("-")[:48] or "skill"
+    return f"{slug}-{skill.id.hex[:8]}"
+
+
+async def platform_code_skills(session: AsyncSession, subject: AuthorizationSubject) -> list[dict[str, Any]]:
+    """The code skills the user may read, for skill-executor to hydrate into
+    the sandbox before a turn: where they go and how to fetch and verify
+    their bundles. A skill whose grant is gone is not listed, so the next
+    turn's sandbox no longer has it."""
+    skills = await skill_registry.list_accessible_skills(session, subject, LIST_LIMIT, 0)
+    return [
+        {
+            "skillId": str(skill.id),
+            "dir": _hydrated_dir(skill),
+            "bundleStorageKey": skill.bundle_storage_key,
+            "bundleChecksum": skill.bundle_checksum,
+        }
+        for skill in sorted(skills, key=lambda item: str(item.id))
+        if skill.type == "code"
+        and skill.owning_conversation_id is None
+        and skill.bundle_storage_key
+        and skill.bundle_checksum
+    ][:PLATFORM_SKILLS_MAX]
 
 
 class SkillToolError(Exception):

@@ -17,9 +17,10 @@ FIXTURES = Path(__file__).parent / "fixtures"
         "pre_clarify_hermes_session_v1.json",
         "pre_memory_hermes_session_v1.json",
         "pre_skill_drafts_hermes_session_v1.json",
+        "pre_platform_skills_hermes_session_v1.json",
     ],
 )
-async def test_a_session_recorded_before_questions_memory_or_skill_drafts_replays(fixture: str) -> None:
+async def test_a_session_recorded_before_a_later_hermes_step_replays(fixture: str) -> None:
     raw = json.loads((FIXTURES / fixture).read_text(encoding="utf-8"))
     history = WorkflowHistory.from_json("hermes-session-conv-1", raw)
 

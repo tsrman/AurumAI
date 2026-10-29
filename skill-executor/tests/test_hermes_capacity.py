@@ -373,3 +373,46 @@ async def test_skills_come_back_one_per_line_and_only_in_their_shape(make, monke
     with pytest.raises(HermesSandboxError) as failed:
         await sandboxes.read_skills(_session(1))
     assert failed.value.code == "hermes_skills_failed"
+
+
+@pytest.mark.asyncio
+async def test_platform_skills_are_staged_then_swapped_in_by_the_relay(make, monkeypatch) -> None:
+    import hashlib as _hashlib
+    import io as _io
+    import zipfile as _zipfile
+
+    from src.hermes_platform_skills import PlatformSkill
+
+    sandboxes, daemon, _, _ = make()
+    await _create(sandboxes, 1)
+    buffer = _io.BytesIO()
+    with _zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("SKILL.md", "---\nname: standup\n---\n")
+    bundle = buffer.getvalue()
+    commands: list[list[str]] = []
+
+    async def exec_(sandbox: Any, cmd: list[str]) -> tuple[int, bytes]:
+        commands.append(cmd)
+        return 0, b'{"type":"skills-hydrated","count":1}'
+
+    async def fetch(key: str) -> bytes:
+        return bundle
+
+    monkeypatch.setattr(sandboxes, "_exec", exec_)
+    skill = PlatformSkill("standup-1a", "skills/k.zip", _hashlib.sha256(bundle).hexdigest())
+
+    counts = await sandboxes.hydrate_skills(_session(1), [skill], fetch)
+
+    assert counts == {"hydrated": 1, "skipped": 0}
+    assert commands[0][:2] == ["hermes-relay", "skills-hydrate"]
+    assert commands[0][2].startswith("/workspace/.aurum/hydrate/")
+    [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
+    assert b"name: standup" in archive
+
+    async def failed(sandbox: Any, cmd: list[str]) -> tuple[int, bytes]:
+        return 3, b'{"type":"error","code":"hermes_skills_staging_invalid"}'
+
+    monkeypatch.setattr(sandboxes, "_exec", failed)
+    with pytest.raises(HermesSandboxError) as refused:
+        await sandboxes.hydrate_skills(_session(1), [], fetch)
+    assert refused.value.code == "hermes_skills_failed"
