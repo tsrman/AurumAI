@@ -190,6 +190,7 @@ class WorkflowTemplateService:
                     temperature=config.temperature,
                     skill_ids=list(config.skill_ids),
                     knowledge_base_ids=list(config.knowledge_base_ids),
+                    kind=config.kind,
                 )
             )
             agent_ids[config.key] = new_id

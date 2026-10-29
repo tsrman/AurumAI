@@ -361,3 +361,21 @@ test("guides task setup and retains the draft between steps", async () => {
     "Incident assessment",
   );
 });
+
+test("Hermes Agent runs nodes but is not offered as the supervisor", () => {
+  render(
+    <WorkflowForm
+      agents={[agent("supervisor", "Supervisor"), { ...agent("hermes-agent", "Builder"), kind: "hermes" }]}
+      onValidate={vi.fn()}
+      onSubmit={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "2. Agents" }));
+  const supervisor = screen.getByLabelText("Supervisor");
+  expect(Array.from(supervisor.querySelectorAll("option")).map((option) => option.textContent)).not.toContain("Builder");
+  fireEvent.click(screen.getByRole("button", { name: "3. Steps" }));
+  expect(Array.from(screen.getByLabelText("Node 1 agent").querySelectorAll("option")).map((option) => option.textContent)).toContain(
+    "Builder",
+  );
+});

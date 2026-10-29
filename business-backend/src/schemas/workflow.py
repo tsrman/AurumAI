@@ -178,6 +178,9 @@ class WorkflowAgentSnapshot(WorkflowSchema):
     temperature: float = Field(ge=0, le=2)
     allowed_skill_ids: tuple[UUID, ...] = Field(max_length=100)
     knowledge_bases: tuple[WorkflowKnowledgeBaseSnapshot, ...] = Field(max_length=100)
+    # "hermes": the node runs on Hermes Agent, on the organization's Hermes
+    # model at the run's start.
+    kind: Literal["agent", "hermes"] = "agent"
 
 
 class WorkflowSnapshotNode(WorkflowSchema):

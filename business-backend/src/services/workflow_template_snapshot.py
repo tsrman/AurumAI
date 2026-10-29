@@ -1,3 +1,4 @@
+from typing import Literal, cast
 from uuid import UUID
 
 from src.models.agent_definition import AgentDefinition
@@ -38,6 +39,7 @@ def build_template_snapshot(
                 temperature=agent.temperature,
                 skill_ids=agent.skill_ids,
                 knowledge_base_ids=agent.knowledge_base_ids,
+                kind=cast(Literal["agent", "hermes"], agent.kind or "agent"),
             )
             for agent in sorted_agents
         ],

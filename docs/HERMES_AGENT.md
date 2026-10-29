@@ -869,8 +869,41 @@ Each phase is a separate PR behind the flag:
        against what was hydrated;
      - the skills' scripts run in Hermes's terminal under the sandbox's
        egress mode, not the skill's `network_policy`.
-6. **Workflow node.** A `hermes` node type, billing and replay tests, and the
-   choice for parallel Hermes nodes (see the open questions).
+6. **Workflow node**, implemented. An agent definition has a kind: `agent`
+   or `hermes`, fixed at creation. A Hermes Agent definition runs workflow
+   nodes; it takes no skills or knowledge bases (Hermes brings the platform's
+   tools and its own skills), its system prompt becomes its instructions, and
+   it never supervises a workflow, which plans and synthesizes in the text
+   protocol (refused on save and on template import). Accepted in the browser
+   by `./smoke-test-hermes-ui.sh`: a workflow whose one node is a Hermes Agent
+   answers through Hermes in the conversation's sandbox. How it works:
+   - a Hermes node runs on the organization's Hermes model, not the
+     definition's: a running sandbox keeps the model it started with, as in
+     chat. The run's snapshot carries the kind and that model; the run does
+     not start without the operator switch, both Hermes capabilities and an
+     organization Hermes model, and every step checks them again, with the
+     model still the organization's, before it runs (synthesis too, as for
+     every node agent);
+   - `AgentWorkflow` takes the Hermes path only for a Hermes definition,
+     behind `workflow.patched("hermes-node-v1")`: it registers the node's
+     execution, hands the node to the conversation's Hermes session with the
+     brief and the predecessors' outputs as input (no chat history), and
+     waits for its answer, asking or skipping Hermes's questions and keeping
+     the runner alive as a chat turn does. The node's result is Hermes's
+     answer; images and sources Hermes produces stay in its workspace. A
+     failed run fails the node with the session's code, so `on_failure`
+     edges apply; a cancelled run cancels the node's Hermes turn, so the
+     session moves on;
+   - nodes of one chat turn share its turn id, so each node execution has its
+     own key in the session (`{turn}:{execution}`) for its queue entry, its
+     run and its answer, and the binding carries the run, phase and node, so
+     the node's model calls are billed to its step. A node's progress stays
+     off the chat stream;
+   - parallel Hermes nodes of one conversation run one after another: the
+     session runs one turn at a time and queues the rest, chat turns
+     included. A node waits for the nodes ahead of it within its budget,
+     which covers a workflow's four parallel nodes (four turn deadlines and a
+     quarter of an hour).
 
 Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
 
@@ -898,8 +931,5 @@ Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
 - Default resource limits, lifetime limits and the capacity caps.
 - Egress defaults: bytes per turn and concurrent connections, and whether the
   default package list should also cover npm or Git hosts.
-- Parallel Hermes workflow nodes. A conversation has one open session with one
-  turn binding, so two Hermes nodes running at once in the same run would bill
-  and revoke through the same binding. Phase 6 either runs a conversation's Hermes
-  nodes one at a time or gives node sessions their own scope (a cheap change to
-  the one-open-session index).
+- Settled in 6: a conversation's Hermes nodes run one at a time, queued in its
+  one session, each billed through its own binding.

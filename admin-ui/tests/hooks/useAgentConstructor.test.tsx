@@ -34,6 +34,7 @@ vi.mock("@/hooks/useSkills", () => ({
 }));
 vi.mock("@/hooks/useAdminModels", () => ({
   useAdminModels: () => ({ data: { data: { defaultModel: mocks.organizationDefault ?? null } } }),
+  useOrganizationHermesSettings: () => ({ data: { data: { model: "hermes-model" } } }),
 }));
 vi.mock("@/lib/api", () => ({
   createAgentDefinition: (payload: unknown) => mocks.create(payload),
@@ -42,6 +43,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 const DEFAULT_STATE: ConstructorState = {
+  kind: "agent",
   name: "",
   description: "",
   model: "provider/model-v1",

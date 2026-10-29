@@ -33,6 +33,7 @@ class AgentDefinitionRepository:
             temperature=data.temperature,
             skill_ids=data.skill_ids,
             knowledge_base_ids=data.knowledge_base_ids,
+            kind=data.kind,
         )
         session.add(agent)
         await session.flush()

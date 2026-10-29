@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal
+import asyncio
 import json
 
 from temporalio import workflow
@@ -10,17 +11,22 @@ from temporalio.exceptions import ActivityError, ApplicationError
 from src.workflows.lifecycle import register_lifecycle_execution
 
 with workflow.unsafe.imports_passed_through():
+    from src.config import settings
     from src.workflows.activities import (
+        cancel_hermes_turn,
         create_user_question,
         execute_image_tool,
         execute_web_tool,
         get_conversation_id,
         get_session_token,
+        hand_off_hermes_turn,
         list_available_skills,
         llm_call,
         publish_event,
         register_interaction_execution,
+        touch_hermes_turn,
     )
+    from src.workflows.hermes_questions import RECONCILE, HermesQuestions
     from src.workflows.builtin_tools import (
         IMAGE_TOOLS,
         ExecutionContext,
@@ -66,6 +72,8 @@ class AgentExecutionSnapshot:
     temperature: float
     allowed_skill_ids: tuple[str, ...] = ()
     knowledge_bases: tuple[dict[str, str], ...] = ()
+    # "hermes": the node runs on Hermes Agent (docs/HERMES_AGENT.md, phase 6).
+    kind: str = "agent"
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,19 @@ class AgentResult:
     source_ids: tuple[str, ...] = ()
     unsupported_source_ids: tuple[str, ...] = ()
     image_ids: tuple[str, ...] = ()
+
+
+# As in conversation.py: a slice keeps the runner alive while Hermes works.
+_HERMES_TOUCH_SECONDS = 300
+# A workflow's parallelism limit: the most nodes queued in one session.
+_MAX_PARALLEL_NODES = 4
+
+
+def _hermes_node_text(input: AgentInput) -> str:
+    """What Hermes is asked to do: the agent definition's instructions, the
+    node's goal, and what the nodes before it produced."""
+    context = json.dumps(input.context, ensure_ascii=False, default=str)
+    return f"{input.agent.system_prompt.strip()}\n\n{input.goal}\n\nContext (JSON):\n{context}"
 
 
 def _build_agent_system_prompt(
@@ -175,10 +196,16 @@ class AgentWorkflow:
         self.iteration = 0
         self.final_answer = ""
         self._question_wait = QuestionWaitState()
+        self._hermes_questions = HermesQuestions(self._question_wait)
+        self._hermes_key: str | None = None
+        self._hermes_results: dict[str, dict[str, Any]] = {}
 
     @workflow.run
     async def run(self, input: AgentInput) -> str | AgentResult:
         await register_lifecycle_execution()
+        # Evaluated only for Hermes nodes, so other agents' histories record no marker.
+        if input.agent.kind == "hermes" and workflow.patched("hermes-node-v1"):
+            return await self._run_hermes(input)
         max_iterations = 3
         execution_context: ExecutionContext | None = None
         used_web_tool = False
@@ -643,6 +670,148 @@ class AgentWorkflow:
             unsupported_source_ids=selection.unsupported_source_ids if selection else (),
             image_ids=tuple(dict.fromkeys(created_image_ids)),
         )
+
+    async def _run_hermes(self, input: AgentInput) -> str:
+        """Hand the node to the conversation's Hermes session workflow and
+        wait for its answer. The session runs one turn at a time, so the
+        conversation's Hermes nodes run one after another; each has its own
+        key, since nodes of one chat turn share the turn id."""
+        if input.turn_id is None or input.workflow_phase != "node" or input.workflow_run_id is None:
+            raise ApplicationError("hermes_node_context_missing", type="hermes_node_context_missing", non_retryable=True)
+        info = workflow.info()
+        execution: ExecutionContext = await workflow.execute_activity(
+            register_interaction_execution,
+            args=(
+                input.turn_id,
+                info.workflow_id,
+                info.run_id,
+                info.task_queue,
+                "node",
+                input.workflow_node_key,
+                input.agent.agent_definition_id,
+                input.execution_iteration,
+            ),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_ACTIVITY_RETRY_POLICY,
+        )
+        conversation_id = str(
+            await workflow.execute_activity(
+                get_conversation_id, start_to_close_timeout=timedelta(seconds=15), retry_policy=_ACTIVITY_RETRY_POLICY
+            )
+        )
+        key = f"{input.turn_id}:{execution.execution_id}"
+        self._hermes_key = key
+        questions = self._hermes_questions
+        # Before the hand-off: the session may ask its first question at once.
+        questions.start(key)
+        await workflow.execute_activity(
+            hand_off_hermes_turn,
+            args=(
+                {
+                    "turn_id": input.turn_id,
+                    "execution_id": execution.execution_id,
+                    "model": input.agent.model,
+                    "text": _hermes_node_text(input),
+                    "history": [],
+                    "parent_workflow_id": info.workflow_id,
+                    "parent_task_queue": info.task_queue,
+                    "deadline_seconds": settings.hermes_turn_deadline_seconds,
+                    "run_key": key,
+                    "workflow_run_id": input.workflow_run_id,
+                    "workflow_phase": "node",
+                    "workflow_node_key": input.workflow_node_key,
+                    "publish_progress": False,
+                },
+            ),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_ACTIVITY_RETRY_POLICY,
+        )
+        try:
+            result = await self._wait_hermes(input, conversation_id, execution, key)
+        except asyncio.CancelledError:
+            # The run was cancelled: stop the node's turn, so the session is
+            # unbound and its queue moves on to the next node or chat turn.
+            await questions.close()
+            await workflow.execute_activity(
+                cancel_hermes_turn,
+                args=(key,),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_ACTIVITY_RETRY_POLICY,
+            )
+            raise
+        if result.get("status") != "completed" or not isinstance(result.get("output"), str):
+            code = str(result.get("error") or ("hermes_cancelled" if result.get("status") == "cancelled" else "hermes_interrupted"))
+            raise ApplicationError(code, type=code, non_retryable=True)
+        # Images and sources Hermes produces stay in its workspace: a node's
+        # result is its answer.
+        self.final_answer = str(result["output"])
+        return self.final_answer
+
+    async def _wait_hermes(
+        self, input: AgentInput, conversation_id: str, execution: ExecutionContext, key: str
+    ) -> dict[str, Any]:
+        """Waited in slices, as the conversation workflow waits for a chat
+        turn: questions are asked or skipped, and the runner is touched. The
+        total covers the nodes queued ahead in the same session, which a
+        workflow runs at most four at a time."""
+        questions = self._hermes_questions
+        deadline = settings.hermes_turn_deadline_seconds
+        budget = deadline * _MAX_PARALLEL_NODES + 900
+        waited = since_touch = 0
+        while key not in self._hermes_results:
+            if waited >= budget:
+                await questions.close()
+                await workflow.execute_activity(
+                    cancel_hermes_turn,
+                    args=(key,),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_ACTIVITY_RETRY_POLICY,
+                )
+                raise ApplicationError("hermes_turn_timeout", type="hermes_turn_timeout", non_retryable=True)
+            await questions.step(conversation_id, execution, input.user_questions_enabled)
+            if key in self._hermes_results:
+                break
+            slice_seconds = (
+                min(int(RECONCILE.total_seconds()), _HERMES_TOUCH_SECONDS - since_touch)
+                if questions.waiting
+                else _HERMES_TOUCH_SECONDS - since_touch
+            )
+            try:
+                await workflow.wait_condition(
+                    lambda: key in self._hermes_results or questions.changed(),
+                    timeout=timedelta(seconds=slice_seconds),
+                )
+                continue
+            except asyncio.TimeoutError:
+                waited += slice_seconds
+                since_touch += slice_seconds
+            if since_touch >= _HERMES_TOUCH_SECONDS:
+                since_touch = 0
+                try:
+                    await workflow.execute_activity(
+                        touch_hermes_turn,
+                        args=(input.turn_id,),
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=RetryPolicy(maximum_attempts=3),
+                    )
+                except ActivityError:
+                    workflow.logger.warning(f"Could not keep the runner for Hermes node {key}")
+        await questions.close()
+        return self._hermes_results.pop(key)
+
+    @workflow.signal(name="hermes_turn_result")
+    async def hermes_turn_result(self, result: dict[str, Any]) -> None:
+        # A loop iteration reuses this workflow id: only this node's key counts.
+        if result.get("turn_id") == self._hermes_key and self._hermes_key is not None:
+            self._hermes_results[self._hermes_key] = result
+
+    @workflow.signal(name="hermes_question")
+    async def hermes_question(self, question: dict[str, Any]) -> None:
+        self._hermes_questions.asked(question)
+
+    @workflow.signal(name="hermes_question_settled")
+    async def hermes_question_settled(self, settled: dict[str, Any]) -> None:
+        self._hermes_questions.settled(settled)
 
     @workflow.signal(name="question_available")
     async def question_available(self, question_id: str, version: int) -> None:

@@ -12,6 +12,7 @@ from src.core.authorization_types import (
     ResourceType,
 )
 from src.models.agent_definition import AgentDefinition
+from src.services.hermes_access import HermesAccessDenied, hermes_node_model
 from src.models.knowledge_base import KnowledgeBase
 from src.models.skill import Skill
 from src.models.workflow_definition import WorkflowDefinition, WorkflowDefinitionStatus
@@ -182,6 +183,14 @@ class WorkflowAuthorizationService:
     ) -> None:
         agent_id = UUID(str(agent["agentDefinitionId"]))
         model_id = str(agent["model"])
+        if agent.get("kind") == "hermes":
+            # Live, like every grant here: Hermes switched off, a capability
+            # revoked or the organization's Hermes model changed stop the node.
+            try:
+                if await hermes_node_model(session, subject) != model_id:
+                    raise WorkflowStepAccessDenied(run.id)
+            except HermesAccessDenied as exc:
+                raise WorkflowStepAccessDenied(run.id) from exc
         current_agent = await session.scalar(
             select(AgentDefinition).where(
                 AgentDefinition.id == agent_id,

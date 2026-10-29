@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { ConfirmDialog } from "@/components/primitives";
+import { Badge, ConfirmDialog } from "@/components/primitives";
 import { AccessDialog, type AccessTarget } from "@/components/authorization/AccessDialog";
 import { AdminGate, EmptyState, Notice, PageBody, PageHeader, RowAction, RowActions, SearchInput, Table, Td, Th, Tr } from "@/components/ui";
 import { formatDate } from "@/components/people/format";
@@ -84,7 +84,10 @@ function AgentsContent({ canWrite }: { canWrite: boolean }) {
                           <Bot className="h-4 w-4" aria-hidden="true" />
                         </span>
                         <div className="min-w-0">
-                          <p className="truncate font-medium text-aurum-text">{agent.name}</p>
+                          <p className="truncate font-medium text-aurum-text">
+                            {agent.name}
+                            {agent.kind === "hermes" ? <Badge color="violet" className="ml-2">{t("hermes")}</Badge> : null}
+                          </p>
                           {agent.description ? <p className="line-clamp-1 text-xs text-aurum-text-3">{agent.description}</p> : null}
                         </div>
                       </div>

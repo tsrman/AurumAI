@@ -59,6 +59,7 @@ from src.services.workflow_authorization import (
     WorkflowDefinitionNotReadable,
     workflow_authorization_service,
 )
+from src.services.hermes_access import HermesAccessDenied, hermes_node_model
 from src.services.workflow_graph import WorkflowGraphError, validate_workflow_graph
 from src.services.interaction import (
     InteractionNotFound,
@@ -72,6 +73,13 @@ class WorkflowRunNotFound(Exception):
 
 
 class WorkflowRunService:
+    @staticmethod
+    async def _hermes_model(session: AsyncSession, subject: AuthorizationSubject) -> str:
+        try:
+            return await hermes_node_model(session, subject)
+        except HermesAccessDenied as exc:
+            raise WorkflowGraphError("hermes_unavailable") from exc
+
     def __init__(
         self,
         *,
@@ -202,6 +210,11 @@ class WorkflowRunService:
         snapshots: dict[UUID, WorkflowAgentSnapshot] = {}
         for agent_id in sorted(agent_ids, key=str):
             agent = agents_by_id[agent_id]
+            model = agent.model_id
+            if agent.kind == "hermes":
+                # Hermes runs in the conversation's sandbox, on the
+                # organization's Hermes model, for users who may use it.
+                model = await self._hermes_model(session, subject)
             try:
                 await self._resource_authorization.require_access(
                     session,
@@ -214,7 +227,7 @@ class WorkflowRunService:
                     session,
                     subject,
                     agent_id=agent.id,
-                    model_id=agent.model_id,
+                    model_id=model,
                     skill_ids=agent.skill_ids,
                     knowledge_base_ids=agent.knowledge_base_ids,
                 )
@@ -234,7 +247,8 @@ class WorkflowRunService:
             snapshots[agent.id] = WorkflowAgentSnapshot(
                 agent_definition_id=agent.id,
                 name=agent.name,
-                model=agent.model_id,
+                model=model,
+                kind=cast(Literal["agent", "hermes"], agent.kind),
                 system_prompt=agent.system_prompt,
                 temperature=resolve_temperature(agent.temperature, org_default_temperature),
                 allowed_skill_ids=tuple(agent.skill_ids),

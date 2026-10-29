@@ -1,7 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -47,6 +49,15 @@ class AgentDefinitionCreate(_AgentDefinitionFields):
     temperature: float | None = Field(default=0.3, ge=0, le=2)
     skill_ids: list[UUID] = Field(default_factory=list, max_length=100)
     knowledge_base_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    # Fixed at creation. "hermes": a workflow node run by Hermes Agent, which
+    # brings the platform's tools and its own skills instead of these.
+    kind: Literal["agent", "hermes"] = "agent"
+
+    @model_validator(mode="after")
+    def hermes_has_no_tools(self) -> "AgentDefinitionCreate":
+        if self.kind == "hermes" and (self.skill_ids or self.knowledge_base_ids):
+            raise ValueError("a Hermes Agent definition takes no skills or knowledge bases")
+        return self
 
 
 class AgentDefinitionUpdate(_AgentDefinitionFields):
@@ -71,6 +82,7 @@ class AgentDefinitionResponse(BaseModel):
     temperature: float | None
     skillIds: list[UUID]
     knowledgeBaseIds: list[UUID]
+    kind: Literal["agent", "hermes"] = "agent"
     canWrite: bool
     createdAt: datetime
     updatedAt: datetime

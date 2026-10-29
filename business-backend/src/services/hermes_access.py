@@ -41,3 +41,19 @@ async def active_hermes_turn(
     if turn is None or turn.owner_id != subject.user_id:
         raise HermesAccessDenied("hermes_turn_inactive")
     return turn
+
+
+async def hermes_node_model(session: AsyncSession, subject: AuthorizationSubject) -> str:
+    """The model a Hermes Agent workflow node runs on: the organization's
+    Hermes model, while the operator switch is on and the user holds both
+    Hermes capabilities. Raises HermesAccessDenied otherwise."""
+    from src.core.config import settings
+    from src.services.hermes_egress import organization_hermes_model
+
+    if not settings.HERMES_ENABLED:
+        raise HermesAccessDenied("hermes_disabled")
+    await require_hermes_capabilities(session, subject)
+    model = await organization_hermes_model(session, subject.org_id)
+    if not model:
+        raise HermesAccessDenied("hermes_model_unset")
+    return model

@@ -66,7 +66,15 @@
       "create": "Create agent",
       "cancel": "Cancel",
       "noTools": "No skills yet. Add them under Skills and tools.",
-      "noKnowledgeBases": "No knowledge bases yet. Create them in the chat app."
+      "noKnowledgeBases": "No knowledge bases yet. Create them in the chat app.",
+      "kind": "Type",
+      "kinds": {
+        "agent": "Agent",
+        "hermes": "Hermes Agent (workflow nodes)"
+      },
+      "hermesHint": "Hermes Agent runs the node in the conversation's own workspace with the platform's tools and its own skills; the system prompt becomes its instructions. It cannot supervise a workflow.",
+      "hermesModel": "Runs on the organization's Hermes model: {model}",
+      "hermesModelUnset": "Choose a Hermes model on the Models page first."
     },
     "preview": {
       "newAgent": "New agent",
@@ -826,7 +834,8 @@
       "delete": "Delete",
       "deleteAria": "Delete {agent}",
       "deleteTitle": "Delete the agent?",
-      "deleteDescription": "“{agent}” will disappear from chat for everyone. Workflows that use it will stop working."
+      "deleteDescription": "“{agent}” will disappear from chat for everyone. Workflows that use it will stop working.",
+      "hermes": "Hermes Agent"
     },
     "editor": {
       "createTitle": "New agent",

@@ -42,6 +42,8 @@ export function AgentEditor({ agent }: { agent?: AgentDefinition }) {
               models={editor.models}
               skills={editor.skills}
               knowledgeBases={editor.knowledgeBases}
+              hermesModel={editor.hermesModel}
+              kindLocked={agent !== undefined}
               isValid={editor.isValid}
               save={editor.save}
               isSaving={editor.isSaving}

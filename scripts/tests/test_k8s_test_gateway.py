@@ -1286,3 +1286,22 @@ def test_hermes_provider_refuses_marker_answers_like_a_provider_out_of_quota() -
 
     assert refused.status_code == 402
     assert refused.json()["error"]["type"] == "free_request_quota_exhausted"
+
+
+def test_a_workflow_node_hermes_runs_is_marked_through_to_the_final_answer() -> None:
+    from fastapi.testclient import TestClient
+
+    client = TestClient(_load_gateway().app)
+    hermes_tools = [{"type": "function", "function": {"name": "skills_list"}}]
+    node = [{"role": "user", "content": "Goal: MULTI_AGENT_NODE:build"}]
+
+    by_hermes = client.post("/v1/chat/completions", json={"messages": node, "tools": hermes_tools})
+    by_agent = client.post("/v1/chat/completions", json={"messages": node})
+    final = client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "Synthesize the final answer to the original user request\nMULTI_AGENT_NODE_RESULT:build HERMES_NODE_SEEN"}]},
+    )
+
+    assert "MULTI_AGENT_NODE_RESULT:build HERMES_NODE_SEEN" in by_hermes.text
+    assert "HERMES_NODE_SEEN" not in by_agent.text and "MULTI_AGENT_NODE_RESULT:build" in by_agent.text
+    assert "MULTI_AGENT_FINAL:build HERMES" in final.text

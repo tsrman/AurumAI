@@ -210,12 +210,18 @@ export interface AgentDefinition {
   temperature: number | null;
   skillIds: string[];
   knowledgeBaseIds: string[];
+  // "hermes": a workflow node run by Hermes Agent on the organization's Hermes model.
+  kind?: AgentKind;
   canWrite: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
+export type AgentKind = "agent" | "hermes";
+
 export interface AgentDefinitionCreate {
+  // Fixed at creation.
+  kind?: AgentKind;
   name: string;
   description?: string;
   modelId: string;

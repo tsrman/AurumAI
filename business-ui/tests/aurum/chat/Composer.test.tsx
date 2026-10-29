@@ -204,6 +204,27 @@ test("a conversation that runs on Hermes Agent reopens with it chosen", async ()
   expect(onSend.mock.calls).toEqual([["Run the tests again", undefined, undefined, "hermes"]]);
 });
 
+test("after a workflow turn a Hermes conversation is back on Hermes Agent", async () => {
+  const onSend = vi.fn();
+  render(
+    <HermesConversation>
+      <Composer onSend={onSend} conversationId="conversation-1" />
+    </HermesConversation>,
+    { wrapper: Wrapper }
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent("Hermes Agent")
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Choose workflow" }));
+  fireEvent.click(screen.getByRole("option", { name: /Research/ }));
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Compare" } });
+  fireEvent.click(screen.getByRole("button", { name: /Send/i }));
+
+  expect(onSend.mock.calls[0]).toEqual(["Compare", "workflow-1"]);
+  expect(screen.getByRole("button", { name: "Choose workflow" })).toHaveTextContent("Hermes Agent");
+});
+
 test("Shift+Enter does not call onSend", () => {
   const onSend = vi.fn();
   render(<Composer onSend={onSend} />, { wrapper: Wrapper });

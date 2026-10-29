@@ -18,6 +18,7 @@ export const AppShellContext = createContext<AppShellContextValue | undefined>(
 );
 
 const DEFAULT_CONSTRUCTOR: ConstructorState = {
+  kind: "agent",
   name: "",
   description: "",
   model: mockModels[0]?.id ?? "",

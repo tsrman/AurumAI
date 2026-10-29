@@ -1,3 +1,4 @@
+from typing import Literal, cast
 import uuid
 from datetime import datetime, timezone
 from uuid import UUID
@@ -62,6 +63,7 @@ def _response(agent: AgentDefinition, *, can_write: bool) -> AgentDefinitionResp
         temperature=agent.temperature,
         skillIds=agent.skill_ids,
         knowledgeBaseIds=agent.knowledge_base_ids,
+        kind=cast(Literal["agent", "hermes"], agent.kind),
         canWrite=can_write,
         createdAt=agent.created_at,
         updatedAt=agent.updated_at,
@@ -214,6 +216,11 @@ async def update_agent_definition(
     assert model_id is not None
     assert skill_ids is not None
     assert knowledge_base_ids is not None
+    if agent.kind == "hermes" and (skill_ids or knowledge_base_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A Hermes Agent definition takes no skills or knowledge bases",
+        )
     await _require_dependency_access(
         agent_authorization_service,
         session,

@@ -176,6 +176,20 @@ export function WorkflowForm({
     </>
   );
 
+  // The supervisor plans and synthesizes; Hermes Agent runs nodes only.
+  const supervisorOptions = (
+    <>
+      <option value="">{t("chooseAgent")}</option>
+      {agents
+        .filter((agent) => agent.kind !== "hermes")
+        .map((agent) => (
+          <option key={agent.id} value={agent.id}>
+            {agent.name}
+          </option>
+        ))}
+    </>
+  );
+
   return (
     <form
       className="min-w-0 space-y-6"
@@ -264,7 +278,7 @@ export function WorkflowForm({
                   })
                 }
               >
-                {agentOptions}
+                {supervisorOptions}
               </select>
             </label>
             <p className="text-sm text-aurum-text-2">{g("supervisorHint")}</p>

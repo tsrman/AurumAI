@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAdminModels } from "@/hooks/useAdminModels";
+import { useAdminModels, useOrganizationHermesSettings } from "@/hooks/useAdminModels";
 import { useAppShell } from "@/hooks/useAppShell";
 import { useSkills } from "@/hooks/useSkills";
 import {
@@ -18,6 +18,7 @@ import { useErrorMessage } from "@/lib/errors";
 
 function stateFromAgent(agent: AgentDefinition): ConstructorState {
   return {
+    kind: agent.kind ?? "agent",
     name: agent.name,
     description: agent.description ?? "",
     model: agent.modelId,
@@ -63,6 +64,8 @@ export function useAgentConstructor(agent?: AgentDefinition) {
   const queryClient = useQueryClient();
   const router = useRouter();
   const skillsQuery = useSkills();
+  // A Hermes node runs on the organization's Hermes model, not its own.
+  const hermesModel = useOrganizationHermesSettings().data?.data.model ?? null;
   const knowledgeQuery = useQuery({
     queryKey: ["knowledge-bases"],
     queryFn: getKnowledgeBases,
@@ -116,6 +119,9 @@ export function useAgentConstructor(agent?: AgentDefinition) {
   );
 
   const isValid = useMemo(() => {
+    if (state.kind === "hermes") {
+      return state.name.trim().length > 0 && state.prompt.trim().length > 0 && Boolean(hermesModel);
+    }
     return (
       state.name.trim().length > 0 &&
       state.prompt.trim().length > 0 &&
@@ -124,29 +130,29 @@ export function useAgentConstructor(agent?: AgentDefinition) {
       (models.some((model) => model.id === state.model) ||
         (agent !== undefined && state.model === agent.modelId))
     );
-  }, [state.name, state.prompt, state.model, models, agent]);
+  }, [state.kind, state.name, state.prompt, state.model, models, agent, hermesModel]);
 
   const save = useCallback(async (): Promise<boolean> => {
     if (!isValid) return false;
 
-    const skillIds = Object.keys(state.tools).filter((id) => state.tools[id]);
-    const knowledgeBaseIds = Object.keys(state.bases).filter(
-      (id) => state.bases[id]
-    );
+    const hermes = state.kind === "hermes";
+    // Hermes brings the platform's tools and its own skills.
+    const skillIds = hermes ? [] : Object.keys(state.tools).filter((id) => state.tools[id]);
+    const knowledgeBaseIds = hermes ? [] : Object.keys(state.bases).filter((id) => state.bases[id]);
     setIsSaving(true);
     setSaveError(null);
     try {
       const payload = {
         name: state.name.trim(),
         description: state.description.trim(),
-        modelId: state.model,
+        modelId: hermes ? (hermesModel ?? state.model) : state.model,
         systemPrompt: state.prompt.trim(),
         temperature: state.temperature,
         skillIds,
         knowledgeBaseIds,
       };
       if (agent) await updateAgentDefinition(agent.id, payload);
-      else await createAgentDefinition(payload);
+      else await createAgentDefinition({ ...payload, kind: state.kind });
       void queryClient.invalidateQueries({ queryKey: ["agent-definitions"] });
       router.push("/admin/agents");
       return true;
@@ -156,7 +162,7 @@ export function useAgentConstructor(agent?: AgentDefinition) {
     } finally {
       setIsSaving(false);
     }
-  }, [isValid, state, agent, queryClient, router, t, errorMessage]);
+  }, [isValid, state, agent, queryClient, router, t, errorMessage, hermesModel]);
 
   return {
     state,
@@ -168,6 +174,7 @@ export function useAgentConstructor(agent?: AgentDefinition) {
     models,
     skills,
     knowledgeBases,
+    hermesModel,
     isSaving,
     saveError,
   };
