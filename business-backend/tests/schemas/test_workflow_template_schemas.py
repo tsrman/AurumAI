@@ -202,6 +202,7 @@ def test_snapshot_serializes_only_camel_case_configuration(template_snapshot) ->
                 "temperature": 0.3,
                 "skillIds": [],
                 "knowledgeBaseIds": [],
+                "kind": "agent",
             }
         ],
         "nodes": [
