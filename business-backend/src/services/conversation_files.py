@@ -28,6 +28,17 @@ _TEXT_EXTENSIONS = {"csv": "text/csv", "md": "text/markdown", "markdown": "text/
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _NAME_SAFE = re.compile(r"[^\w.\- ()\[\]]+")
 _ZIP_ENTRIES = 10_000
+# Plain text keeps one of these extensions in its name, so code reads as code
+# once downloaded; it is still stored and served as text/plain, a download.
+CODE_EXTENSIONS = frozenset(
+    {
+        "py", "ipynb", "js", "mjs", "cjs", "ts", "tsx", "jsx", "vue", "svelte", "html", "htm", "css", "scss",
+        "sass", "less", "sql", "sh", "bash", "ps1", "bat", "yaml", "yml", "toml", "ini", "cfg", "conf", "xml",
+        "svg", "env", "txt", "log", "rst", "go", "rs", "java", "kt", "c", "h", "cpp", "hpp", "cs", "rb", "php",
+        "swift", "dart", "lua", "r", "jl", "tf", "proto", "graphql", "dockerfile", "gitignore", "editorconfig",
+        "lock", "properties", "gradle", "makefile", "mk",
+    }
+)
 
 
 class FileRejected(Exception):
@@ -91,11 +102,17 @@ def sniff(data: bytes, name: str) -> FileKind:
 
 def display_name(name: str, kind: FileKind) -> str:
     """A plain file name: no directories or control characters, at most 255
-    characters, ending in the extension of what the file really is."""
+    characters, ending in the extension of what the file really is, or, for
+    plain text, its own code extension."""
     base = unicodedata.normalize("NFC", name.replace("\\", "/").rsplit("/", 1)[-1])
-    stem = base.rsplit(".", 1)[0] if "." in base else base
+    stem, dot, own = base.rpartition(".")
+    if not dot:
+        stem, own = base, ""
+    extension = kind.extension
+    if kind.content_type == "text/plain" and own.lower() in CODE_EXTENSIONS:
+        extension = own.lower()
     stem = _NAME_SAFE.sub("_", _CONTROL.sub("", stem)).strip(" ._") or "file"
-    return f"{stem[: 250 - len(kind.extension)]}.{kind.extension}"
+    return f"{stem[: 250 - len(extension)]}.{extension}"
 
 
 def file_key(org_id: UUID, conversation_id: UUID, operation_id: UUID, kind: FileKind) -> str:

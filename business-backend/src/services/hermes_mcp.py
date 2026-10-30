@@ -134,8 +134,10 @@ TOOLS = (
         "spreadsheet or a report: save it under /workspace, then call this with "
         "its absolute path (/workspace/...). Pictures (PNG, JPEG, WebP) appear below your answer; other "
         "files (CSV, text, Markdown, JSON, PDF, XLSX, DOCX, PPTX, ZIP, up to "
-        "20 MiB, ten per answer) are offered for download. Do not write links "
-        "to it into the answer.",
+        "20 MiB, ten per answer) are offered for download; code and other plain "
+        "text keep their names. Give a project as one ZIP with a README on how to "
+        "run it, without node_modules, virtual environments or build output. Do "
+        "not write links to it into the answer.",
         AttachFileRequest,
     ),
     BridgeTool(

@@ -128,8 +128,9 @@ bytes.
 
 Files attached to an answer (CSV, plain text, Markdown, JSON, PDF, XLSX, DOCX, PPTX
 and ZIP, at most 20 MiB each) are stored next to the images, under `conversation-images/<org>/<conversation>/files/`. Their type is
-recognised from the bytes, never from the name the agent chose, and they are served
-only to the conversation owner and always as a download. In a Hermes conversation
+recognised from the bytes, never from the name the agent chose; plain text keeps a
+code extension such as `.py` or `.html` in its name but stays `text/plain`. They are
+served only to the conversation owner and always as a download. In a Hermes conversation
 the user can upload such files, and PNG, JPEG or WebP pictures, for Hermes's workspace (`POST
 /v1/conversations/<id>/files`, with Hermes enabled and both Hermes capabilities): up
 to ten per message, twenty and 200 MiB per conversation, under
