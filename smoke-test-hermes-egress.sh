@@ -6,7 +6,7 @@
 # pool, with only the guard connected) and checks, from inside: no DNS or routes of its own,
 # only the platform completion path, and internet egress in each mode as the
 # backend and the guard decide. Needs internet access for the package and
-# public-mode probes (pypi.org, example.com). Everything is torn down after.
+# public-mode probes (pypi.org, the npm registry, example.com). Everything is torn down after.
 #
 # Prerequisites: Docker 28+, uv, free 55436/58000, no other
 # aurum-ai-hermes-egress-guard container. Images are built from this checkout; aurum-ai-web-egress:latest is
@@ -111,6 +111,7 @@ log "mode packages: the listed index only"
 fixture mode packages
 sleep 6
 expect "$(probe pip)" 'r["pip_ok"] and r["downloaded"] == ["six-1.17.0-py2.py3-none-any.whl"]'
+expect "$(probe npm)" 'r["status"] == 200'
 expect "$(probe connect example.com:443)" 'r["status"] == 403 and r["reason"] == "host_not_allowed"'
 
 log "mode public without web.access stays packages"

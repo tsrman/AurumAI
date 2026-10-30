@@ -46,6 +46,8 @@ EXCLUDED = (
     ".hermes/logs",
     ".hermes/memories",
     ".hermes/skills",
+    # Package caches (pip, npm): a second copy of what is installed.
+    ".cache",
 )
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _KEY_PART = re.compile(r"^[A-Za-z0-9-]{1,64}$")

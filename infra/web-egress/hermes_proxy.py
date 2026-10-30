@@ -680,7 +680,7 @@ def config_from_env() -> tuple[PlatformConfig, ProxyConfig, Authorizer, int, int
     )
     proxy = ProxyConfig(
         max_mode=max_mode,
-        package_hosts=_list("HERMES_EGRESS_PACKAGE_HOSTS") or ("pypi.org", "files.pythonhosted.org"),
+        package_hosts=_list("HERMES_EGRESS_PACKAGE_HOSTS") or ("pypi.org", "files.pythonhosted.org", "registry.npmjs.org"),
         internal_exceptions=frozenset(exceptions),
         forbidden_networks=FORBIDDEN_NETWORKS + operator,
         idle_timeout=float(os.environ.get("HERMES_EGRESS_IDLE_TIMEOUT_SECONDS", "300")),

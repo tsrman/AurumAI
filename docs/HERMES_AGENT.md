@@ -240,7 +240,7 @@ rules are in place).
    | Mode | What the sandbox can reach |
    |---|---|
    | `none` | Nothing beyond the two platform endpoints. |
-   | `packages` | Also the package index hosts on the operator's list, by default `pypi.org` and `files.pythonhosted.org`. |
+   | `packages` | Also the package index hosts on the operator's list, by default `pypi.org`, `files.pythonhosted.org` and `registry.npmjs.org`. |
    | `public` | Also any public host on ports 80 and 443. |
 
    - **Who chooses.** The operator sets the maximum
@@ -968,6 +968,32 @@ workbooks. The image carries python-pptx, python-docx and pypdf for that:
 - the bounds (ten files a message, twenty and 200 MiB a conversation, 20 MiB a
   file) keep one sync within its ten minutes and a snapshot within its limit.
   Inputs are part of the workspace and its snapshots.
+
+### Web applications
+
+Hermes can build a web application prototype, check that it works and hand
+over its code. The image carries what that takes, all verified:
+
+- Node.js (the official LTS release, pinned by hash per architecture) with npm,
+  next to Python. npm reaches `registry.npmjs.org` through hermes-egress in
+  `packages` mode with the same HTTPS proxy as pip, set in the environment by
+  `start.sh`, never in a file the workspace or its snapshots keep. Global
+  installs go to `/workspace/.local`; native addons cannot build (no
+  compilers);
+- Debian's Chromium headless shell (`/usr/bin/chromium-headless-shell`) with
+  fonts that cover Cyrillic, and Playwright for Python.
+  The agent starts the app on 127.0.0.1 and checks it in headless Chromium
+  (`--no-sandbox`, `--disable-dev-shm-usage`, a profile in `/tmp`), clicking
+  through it and attaching screenshots. npm packages never download a browser
+  the proxy would refuse (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`,
+  `PUPPETEER_SKIP_DOWNLOAD`); they use the system Chromium. Hermes's own
+  browser toolset stays off;
+- package caches (pip, npm) live in `/workspace/.cache`, which snapshots leave
+  out, so a snapshot holds one copy of what is installed. A typical
+  `node_modules` (tens of thousands of entries) fits the snapshot bounds; over
+  them the last snapshot that fit stays the latest;
+- nothing in the sandbox is reachable from outside: the user runs the app from
+  the ZIP Hermes attaches, whose README says how. Code files keep their names.
 
 ### Idle sessions
 
