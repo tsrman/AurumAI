@@ -330,6 +330,54 @@ async def hermes_hydrate_skills(token: str, session_id: str) -> dict[str, int]:
     raise _failure(code)
 
 
+@activity.defn(name="hermes_sync_inputs")
+async def hermes_sync_inputs(token: str, session_id: str) -> dict[str, int]:
+    """Put the files the user gave the conversation into the sandbox's inputs
+    folder before the turn: only those missing or changed, each checked
+    against the size and SHA-256 the backend recorded. Only counts come back:
+    the files stay out of the workflow's history."""
+    listed = await _backend("GET", "/inputs", token)
+    if listed.status_code != 200:
+        raise _failure(_code(listed, "hermes_inputs_unavailable"))
+    try:
+        wanted = [
+            (str(item["fileId"]), str(item["name"]), int(item["sizeBytes"]), str(item["sha256"]))
+            for item in listed.json().get("inputs") or []
+        ]
+    except (KeyError, TypeError, ValueError):
+        raise _failure("hermes_inputs_unavailable") from None
+    if not wanted:
+        return {"written": 0, "kept": 0}
+    held = await _executor("GET", f"/sandboxes/{session_id}/inputs")
+    if held.status_code != 200:
+        raise _failure(_code(held, "hermes_inputs_unavailable"))
+    present = held.json().get("files") or {}
+    written = 0
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for file_id, name, size, sha256 in wanted:
+            if present.get(name) == sha256:
+                continue
+            content = await client.get(
+                f"{settings.backend_api_url}/v1/internal/hermes/inputs/{file_id}/content",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if content.status_code != 200:
+                raise _failure(_code(content, "hermes_inputs_unavailable"))
+            data = content.content
+            if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
+                raise _failure("hermes_inputs_unavailable")
+            stored = await client.put(
+                f"{settings.skill_executor_url}/hermes/sandboxes/{session_id}/inputs",
+                params={"name": name},
+                content=data,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            if stored.status_code != 204:
+                raise _failure(_code(stored, "hermes_inputs_unavailable"))
+            written += 1
+    return {"written": written, "kept": len(wanted) - written}
+
+
 @activity.defn(name="hermes_save_skills")
 async def hermes_save_skills(token: str, session_id: str) -> dict[str, int]:
     """Submit the skills the sandbox holds beyond the bundled ones as drafts

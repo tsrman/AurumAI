@@ -25,7 +25,8 @@ from src.services.hermes_access import (
     active_hermes_turn,
     require_hermes_capabilities,
 )
-from src.services import hermes_files, hermes_memory, hermes_skill_drafts, hermes_skills
+from src.services import file_uploads, hermes_files, hermes_memory, hermes_skill_drafts, hermes_skills
+from src.services.object_storage import object_storage
 from src.services.conversation_files import MAX_FILE_BYTES
 from src.services.session_manager import session_manager
 from src.services.hermes_sessions import (
@@ -274,6 +275,32 @@ async def upload_hermes_file(
             status_code=_FILE_STATUS.get(exc.code, status.HTTP_422_UNPROCESSABLE_CONTENT),
             detail={"code": exc.code},
         ) from None
+
+
+@router.get("/hermes/inputs", dependencies=[Depends(require_hermes_enabled)])
+async def hermes_inputs_for_turn(
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> dict[str, Any]:
+    """The files the user gave the conversation, as its sandbox holds them."""
+    subject = await _turn_owner(user, session)
+    _, conversation_id = _runner(user)
+    return {"inputs": await file_uploads.workspace_inputs(session, subject.org_id, conversation_id)}
+
+
+@router.get("/hermes/inputs/{file_id}/content", dependencies=[Depends(require_hermes_enabled)])
+async def hermes_input_content(
+    file_id: UUID,
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> Response:
+    """One of those files' bytes, for tool-worker to put into the sandbox."""
+    subject = await _turn_owner(user, session)
+    _, conversation_id = _runner(user)
+    key = await file_uploads.claimed_upload_key(session, subject.org_id, conversation_id, file_id)
+    if key is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "hermes_input_not_found"})
+    return Response(content=await object_storage.get_bytes(key), media_type="application/octet-stream")
 
 
 async def _turn_owner(user: UserInfo, session: AsyncSession) -> AuthorizationSubject:

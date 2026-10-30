@@ -53,7 +53,13 @@ from src.services.conversation_attachments import attach_file
 from src.services.image_content import ImageContentError
 from src.services.image_tools import organization_image_models, recent_conversation_images
 from src.services.conversation_files import MAX_FILE_BYTES, FileRejected
-from src.services.file_uploads import FileUploadError, delete_unclaimed_file, store_uploaded_file
+from src.services.file_uploads import (
+    FileUploadError,
+    check_unclaimed_files,
+    claim_files,
+    delete_unclaimed_file,
+    store_uploaded_file,
+)
 from src.services.image_uploads import (
     ImageUploadError,
     check_unclaimed_uploads,
@@ -570,6 +576,15 @@ async def _require_sendable_uploads(
         ) from exc
 
 
+def _with_files_note(content: str, files: list[dict[str, Any]]) -> str:
+    """The turn's text for Hermes, naming where the files the user gave it
+    are; the stored message keeps the user's own words."""
+    if not files:
+        return content
+    listed = "\n".join(f"- {item['path']} ({item['contentType']}, {item['sizeBytes']} bytes)" for item in files)
+    return f"{content}\n\n[The user attached these files; they are in your workspace:\n{listed}]"
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
@@ -600,6 +615,20 @@ async def chat_stream(
             )
     if upload_ids:
         await _require_sendable_uploads(session, request, conv)
+    file_ids = user_message.file_ids
+    if file_ids:
+        if not hermes:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Only Hermes Agent takes files",
+            )
+        try:
+            await check_unclaimed_files(session, conv.org_id, conv.id, file_ids)
+        except FileUploadError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="File is not available"
+            ) from exc
+    claimed_files: list[dict[str, Any]] = []
 
     effective_workflow_id = request.workflow_id
     auto_routed = False
@@ -725,6 +754,18 @@ async def chat_stream(
                 status_code=status.HTTP_409_CONFLICT, detail="Image is not available"
             ) from exc
 
+        try:
+            claimed_files = await claim_files(session, conv.org_id, conv.id, turn_id, file_ids)
+        except FileUploadError as exc:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="File is not available"
+            ) from exc
+        extra: dict[str, Any] = {"image_ids": claimed_images} if claimed_images else {}
+        if claimed_files:
+            extra["files"] = [
+                {key: value for key, value in item.items() if key != "path"} for item in claimed_files
+            ]
         await message_repository.create(
             session,
             conversation_id=conversation_id,
@@ -734,7 +775,7 @@ async def chat_stream(
             content=user_message.content,
             model=turn_model,
             turn_id=turn_id,
-            extra={"image_ids": claimed_images} if claimed_images else {},
+            extra=extra,
         )
         conv.last_message_at = datetime.now(timezone.utc)
         await session.commit()
@@ -816,7 +857,7 @@ async def chat_stream(
             )
         signal_payload: dict[str, Any] = {
             "role": "user",
-            "content": user_message.content,
+            "content": _with_files_note(user_message.content, claimed_files),
             "turn_id": str(turn_id),
             # Hermes reaches web, images and questions through its own bridge.
             # Hermes asks through its clarify tool, as the turn's questions.

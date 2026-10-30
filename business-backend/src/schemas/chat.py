@@ -2,6 +2,8 @@ from typing import Any, List, Literal, Optional
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.services.file_uploads import MAX_FILES_PER_MESSAGE
+
 
 MAX_MESSAGE_IMAGES = 4
 
@@ -15,6 +17,8 @@ class ChatMessage(BaseModel):
     image_ids: list[UUID] = Field(
         default_factory=list, alias="imageIds", max_length=MAX_MESSAGE_IMAGES
     )
+    # Uploaded files (POST /conversations/{id}/files) for Hermes's workspace.
+    file_ids: list[UUID] = Field(default_factory=list, alias="fileIds", max_length=MAX_FILES_PER_MESSAGE)
 
 
 class ChatOptions(BaseModel):

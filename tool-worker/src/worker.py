@@ -24,6 +24,7 @@ from src.hermes_activities import (
     hermes_save_memory,
     hermes_save_skills,
     hermes_hydrate_skills,
+    hermes_sync_inputs,
     hermes_unbind_turn,
 )
 from src.hermes_session_workflow import HEARTBEAT_THROTTLE, HermesSessionWorkflow
@@ -91,6 +92,7 @@ async def main() -> None:
             hermes_save_memory,
             hermes_save_skills,
             hermes_hydrate_skills,
+            hermes_sync_inputs,
             hermes_bind_turn,
             hermes_unbind_turn,
             hermes_run_turn,

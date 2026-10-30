@@ -222,3 +222,19 @@ async def workspace_inputs(session: AsyncSession, org_id: UUID, conversation_id:
         if _SAFE.fullmatch(names[row.id])
     ]
     return sorted(inputs, key=lambda item: item["name"])
+
+
+async def claimed_upload_key(
+    session: AsyncSession, org_id: UUID, conversation_id: UUID, file_id: UUID
+) -> str | None:
+    """The storage key of an upload of this conversation a message carries."""
+    key: str | None = await session.scalar(
+        select(ConversationFile.storage_key).where(
+            ConversationFile.org_id == org_id,
+            ConversationFile.conversation_id == conversation_id,
+            ConversationFile.id == file_id,
+            ConversationFile.origin == "uploaded",
+            ConversationFile.turn_id.is_not(None),
+        )
+    )
+    return key

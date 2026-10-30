@@ -697,3 +697,34 @@ def test_a_file_is_served_as_bytes_and_a_refusal_keeps_its_code(lifecycle, monke
     assert refused.status_code == 403 and refused.json()["detail"]["code"] == "file_not_allowed"
     assert unbounded.status_code == 422
     assert paths == ["out/chart.png", "secret"]
+
+
+def test_an_input_is_written_from_its_bytes_and_bounded(lifecycle, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from src import hermes_routes
+    from src.main import app
+
+    sandboxes, _, _ = lifecycle
+    written: list[tuple[str, bytes]] = []
+
+    async def write_input(session_id: str, name: str, data: bytes) -> None:
+        written.append((name, data))
+
+    async def list_inputs(session_id: str) -> dict[str, str]:
+        return {"sales.xlsx": "a" * 64}
+
+    monkeypatch.setattr(sandboxes, "write_input", write_input)
+    monkeypatch.setattr(sandboxes, "list_inputs", list_inputs)
+    monkeypatch.setattr(hermes_routes, "sandboxes", sandboxes)
+    monkeypatch.setattr(hermes_routes, "settings", Settings(hermes_enabled=True))
+    monkeypatch.setattr(hermes_routes, "FILE_MAX_BYTES", 8)
+    client = TestClient(app)
+
+    listed = client.get(f"/hermes/sandboxes/{SESSION}/inputs")
+    stored = client.put(f"/hermes/sandboxes/{SESSION}/inputs", params={"name": "sales q1.xlsx"}, content=b"PK book")
+    large = client.put(f"/hermes/sandboxes/{SESSION}/inputs", params={"name": "big.csv"}, content=b"x" * 9)
+
+    assert listed.json() == {"files": {"sales.xlsx": "a" * 64}}
+    assert stored.status_code == 204 and written == [("sales q1.xlsx", b"PK book")]
+    assert large.status_code == 413

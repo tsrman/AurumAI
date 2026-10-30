@@ -21,7 +21,10 @@ class Router:
         self.requests: list[tuple[str, str, Any]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content) if request.content else None
+        try:
+            body = json.loads(request.content) if request.content else None
+        except ValueError:
+            body = request.content
         self.requests.append((request.method, request.url.path, body))
         answer = self.routes[(request.method, request.url.path)]
         return answer(request) if callable(answer) else answer
@@ -519,3 +522,70 @@ async def test_closing_still_fails_when_the_backend_is_down(http) -> None:
 
     with pytest.raises(ApplicationError):
         await ActivityEnvironment().run(hermes_activities.hermes_close_session, "t", SESSION)
+
+
+INPUT_ID = "0b7c5a4e-1d2f-4a3b-9c8d-7e6f5a4b3c2d"
+
+
+def _inputs(*items: tuple[str, bytes]) -> httpx.Response:
+    import hashlib
+
+    return httpx.Response(
+        200,
+        json={
+            "inputs": [
+                {"fileId": f"{INPUT_ID[:-1]}{index}", "name": name, "sizeBytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                for index, (name, data) in enumerate(items)
+            ]
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_inputs_missing_or_changed_in_the_sandbox_are_written_after_a_check(http) -> None:
+    import hashlib
+
+    sales, notes = b"PK sales workbook", b"# Notes\n"
+    router = http(
+        {
+            ("GET", "/v1/internal/hermes/inputs"): _inputs(("sales.xlsx", sales), ("notes.md", notes)),
+            ("GET", f"/hermes/sandboxes/{SESSION}/inputs"): httpx.Response(
+                200, json={"files": {"notes.md": hashlib.sha256(notes).hexdigest(), "sales.xlsx": "0" * 64}}
+            ),
+            ("GET", f"/v1/internal/hermes/inputs/{INPUT_ID[:-1]}0/content"): httpx.Response(200, content=sales),
+            ("PUT", f"/hermes/sandboxes/{SESSION}/inputs"): httpx.Response(204),
+        }
+    )
+
+    counts = await ActivityEnvironment().run(hermes_activities.hermes_sync_inputs, "t", SESSION)
+
+    assert counts == {"written": 1, "kept": 1}
+    [put] = [request for request in router.requests if request[0] == "PUT"]
+    assert put[2] == sales
+
+
+@pytest.mark.asyncio
+async def test_inputs_whose_bytes_do_not_match_their_record_fail_the_turn(http) -> None:
+    http(
+        {
+            ("GET", "/v1/internal/hermes/inputs"): _inputs(("sales.xlsx", b"PK sales workbook")),
+            ("GET", f"/hermes/sandboxes/{SESSION}/inputs"): httpx.Response(200, json={"files": {}}),
+            ("GET", f"/v1/internal/hermes/inputs/{INPUT_ID[:-1]}0/content"): httpx.Response(200, content=b"tampered"),
+        }
+    )
+
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(hermes_activities.hermes_sync_inputs, "t", SESSION)
+
+    assert raised.value.type == "hermes_inputs_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_without_inputs_never_asks_the_sandbox(http) -> None:
+    router = http({("GET", "/v1/internal/hermes/inputs"): httpx.Response(200, json={"inputs": []})})
+
+    assert await ActivityEnvironment().run(hermes_activities.hermes_sync_inputs, "t", SESSION) == {
+        "written": 0,
+        "kept": 0,
+    }
+    assert len(router.requests) == 1

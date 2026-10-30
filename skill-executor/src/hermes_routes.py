@@ -11,13 +11,13 @@ import re
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
 from src.hermes_platform_skills import MAX_SKILLS, PlatformSkill
-from src.hermes_runtime import DockerHermesSandboxes, HermesSandbox, HermesSandboxError
+from src.hermes_runtime import FILE_MAX_BYTES, DockerHermesSandboxes, HermesSandbox, HermesSandboxError
 from src.hermes_snapshots import Snapshot
 
 router = APIRouter(prefix="/hermes")
@@ -52,6 +52,8 @@ _STATUS = {
     "file_not_allowed": 403,
     "file_too_large": 413,
     "hermes_file_failed": 502,
+    "hermes_inputs_failed": 502,
+    "hermes_input_invalid": 400,
 }
 
 
@@ -251,6 +253,33 @@ async def read_skills(session_id: str) -> dict[str, Any]:
         return await sandboxes.read_skills(session_id)
     except HermesSandboxError as exc:
         raise _error(exc) from None
+
+
+@router.get("/sandboxes/{session_id}/inputs")
+async def list_inputs(session_id: str) -> dict[str, Any]:
+    _available()
+    try:
+        return {"files": await sandboxes.list_inputs(session_id)}
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+
+
+@router.put("/sandboxes/{session_id}/inputs", status_code=204)
+async def write_input(session_id: str, request: Request, name: str = Query(min_length=1, max_length=255)) -> Response:
+    """One of the user's uploads, for the workspace's inputs folder."""
+    _available()
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > FILE_MAX_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "file_too_large"})
+        chunks.append(chunk)
+    try:
+        await sandboxes.write_input(session_id, name, b"".join(chunks))
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+    return Response(status_code=204)
 
 
 @router.get("/sandboxes/{session_id}/files")

@@ -158,6 +158,7 @@ _FAILURE_REASONS = {
     ),
     "hermes_model_error": "the model provider returned an error. Try again later",
     "hermes_run_failed": "Hermes Agent could not finish the turn. Try again",
+    "hermes_inputs_unavailable": "the files you attached could not be put into Hermes Agent's workspace. Try again",
 }
 
 

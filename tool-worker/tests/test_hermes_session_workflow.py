@@ -59,6 +59,7 @@ class Fakes:
         self.prepare_error: str | None = None
         self.hydrate_fails = False
         self.hydrate_gone = False
+        self.inputs_fail = False
         self.block_run = False
         self.run_cancelled = False
         self.answered: list[tuple[Any, ...]] = []
@@ -135,6 +136,13 @@ class Fakes:
                 raise ApplicationError("hermes_skills_failed", type="hermes_skills_failed", non_retryable=True)
             return {"hydrated": 1, "skipped": 0}
 
+        @activity.defn(name="hermes_sync_inputs")
+        async def sync_inputs(token: str, session_id: str) -> dict[str, int]:
+            self.calls.append("sync_inputs")
+            if self.inputs_fail:
+                raise ApplicationError("hermes_inputs_unavailable", type="hermes_inputs_unavailable", non_retryable=True)
+            return {"written": 1, "kept": 0}
+
         @activity.defn(name="hermes_save_skills")
         async def save_skills(token: str, session_id: str) -> dict[str, int]:
             self.calls.append("save_skills")
@@ -148,7 +156,10 @@ class Fakes:
         async def close(token: str, session_id: str) -> None:
             self.calls.append(f"close:{session_id}")
 
-        return [prepare, bind, unbind, run, answer, load_memory, save_memory, hydrate_skills, save_skills, retire, close], [get_session_token]
+        return [
+            prepare, bind, unbind, run, answer, load_memory, save_memory, hydrate_skills, sync_inputs, save_skills,
+            retire, close,
+        ], [get_session_token]
 
 
 @asynccontextmanager
@@ -216,11 +227,27 @@ async def test_a_turn_is_prepared_bound_run_and_unbound() -> None:
         "bind:turn-1:exec-1",
         "load_memory",
         "hydrate_skills",
+        "sync_inputs",
         "run:turn-1:hello:1",
         "save_memory:1",
         "save_skills",
         "unbind",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_whose_files_cannot_be_put_into_the_sandbox_does_not_run() -> None:
+    fakes = Fakes()
+    fakes.inputs_fail = True
+    async with await WorkflowEnvironment.start_time_skipping() as env, _stack(env, fakes) as client:
+        parent, handle = await _parent(client)
+        await _hand_off(client, parent, _turn(parent))
+
+        [result] = await handle.result()
+
+    assert result["status"] == "failed" and result["error"] == "hermes_inputs_unavailable"
+    assert not any(call.startswith("run") for call in fakes.calls)
+    assert fakes.calls[-1] == "unbind"
 
 
 @pytest.mark.asyncio
@@ -250,8 +277,8 @@ async def test_a_sandbox_gone_before_its_skills_are_hydrated_is_prepared_again_o
 
     assert result["status"] == "completed"
     assert [call.split(":")[0] for call in fakes.calls] == [
-        "prepare", "bind", "load_memory", "hydrate_skills", "prepare", "bind", "load_memory", "hydrate_skills", "run",
-        "save_memory", "save_skills", "unbind",
+        "prepare", "bind", "load_memory", "hydrate_skills", "prepare", "bind", "load_memory", "hydrate_skills",
+        "sync_inputs", "run", "save_memory", "save_skills", "unbind",
     ]
 
 
@@ -328,7 +355,9 @@ async def test_a_sandbox_retired_before_the_run_is_prepared_again_once() -> None
 
     assert result["status"] == "completed"
     assert [call.split(":")[0] for call in fakes.calls] == [
-        "prepare", "bind", "load_memory", "hydrate_skills", "run", "prepare", "bind", "load_memory", "hydrate_skills", "run",
+        # The replacement sandbox gets the user's files again.
+        "prepare", "bind", "load_memory", "hydrate_skills", "sync_inputs", "run",
+        "prepare", "bind", "load_memory", "hydrate_skills", "sync_inputs", "run",
         "save_memory", "save_skills", "unbind",
     ]
 

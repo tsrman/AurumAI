@@ -938,6 +938,35 @@ its workspace:
   size. Workflow nodes share the turn, so a Hermes node's files reach the final
   answer.
 
+### Files the user gives Hermes
+
+In a Hermes conversation the user attaches files to a message (spreadsheets,
+CSV, documents; the conversation file types) and Hermes works on them in its
+terminal, for example to build a pivot table and a presentation from several
+workbooks. The image carries python-pptx, python-docx and pypdf for that:
+
+- the composer uploads each file (`POST /v1/conversations/<id>/files`) and the
+  message carries their ids; only a Hermes turn takes them. Sending claims them
+  for the turn, the user's message lists them, and each gets a workspace name in
+  `/workspace/inputs/`: its own, numbered when an earlier upload has it, never
+  changed once given;
+- the runner receives the turn's text with a note naming those paths, so the
+  stored message keeps the user's own words;
+- before every turn, after the platform skills, the session workflow runs
+  `hermes_sync_inputs` (patch `hermes-inputs`): tool-worker lists the
+  conversation's claimed uploads from the backend, asks skill-executor what the
+  sandbox holds (`hermes-relay inputs-list`: regular, singly linked files with
+  their SHA-256), and writes only what is missing or changed, each checked
+  against the recorded size and SHA-256, through a staging folder that
+  `hermes-relay inputs-write` moves into the inputs folder, read-only. A
+  replacement sandbox gets them again. The files never enter workflow history;
+- a turn whose files cannot be written does not run: it ends with
+  `hermes_inputs_unavailable` and a reason the user reads, since its text names
+  files that would be missing;
+- the bounds (ten files a message, twenty and 200 MiB a conversation, 20 MiB a
+  file) keep one sync within its ten minutes and a snapshot within its limit.
+  Inputs are part of the workspace and its snapshots.
+
 ### Idle sessions
 
 The session workflow retires an idle sandbox after its idle time (1800 s) and

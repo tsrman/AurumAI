@@ -54,8 +54,9 @@ installed distributions carry their own license files. All of them are under
 permissive licenses (MIT, BSD, Apache-2.0, ISC, PSF) except `certifi` and
 `pathspec` (MPL-2.0).
 The data libraries in `hermes-sandbox/requirements-data.txt` (matplotlib,
-pandas, openpyxl, numpy and what they need) are permissive as well: the
-Matplotlib license (PSF-based), BSD, MIT. Matplotlib bundles the DejaVu (Bitstream
+pandas, openpyxl, python-pptx, python-docx, pypdf, numpy and what they need) are
+permissive as well: the Matplotlib license (PSF-based), BSD, MIT. lxml's wheels
+bundle libxml2 and libxslt (MIT). Matplotlib bundles the DejaVu (Bitstream
 Vera license) and STIX (SIL Open Font License) fonts, and numpy's wheels bundle
 OpenBLAS (BSD) and the GCC Fortran runtime (GPL-3.0 with the GCC Runtime Library
 Exception); each distribution carries these licenses.

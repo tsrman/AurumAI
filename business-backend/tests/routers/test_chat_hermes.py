@@ -172,3 +172,56 @@ async def test_the_composer_offers_hermes_only_when_a_turn_would_be_accepted(mon
         response = await chat.chat_agents(user=user, session=session)
 
     assert [agent.model_dump() for agent in response.data] == agents
+
+
+async def test_files_go_with_a_hermes_turn_and_their_paths_with_its_text(monkeypatch) -> None:
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+    file_id = uuid.uuid4()
+    claimed = [
+        {
+            "fileId": str(file_id),
+            "name": "sales.xlsx",
+            "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "sizeBytes": 2048,
+            "path": "/workspace/inputs/sales.xlsx",
+        }
+    ]
+    check, claim = AsyncMock(), AsyncMock(return_value=claimed)
+    patches = _patches(
+        conv,
+        pubsub,
+        signal,
+        check_files=patch.object(chat, "check_unclaimed_files", check),
+        claim_files=patch.object(chat, "claim_files", claim),
+    )
+
+    mocks, error = await _stream(conv, user, session, _request(conv, message={"fileIds": [str(file_id)]}), patches)
+
+    assert error is None
+    check.assert_awaited_once_with(session, conv.org_id, conv.id, [file_id])
+    assert claim.await_args.args[-1] == [file_id]
+    # The user's message keeps their words and lists the files; Hermes's text
+    # names where they are.
+    created = mocks["create"].call_args.kwargs
+    assert created["content"] == "plan my trip"
+    assert created["extra"]["files"] == [{key: value for key, value in claimed[0].items() if key != "path"}]
+    content = signal.call_args.args[2]["content"]
+    assert content.startswith("plan my trip\n\n[The user attached these files; they are in your workspace:")
+    assert "- /workspace/inputs/sales.xlsx (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, 2048 bytes)" in content
+
+
+async def test_an_ordinary_turn_takes_no_files(monkeypatch) -> None:
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+    request = ChatRequest(
+        conversation_id=str(conv.id),
+        messages=[{"role": "user", "content": "hi", "fileIds": [str(uuid.uuid4())]}],
+        model="composer-model",
+    )
+
+    _, error = await _stream(conv, user, session, request, _patches(conv, pubsub, signal))
+
+    assert error is not None and error.status_code == 422
+    signal.assert_not_awaited()

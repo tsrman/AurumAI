@@ -36,7 +36,7 @@ def test_data_libraries_are_pinned_by_hash_without_repeating_hermes_pins() -> No
     names = re.findall(pattern, data, re.M)
     blocks = [block for block in re.split(r"\n(?=[A-Za-z0-9_.-]+==)", data) if "==" in block]
 
-    assert {"matplotlib", "pandas", "openpyxl", "numpy"} <= set(names)
+    assert {"matplotlib", "pandas", "openpyxl", "numpy", "python-pptx", "python-docx", "pypdf"} <= set(names)
     assert len(names) == len(blocks) and all("--hash=sha256:" in block for block in blocks)
     assert not set(names) & {name.lower() for name in re.findall(pattern, base, re.M)}
     assert "git+" not in data
@@ -472,3 +472,57 @@ def test_file_read_leaves_out_what_snapshots_leave_out() -> None:
     snapshots = excluded((ROOT / "skill-executor" / "src" / "hermes_snapshots.py").read_text())
     assert ".aurum" in snapshots and ".hermes/config.yaml" in snapshots
     assert excluded((IMAGE / "hermes_relay.py").read_text()) == snapshots
+
+
+def test_inputs_are_moved_in_read_only_and_listed_with_their_hash(relay, tmp_path: Path) -> None:
+    import hashlib
+
+    run, _ = relay
+    staging = tmp_path / ".aurum" / "inputs" / "batch"
+    staging.mkdir(parents=True)
+    (staging / "sales q1.xlsx").write_bytes(b"PK workbook")
+    (staging / "notes.md").write_text("# Notes\n")
+    (staging / "nested").mkdir()
+    stale = tmp_path / ".aurum" / "inputs" / "stale"
+    stale.mkdir()
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "notes.md").write_text("an older version")
+    (inputs / "agent.txt").write_text("the agent's own")
+
+    assert run("inputs-write", str(staging)) == [{"type": "inputs-written", "count": 2}]
+
+    assert not staging.exists() and not stale.exists()
+    assert (inputs / "notes.md").read_text() == "# Notes\n"
+    assert oct((inputs / "sales q1.xlsx").stat().st_mode & 0o777) == "0o444"
+    assert (inputs / "agent.txt").read_text() == "the agent's own"
+    (inputs / "link.csv").symlink_to(tmp_path / ".hermes" / "config.yaml")
+    os.link(inputs / "agent.txt", inputs / "hard.txt")
+    assert run("inputs-list") == [
+        {
+            "type": "inputs",
+            "files": {
+                "notes.md": hashlib.sha256(b"# Notes\n").hexdigest(),
+                "sales q1.xlsx": hashlib.sha256(b"PK workbook").hexdigest(),
+            },
+        }
+    ]
+
+
+def test_inputs_write_takes_only_its_staging_and_replaces_a_linked_folder(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert run("inputs-write", str(elsewhere)) == [{"type": "error", "code": "hermes_inputs_staging_invalid"}]
+
+    staging = tmp_path / ".aurum" / "inputs" / "batch"
+    staging.mkdir(parents=True)
+    (staging / "data.csv").write_text("a,b\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "inputs").symlink_to(outside, target_is_directory=True)
+
+    assert run("inputs-write", str(staging)) == [{"type": "inputs-written", "count": 1}]
+    assert not (tmp_path / "inputs").is_symlink() and (tmp_path / "inputs" / "data.csv").exists()
+    assert list(outside.iterdir()) == []
+    assert run("inputs-list")[0]["files"].keys() == {"data.csv"}
