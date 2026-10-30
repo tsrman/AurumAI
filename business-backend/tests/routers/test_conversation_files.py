@@ -43,7 +43,7 @@ def _app(db: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID) -> FastAPI:
 
 
 async def _conversation_with_file(
-    db: AsyncSession, org: Organization, user: User, *, status: str = "active", name: str = "отчёт Q1.csv"
+    db: AsyncSession, org: Organization, user: User, *, status: str = "active", name: str = "r\u00e9sum\u00e9 Q1.csv"
 ) -> tuple[uuid.UUID, uuid.UUID]:
     conversation = Conversation(org_id=org.id, user_id=user.id, model="m", status=status)
     db.add(conversation)
@@ -105,7 +105,7 @@ async def test_owner_downloads_the_file_as_an_attachment(db, test_org, test_user
     assert response.content == CSV
     assert response.headers["content-type"].startswith("text/csv")
     assert response.headers["content-disposition"] == (
-        "attachment; filename*=UTF-8''%D0%BE%D1%82%D1%87%D1%91%D1%82%20Q1.csv"
+        "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9%20Q1.csv"
     )
     assert response.headers["x-content-type-options"] == "nosniff"
     assert "sandbox" in response.headers["content-security-policy"]

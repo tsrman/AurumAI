@@ -39,7 +39,7 @@ def _zip(*names: str) -> bytes:
         (_zip("xl/workbook.xml"), "a.xlsx", FileKind("application/zip", "zip")),
         (b"a,b\n1,2\n", "data.CSV", FileKind("text/csv", "csv")),
         (b"# Title\n", "notes.md", FileKind("text/markdown", "md")),
-        ('{"ключ": 1}'.encode(), "data.json", FileKind("application/json", "json")),
+        ('{"cl\u00e9": 1}'.encode(), "data.json", FileKind("application/json", "json")),
         (b"plain\ttext\r\n", "script.py", FileKind("text/plain", "txt")),
         (b"no extension", "README", FileKind("text/plain", "txt")),
     ],
@@ -72,7 +72,7 @@ def test_unrecognised_bytes_are_refused(data: bytes, name: str, code: str) -> No
     [
         ("report.pdf", "report.pdf"),
         ("/workspace/out/../../etc/passwd", "passwd.pdf"),
-        ("C:\\Users\\x\\отчёт Q1.xlsx", "отчёт Q1.pdf"),
+        ("C:\\Users\\x\\r\u00e9sum\u00e9 Q1.xlsx", "r\u00e9sum\u00e9 Q1.pdf"),
         ("evil\x00name\x1b.pdf", "evilname.pdf"),
         ("a;b|c`$(rm).pdf", "a_b_c_(rm).pdf"),
         ("...", "file.pdf"),
