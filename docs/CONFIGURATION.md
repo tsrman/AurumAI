@@ -129,7 +129,12 @@ bytes.
 Files attached to an answer (CSV, plain text, Markdown, JSON, PDF, XLSX, DOCX, PPTX
 and ZIP, at most 20 MiB each) are stored next to the images, under `conversation-images/<org>/<conversation>/files/`. Their type is
 recognised from the bytes, never from the name the agent chose, and they are served
-only to the conversation owner and always as a download.
+only to the conversation owner and always as a download. In a Hermes conversation
+the user can upload such files for Hermes's workspace (`POST
+/v1/conversations/<id>/files`, with Hermes enabled and both Hermes capabilities): up
+to ten per message, twenty and 200 MiB per conversation, under
+`conversation-images/<org>/<conversation>/files/uploads/`; one not yet sent can be
+removed.
 
 The same switch also enables image attachments. In Admin UI → Models → Images an
 administrator marks the chat models that accept image input; the chat composer

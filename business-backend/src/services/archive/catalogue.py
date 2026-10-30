@@ -298,12 +298,34 @@ COLUMNS_V3: Catalogue = {
     ],
 }
 
-CATALOGUES: dict[int, Catalogue] = {1: COLUMNS_V1, 2: COLUMNS_V2, 3: COLUMNS_V3}
-CURRENT_VERSION = 3
+# v4 adds the files the user uploads: an origin, and no operation for them.
+COLUMNS_V4: Catalogue = {
+    **COLUMNS_V3,
+    "conversation_files": [
+        ("conversation_id", "uuid", False),
+        ("turn_id", "uuid", True),
+        ("execution_id", "uuid", True),
+        ("operation_id", "uuid", True),
+        ("origin", "str", False),
+        ("name", "str", False),
+        ("storage_key", "str", False),
+        ("content_type", "str", False),
+        ("size_bytes", "int", False),
+        ("sha256", "str", False),
+        ("org_id", "uuid", False),
+        ("id", "uuid", False),
+        ("created_at", "utc", False),
+        ("updated_at", "utc", False),
+    ],
+}
+
+CATALOGUES: dict[int, Catalogue] = {1: COLUMNS_V1, 2: COLUMNS_V2, 3: COLUMNS_V3, 4: COLUMNS_V4}
+CURRENT_VERSION = 4
 # Columns added after an older version. Archives of that version leave them
 # out; they must still hold these defaults, which a restore reinstates.
-OMITTED_DEFAULTS: dict[int, dict[str, dict[str, int]]] = {
+OMITTED_DEFAULTS: dict[int, dict[str, dict[str, int | str]]] = {
     1: {"interaction_turns": {"image_count": 0}},
+    3: {"conversation_files": {"origin": "generated"}},
 }
 
 

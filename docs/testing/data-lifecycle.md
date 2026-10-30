@@ -31,7 +31,8 @@ conversation without attachments never calls RAG. It builds the backend and RAG
 images from the checkout, checks bucket IAM including the image account (Get, Put
 and Delete under `conversation-images/*` only, no listing, no other prefix, no
 archive bucket), prepares an old conversation with a generated image, an edit of it,
-an upload and a CSV file an agent attached (`prepare-data-lifecycle-images.py`), and drives the real data-worker
+an upload, a CSV file an agent attached and one the user uploaded
+(`prepare-data-lifecycle-images.py`), and drives the real data-worker
 image through archive and restore with its operator login, archive account and image
 account. `check-data-lifecycle-images.py` independently verifies rows and bytes
 before, after the purge (platform objects gone, archived copies with the original

@@ -287,3 +287,32 @@ async def test_the_users_own_upload_to_the_turn_is_not_shown_under_the_answer(he
         shown = await ImageRepository(env.org_id).turn_image_ids(db, env.conversation_id, env.user_id, env.turn_id)
 
     assert shown == [generated["imageId"]]
+
+
+async def test_the_users_own_file_upload_is_not_listed_under_the_answer(hermes_env, storage, monkeypatch) -> None:
+    from src.repositories.conversation_file_repository import turn_files
+
+    opened = await hermes_env.open_session()
+    _worker(monkeypatch, ToolWorker(hermes_env, CSV))
+    _, attached = _tool_payload(await _rpc(hermes_env, opened["token"], _call("attach_file", {"path": "a.csv"})))
+    env = hermes_env
+    async with env.sessions() as db:
+        upload = uuid.uuid4()
+        db.add(
+            ConversationFile(
+                id=upload,
+                org_id=env.org_id,
+                conversation_id=env.conversation_id,
+                turn_id=env.turn_id,
+                origin="uploaded",
+                name="input.csv",
+                storage_key=f"conversation-images/{env.org_id}/{env.conversation_id}/files/uploads/{upload}.csv",
+                content_type="text/csv",
+                size_bytes=len(CSV),
+                sha256="a" * 64,
+            )
+        )
+        await db.commit()
+        listed = await turn_files(db, env.org_id, env.conversation_id, env.user_id, env.turn_id)
+
+    assert listed == [attached]

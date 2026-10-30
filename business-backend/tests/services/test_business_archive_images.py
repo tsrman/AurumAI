@@ -225,7 +225,7 @@ async def _file_rows(sessions, org: UUID) -> list[tuple]:  # noqa: ANN001
         return (
             await db.execute(
                 text(
-                    "SELECT id,operation_id,name,storage_key,content_type,size_bytes,sha256 FROM conversation_files WHERE org_id=:o ORDER BY id"
+                    "SELECT id,turn_id,operation_id,origin,name,storage_key,content_type,size_bytes,sha256 FROM conversation_files WHERE org_id=:o ORDER BY id"
                 ),
                 dict(o=org),
             )
@@ -257,6 +257,78 @@ async def test_conversation_files_survive_archive_and_restore(archive_fixture, t
     assert await _file_rows(sessions, org) == before
     assert {key: (platform.root / key).read_bytes() for key in files} == files
     assert platform.exists(images[f"key:{images['generated']}"])
+
+
+UPLOADED_XLSX = b"PK\x03\x04 an uploaded workbook"
+
+
+async def _upload(sessions, platform: LocalPlatformImages, args: dict, *, claimed: bool) -> str:  # noqa: ANN001
+    """A file the user uploaded, claimed by the turn or still unsent."""
+    file_id = uuid4()
+    key = f"conversation-images/{args['o']}/{args['c']}/files/uploads/{file_id}.xlsx"
+    async with sessions() as db:
+        await db.execute(
+            text(
+                "INSERT INTO conversation_files(id,org_id,conversation_id,turn_id,origin,name,storage_key,content_type,size_bytes,sha256) VALUES(:id,:o,:c,:t,'uploaded','sales.xlsx',:key,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',:size,:sha)"
+            ),
+            dict(args, id=file_id, t=args["t"] if claimed else None, key=key, size=len(UPLOADED_XLSX), sha="f" * 64),
+        )
+        await db.commit()
+    platform.put(key, UPLOADED_XLSX)
+    return key
+
+
+async def test_uploaded_files_survive_archive_and_restore(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    args = await _history(sessions, org, conversation)
+    keys = [await _upload(sessions, platform, args, claimed=claimed) for claimed in (True, False)]
+    files = await _files(sessions, platform, args)
+    before = await _file_rows(sessions, org)
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+
+    result = await service.run(org, conversation, apply=True)
+
+    assert result["state"] == "purged" and await _file_rows(sessions, org) == []
+    assert not any(platform.exists(key) for key in [*keys, *files])
+    await service.restore(org, result["archive_id"], apply=True)
+    assert await _file_rows(sessions, org) == before
+    assert all((platform.root / key).read_bytes() == UPLOADED_XLSX for key in keys)
+    async with sessions() as db:
+        origins = await db.scalars(
+            text("SELECT origin FROM conversation_files WHERE org_id=:o ORDER BY origin"), dict(o=org)
+        )
+        assert list(origins) == ["generated", "generated", "uploaded", "uploaded"]
+
+
+async def test_a_version_three_job_refuses_a_conversation_with_uploads(archive_fixture, tmp_path, monkeypatch):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    await _upload(sessions, platform, await _history(sessions, org, conversation), claimed=True)
+    original = service_module.inventory
+
+    async def frozen_as_v3(session, org_id, conversation_id, audit_ids=None, version=None):  # noqa: ANN001, ANN202
+        return await original(session, org_id, conversation_id, audit_ids, version or 3)
+
+    monkeypatch.setattr(service_module, "inventory", frozen_as_v3)
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+    with pytest.raises(ArchiveFormatError, match="archive_version_incompatible"):
+        await service.run(org, conversation, apply=True)
+
+
+async def test_an_upload_key_not_named_after_the_upload_blocks_the_archive(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    await _upload(sessions, platform, await _history(sessions, org, conversation), claimed=True)
+    async with sessions() as db:
+        await db.execute(
+            text("UPDATE conversation_files SET storage_key=:key WHERE org_id=:o"),
+            dict(o=org, key=f"conversation-images/{org}/{conversation}/files/uploads/{uuid4()}.xlsx"),
+        )
+        await db.commit()
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+    with pytest.raises(ArchiveFormatError, match="file_inventory_unknown"):
+        await service.run(org, conversation, apply=False)
 
 
 async def test_files_block_archiving_until_image_storage_is_configured(archive_fixture, tmp_path):
@@ -382,7 +454,7 @@ def test_version_one_parts_stay_readable_and_differ_from_version_two(tmp_path):
     with pytest.raises(ArchiveFormatError, match="schema_mismatch"):
         list(read_rows("interaction_turns", path))
     assert "image_count" not in [name for name, _, _ in COLUMNS_V1["interaction_turns"]]
-    assert "conversation_images" not in COLUMNS_V1 and CURRENT_VERSION == 3
+    assert "conversation_images" not in COLUMNS_V1 and CURRENT_VERSION == 4
 
 
 async def test_a_version_one_job_archives_and_restores(archive_fixture, tmp_path, monkeypatch):
@@ -435,6 +507,7 @@ def test_object_keys_are_bounded_to_their_kind():
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/{image}.webp")
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/uploads/{image}.jpg")
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/files/{image}.xlsx")
+    assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/files/uploads/{image}.csv")
     assert read_limit(f"archives/v1/{org}/{archive}/files/{image}") == IMAGE_OBJECT_LIMIT
     for key in (
         f"documents/{org}/{archive}/{image}.png",

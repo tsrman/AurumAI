@@ -25,7 +25,7 @@ from botocore.exceptions import ClientError
 STATE = Path("/tmp/phaseb-lifecycle-acceptance/images-fixture.json")
 COLUMNS = ("id,org_id,conversation_id,turn_id,execution_id,operation_id,origin,source_image_id,"
            "storage_key,content_type,size_bytes,width,height,prompt,model,created_at,updated_at")
-FILE_COLUMNS = ("id,org_id,conversation_id,turn_id,execution_id,operation_id,name,storage_key,content_type,"
+FILE_COLUMNS = ("id,org_id,conversation_id,turn_id,execution_id,operation_id,origin,name,storage_key,content_type,"
                 "size_bytes,sha256,created_at,updated_at")
 
 
@@ -93,7 +93,7 @@ async def check(stage: str) -> None:
     baseline = state.get("images_baseline")
     if stage == "before":
         if (baseline is not None or identity["lifecycle"] != "active" or identity["archive_id"] is not None
-                or len(rows) != 4 or platform != state["sha256"]):
+                or len(rows) != 5 or platform != state["sha256"]):
             raise ValueError("original_image_fixture_required")
         state["images_baseline"] = {"rows": digest(rows), "generation": identity["generation"]}
         save(state)

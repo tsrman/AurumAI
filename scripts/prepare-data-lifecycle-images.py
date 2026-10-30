@@ -2,7 +2,8 @@
 
 One finished turn with complete execution provenance, a generated image with its
 tool operation, an edit of it (self-reference), a user upload and a CSV file an
-agent attached (its bytes in the conversation's files/ folder). Rows are written
+agent attached (its bytes in the conversation's files/ folder), and a CSV the
+user uploaded (files/uploads/). Rows are written
 under the ordinary app role; execution receipts, which only the operator observer
 writes, under the owner account. Bytes go to the business bucket as the backend's
 own account would put them. A private journal records every identity and digest.
@@ -27,7 +28,7 @@ IMAGES = {
     "edited": b"\x89PNG\r\n\x1a\nlifecycle edited image, a little larger",
     "uploaded": b"\xff\xd8\xfflifecycle uploaded photo",
 }
-FILES = {"report": b"month,revenue\nJan,10\nFeb,12\n"}
+FILES = {"report": b"month,revenue\nJan,10\nFeb,12\n", "upload": b"region,sales\nNorth,10\n"}
 
 
 def history_fixture():
@@ -71,6 +72,7 @@ def new_state(container_id: str) -> dict:
             "edited": f"{prefix}/{operations['edited']}.png",
             "uploaded": f"{prefix}/uploads/{images['uploaded']}.jpg",
             "report": f"{prefix}/files/{operations['report']}.csv",
+            "upload": f"{prefix}/files/uploads/{files['upload']}.csv",
         },
         "sha256": {name: hashlib.sha256(data).hexdigest() for name, data in {**IMAGES, **FILES}.items()},
     }
@@ -130,6 +132,12 @@ async def prepare() -> None:
                 VALUES($1,$2,$3,$4,$5,$6,'report.csv',$7,'text/csv',$8,$9,$10,$10)""",
                 UUID(state["files"]["report"]), org, conversation, turn, execution, UUID(state["operations"]["report"]),
                 state["keys"]["report"], len(FILES["report"]), state["sha256"]["report"], at)
+            # A file the user uploaded for the turn: no operation, named after itself.
+            await owner.execute("""INSERT INTO conversation_files(id,org_id,conversation_id,turn_id,origin,name,
+                storage_key,content_type,size_bytes,sha256,created_at,updated_at)
+                VALUES($1,$2,$3,$4,'uploaded','sales.csv',$5,'text/csv',$6,$7,$8,$8)""",
+                UUID(state["files"]["upload"]), org, conversation, turn, state["keys"]["upload"],
+                len(FILES["upload"]), state["sha256"]["upload"], at)
         async with owner.transaction():
             # Receipts are the operator observer's to write, not the app's.
             await owner.execute("""INSERT INTO conversation_executions(id,org_id,conversation_id,generation,namespace,
@@ -144,7 +152,7 @@ async def prepare() -> None:
         storage.put_object(Bucket=BUCKET, Key=state["keys"][name], Body=data)
     state["prepared"] = True
     save(state)
-    print("Prepared an old conversation with 3 images (generated, edited, uploaded) and a file; private journal saved")
+    print("Prepared an old conversation with 3 images (generated, edited, uploaded) and 2 files (attached, uploaded); private journal saved")
 
 
 if __name__ == "__main__":

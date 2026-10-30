@@ -89,7 +89,8 @@ ORDER_V3 = [
     "conversation_files",
     *ORDER_V2[ORDER_V2.index("conversation_images") + 1 :],
 ]
-ORDERS = {1: ORDER_V1, 2: ORDER_V2, 3: ORDER_V3}
+# v4 changes conversation_files' columns, not the order.
+ORDERS = {1: ORDER_V1, 2: ORDER_V2, 3: ORDER_V3, 4: ORDER_V3}
 ORDER = ORDERS[CURRENT_VERSION]
 VERSION_KEY = "_archive_version"
 _UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -301,12 +302,16 @@ def check_image_key(row: Mapping[str, Any], org: UUID, conversation: UUID | None
 
 
 def check_file_key(row: Mapping[str, Any], org: UUID, conversation: UUID | None) -> None:
-    # As for images: this conversation's files folder, named by the operation.
+    # As for images: this conversation's files folder, named by the operation,
+    # or its uploads folder, named by the upload itself. Rows of version 3
+    # carry no origin; they are all an agent's.
     match = re.fullmatch(
-        rf"conversation-images/{org}/{conversation}/files/({_UUID})\.(csv|txt|md|json|pdf|xlsx|docx|pptx|zip)",
+        rf"conversation-images/{org}/{conversation}/files/(uploads/)?({_UUID})\.(csv|txt|md|json|pdf|xlsx|docx|pptx|zip)",
         row["storage_key"],
     )
-    if match is None or row["operation_id"] is None or match[1] != str(row["operation_id"]):
+    uploaded = row.get("origin", "generated") == "uploaded"
+    owner = row["id"] if uploaded else row["operation_id"]
+    if match is None or bool(match[1]) != uploaded or owner is None or match[2] != str(owner):
         raise ArchiveFormatError("file_inventory_unknown")
 
 

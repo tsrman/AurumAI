@@ -25,6 +25,8 @@ async def turn_files(
             ConversationFile.org_id == org_id,
             ConversationFile.conversation_id == conversation_id,
             ConversationFile.turn_id == turn_id,
+            # The user's own uploads to the turn belong to their message.
+            ConversationFile.origin == "generated",
             InteractionTurn.conversation_id == conversation_id,
             InteractionTurn.owner_id == owner_id,
         )
