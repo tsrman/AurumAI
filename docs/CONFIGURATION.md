@@ -134,7 +134,8 @@ the user can upload such files for Hermes's workspace (`POST
 /v1/conversations/<id>/files`, with Hermes enabled and both Hermes capabilities): up
 to ten per message, twenty and 200 MiB per conversation, under
 `conversation-images/<org>/<conversation>/files/uploads/`; one not yet sent can be
-removed.
+removed. Before each turn tool-worker puts the conversation's sent uploads into the
+sandbox's `/workspace/inputs/`, and the turn's text names their paths.
 
 The same switch also enables image attachments. In Admin UI → Models → Images an
 administrator marks the chat models that accept image input; the chat composer

@@ -39,6 +39,7 @@ import hashlib
 import io
 import ipaddress
 import json
+import re
 import logging
 import secrets
 import tarfile
@@ -84,6 +85,8 @@ _CHUNK = 64 * 1024
 FILE_MAX_BYTES = 20 * 1024 * 1024
 # What the relay may answer for a file it refuses; anything else is a failure.
 FILE_REFUSALS = frozenset({"file_not_found", "file_not_allowed", "file_too_large"})
+# An upload's name in the workspace's inputs folder (business-backend gives it).
+INPUT_NAME = re.compile(r"^[^/\x00]{1,255}$")
 # Written by the platform into every workspace; a snapshot source without it
 # lost its workspace (see DockerHermesSandboxes._retire).
 WORKSPACE_MARKER = ".aurum/proxy"
@@ -770,6 +773,41 @@ class DockerHermesSandboxes:
                     raise HermesSandboxError("hermes_file_failed")
                 return data
         raise HermesSandboxError("hermes_file_failed")
+
+    async def list_inputs(self, session_id: str) -> dict[str, str]:
+        """The uploads the workspace holds, by name, with their SHA-256."""
+        sandbox = self.get_running(session_id)
+        _, output = await self._exec(sandbox, ["hermes-relay", "inputs-list"])
+        lines, _ = bounded_json_lines(output + b"\n", self._settings.hermes_event_line_max_bytes)
+        found = next((line for line in lines if line.get("type") == "inputs"), None)
+        files = found.get("files") if found else None
+        if not isinstance(files, dict):
+            raise HermesSandboxError("hermes_inputs_failed")
+        return {
+            name: digest
+            for name, digest in files.items()
+            if isinstance(name, str)
+            and INPUT_NAME.fullmatch(name)
+            and isinstance(digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", digest)
+        }
+
+    async def write_input(self, session_id: str, name: str, data: bytes) -> None:
+        """Put one upload into the workspace's inputs folder, through a staging
+        folder the relay moves it from, as platform skills."""
+        if not INPUT_NAME.fullmatch(name) or name in (".", "..") or len(name.encode()) > 255:
+            raise HermesSandboxError("hermes_input_invalid")
+        if len(data) > FILE_MAX_BYTES:
+            raise HermesSandboxError("file_too_large")
+        sandbox = self.get_running(session_id)
+        if sandbox.workspace_full:
+            raise HermesSandboxError("hermes_workspace_full")
+        staging = f".aurum/inputs/{secrets.token_hex(16)}"
+        container = await self.docker.containers.get(sandbox.container_id)
+        await container.put_archive("/workspace", _tar({f"{staging}/{name}": data}))  # type: ignore[no-untyped-call]
+        _, output = await self._exec(sandbox, ["hermes-relay", "inputs-write", f"/workspace/{staging}"])
+        if b'"inputs-written"' not in output:
+            raise HermesSandboxError("hermes_inputs_failed")
 
     async def hydrate_skills(
         self, session_id: str, skills: list[PlatformSkill], fetch: Any = None

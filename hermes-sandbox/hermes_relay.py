@@ -26,6 +26,11 @@ the agent can stop the server and answer in its place.
   skills-hydrate DIR replaces the platform skills with those in DIR (placed by
                    skill-executor under .aurum/hydrate, then removed): an
                    empty DIR removes them all
+  inputs-list      the files in the workspace's inputs folder, the user's
+                   uploads, with their SHA-256: regular files with one link
+  inputs-write DIR moves the uploads in DIR (placed by skill-executor under
+                   .aurum/inputs, then removed) into the inputs folder,
+                   read-only, replacing files of the same name
   file-read PATH   a file the agent attaches to its answer, in base64 chunks
                    and a closing line with its size and SHA-256: a regular
                    file in the workspace, reached through no link, outside
@@ -422,6 +427,64 @@ def skills_hydrate(staging: str) -> int:
     return 0
 
 
+INPUTS = os.path.join(WORKSPACE, "inputs")
+INPUTS_MAX = 100
+
+
+def _input_name(name: str) -> bool:
+    return 0 < len(name.encode()) <= 255 and name not in (".", "..") and "/" not in name and "\x00" not in name
+
+
+def inputs_list() -> int:
+    files: dict[str, str] = {}
+    if _is_dir(INPUTS):
+        for entry in sorted(os.scandir(INPUTS), key=lambda item: item.name)[:INPUTS_MAX]:
+            info = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > FILE_MAX_BYTES:
+                continue
+            try:
+                descriptor = os.open(entry.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            except OSError:
+                continue
+            digest = hashlib.sha256()
+            with os.fdopen(descriptor, "rb") as source:
+                while chunk := source.read(FILE_CHUNK):
+                    digest.update(chunk)
+            files[entry.name] = digest.hexdigest()
+    emit("inputs", files=files)
+    return 0
+
+
+def inputs_write(staging: str) -> int:
+    """The inputs folder stays a real directory the platform fills; what the
+    agent wrote there besides the uploads is left alone."""
+    # The agent can replace .aurum itself: nothing is removed through a link.
+    root = os.path.join(STATE, "inputs")
+    if not (_is_dir(STATE) and _is_dir(root) and _is_dir(staging)) or os.path.dirname(os.path.abspath(staging)) != root:
+        emit("error", code="hermes_inputs_staging_invalid")
+        return 3
+    # Staging left by an earlier write that failed would fill the workspace.
+    for entry in os.scandir(root):
+        if entry.path != os.path.abspath(staging):
+            _remove(entry.path)
+    if os.path.lexists(INPUTS) and not _is_dir(INPUTS):
+        os.unlink(INPUTS)
+    os.makedirs(INPUTS, mode=0o755, exist_ok=True)
+    written = 0
+    for entry in os.scandir(staging):
+        if not (_input_name(entry.name) and stat.S_ISREG(entry.stat(follow_symlinks=False).st_mode)):
+            continue
+        target = os.path.join(INPUTS, entry.name)
+        if os.path.lexists(target):
+            _remove(target)
+        os.rename(entry.path, target)
+        os.chmod(target, 0o444)
+        written += 1
+    _remove(staging)
+    emit("inputs-written", count=written)
+    return 0
+
+
 def active() -> int:
     runs = os.path.join(STATE, "runs")
     try:
@@ -547,13 +610,17 @@ def main(argv: list[str]) -> int:
         return skills_read()
     if command == "active" and len(argv) == 1:
         return active()
+    if command == "inputs-list" and len(argv) == 1:
+        return inputs_list()
+    if command == "inputs-write" and len(argv) == 2:
+        return inputs_write(argv[1])
     if command == "file-read" and len(argv) == 2:
         return file_read(argv[1])
     if command == "stop" and len(argv) == 2:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|skills-hydrate DIR|file-read PATH|active", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|skills-hydrate DIR|inputs-list|inputs-write DIR|file-read PATH|active", file=sys.stderr)
     return 2
 
 

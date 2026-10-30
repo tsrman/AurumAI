@@ -157,6 +157,17 @@ async def test_a_turn_the_model_provider_refused_says_so() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_turn_whose_files_never_reached_the_sandbox_says_so() -> None:
+    session = Session({"status": "failed", "error": "hermes_inputs_unavailable"})
+
+    _, events, _ = await _turn(session, _message())
+
+    message_end = next(data for name, data in events if name == "message-end")
+    assert "files you attached could not be put into Hermes Agent's workspace" in message_end["content"]
+    assert message_end["content"].endswith("(hermes_inputs_unavailable)")
+
+
+@pytest.mark.asyncio
 async def test_cancelling_a_hermes_turn_cancels_it_in_the_session() -> None:
     session = Session(None)
 

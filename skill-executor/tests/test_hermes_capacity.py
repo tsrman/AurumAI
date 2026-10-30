@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -416,6 +417,38 @@ async def test_a_file_comes_back_only_when_its_chunks_match_the_closing_line(mak
             with pytest.raises(HermesSandboxError) as failed:
                 await sandboxes.read_file(_session(1), "out/data.csv")
             assert failed.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_inputs_are_listed_by_hash_and_written_through_a_staging_folder(make, monkeypatch) -> None:
+    sandboxes, daemon, _, _ = make()
+    await _create(sandboxes, 1)
+    commands: list[list[str]] = []
+    digest = "a" * 64
+    answers = iter(
+        [
+            json.dumps({"type": "inputs", "files": {"sales.xlsx": digest, "odd": "not a hash", "a/b": digest}}).encode(),
+            b'{"type":"inputs-written","count":1}',
+        ]
+    )
+
+    async def exec_(sandbox: Any, cmd: list[str]) -> tuple[int, bytes]:
+        commands.append(cmd)
+        return 0, next(answers)
+
+    monkeypatch.setattr(sandboxes, "_exec", exec_)
+
+    assert await sandboxes.list_inputs(_session(1)) == {"sales.xlsx": digest}
+    await sandboxes.write_input(_session(1), "sales q1.xlsx", b"PK workbook")
+
+    assert commands[0] == ["hermes-relay", "inputs-list"]
+    assert commands[1][:2] == ["hermes-relay", "inputs-write"] and commands[1][2].startswith("/workspace/.aurum/inputs/")
+    [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
+    assert b"PK workbook" in archive and b"sales q1.xlsx" in archive
+    for name in ("../escape", "a/b", ".."):
+        with pytest.raises(HermesSandboxError) as invalid:
+            await sandboxes.write_input(_session(1), name, b"x")
+        assert invalid.value.code == "hermes_input_invalid"
 
 
 @pytest.mark.asyncio

@@ -3,3 +3,6 @@
 matplotlib
 pandas
 openpyxl
+python-pptx
+pypdf
+python-docx

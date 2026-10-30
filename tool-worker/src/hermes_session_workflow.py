@@ -200,12 +200,21 @@ class HermesSessionWorkflow:
 
     async def _hydrate(self, turn: HermesTurn, session_id: str) -> None:
         """Not best effort: a sandbox whose platform skills cannot be brought
-        up to date, or cleared, does not run the turn."""
+        up to date, or cleared, does not run the turn, nor one that lacks the
+        files the user gave it, since the turn's text names them."""
         if workflow.patched("hermes-platform-skills"):
             await workflow.execute_activity(
                 "hermes_hydrate_skills",
                 args=(await self._token(turn.parent_task_queue), session_id),
                 start_to_close_timeout=timedelta(minutes=6),
+                retry_policy=_RETRY,
+                result_type=dict,
+            )
+        if workflow.patched("hermes-inputs"):
+            await workflow.execute_activity(
+                "hermes_sync_inputs",
+                args=(await self._token(turn.parent_task_queue), session_id),
+                start_to_close_timeout=timedelta(minutes=10),
                 retry_policy=_RETRY,
                 result_type=dict,
             )

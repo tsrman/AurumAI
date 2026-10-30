@@ -58,6 +58,8 @@ EXPECTED_INTERNAL_ROUTES = {
     ("hermes_internal", "/hermes/sessions/{session_id}/turn", "DELETE"),
     ("hermes_internal", "/hermes/sessions/{session_id}/close", "POST"),
     ("hermes_internal", "/hermes/files/{operation_id}", "POST"),
+    ("hermes_internal", "/hermes/inputs", "GET"),
+    ("hermes_internal", "/hermes/inputs/{file_id}/content", "GET"),
 }
 
 EXPECTED_HERMES_ROUTES = {
