@@ -527,7 +527,7 @@ class ArchiveService:
             async with self.session(org) as session:
                 rows = (
                     await session.execute(
-                        select(model.id, model.operation_id, model.storage_key, model.size_bytes).where(
+                        select(model.id, model.operation_id, model.origin, model.storage_key, model.size_bytes).where(
                             model.org_id == org, model.conversation_id == conversation
                         )
                     )

@@ -33,6 +33,7 @@ from src.schemas.chat import (
     UploadedImageResponse,
 )
 from src.schemas.conversation import (
+    AttachedFile,
     ConversationCreate,
     ConversationUpdate,
     ConversationResponse,
@@ -51,6 +52,8 @@ from src.services.completion_stream import (
 from src.services.conversation_attachments import attach_file
 from src.services.image_content import ImageContentError
 from src.services.image_tools import organization_image_models, recent_conversation_images
+from src.services.conversation_files import MAX_FILE_BYTES, FileRejected
+from src.services.file_uploads import FileUploadError, delete_unclaimed_file, store_uploaded_file
 from src.services.image_uploads import (
     ImageUploadError,
     check_unclaimed_uploads,
@@ -1417,6 +1420,65 @@ async def delete_unsent_conversation_image(
     except Exception:
         # The row is gone, so nothing references the object any more.
         logger.warning("unsent image object not deleted", exc_info=True)
+
+
+@router.post("/conversations/{conversation_id}/files", status_code=201)
+async def upload_conversation_file(
+    conversation_id: str,
+    file: UploadFile = File(...),
+    user: UserInfo = Depends(require_capability(Capability.CHAT_SEND)),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[AttachedFile]:
+    """Store a file the user attaches to their next message for Hermes
+    Agent's workspace; its type comes from its bytes."""
+    if not settings.HERMES_ENABLED:
+        raise HTTPException(status_code=403, detail="File uploads need Hermes Agent")
+    try:
+        await require_hermes_capabilities(session, authorization_subject(user))
+    except HermesAccessDenied as exc:
+        raise HTTPException(status_code=403, detail="File uploads need Hermes Agent") from exc
+    conv = await _get_owned_conversation(session, conversation_id, user, write=True)
+    data = await file.read(MAX_FILE_BYTES + 1)
+    try:
+        uploaded = await store_uploaded_file(
+            session, object_storage, conv.org_id, conv.id, file.filename or "file", data
+        )
+    except (FileRejected, FileUploadError) as exc:
+        status_code = (
+            status.HTTP_409_CONFLICT if exc.code == "file_limit" else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        raise HTTPException(status_code=status_code, detail={"code": exc.code}) from exc
+    await session.commit()
+    return ApiResponse(
+        data=AttachedFile(
+            fileId=str(uploaded.id),
+            name=uploaded.name,
+            contentType=uploaded.content_type,
+            sizeBytes=uploaded.size_bytes,
+        ),
+        meta=_meta(),
+    )
+
+
+@router.delete("/conversations/{conversation_id}/files/{file_id}", status_code=204)
+async def delete_unsent_conversation_file(
+    conversation_id: str,
+    file_id: uuid.UUID,
+    user: UserInfo = Depends(get_current_user),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> None:
+    """Discard an upload the user removed before sending. Files a message
+    already carries stay part of the conversation."""
+    conv = await _get_owned_conversation(session, conversation_id, user, write=True)
+    storage_key = await delete_unclaimed_file(session, conv.org_id, conv.id, file_id)
+    if storage_key is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    await session.commit()
+    try:
+        await object_storage.delete(storage_key)
+    except Exception:
+        # The row is gone, so nothing references the object any more.
+        logger.warning("unsent file object not deleted", exc_info=True)
 
 
 class LifecycleExecutionRequest(BaseModel):

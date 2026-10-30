@@ -1,8 +1,10 @@
-"""Files an agent attached to its answer: spreadsheets, documents, data.
+"""Files of a conversation: spreadsheets, documents, data.
 
-Bytes live in object storage under ``storage_key``, in the conversation's
-``files/`` folder; the row records the durable tool operation that attached
-it. Pictures become conversation images instead.
+An agent attaches one to its answer (origin "generated"): the row records the
+durable tool operation, and the bytes live in the conversation's ``files/``
+folder. The user uploads one for Hermes Agent's workspace (origin
+"uploaded"): no operation, its user message claims it by setting the turn,
+and the bytes live in ``files/uploads/``. Pictures are conversation images.
 """
 
 import uuid
@@ -58,12 +60,20 @@ class ConversationFile(OrgScopedModel):
         ),
         CheckConstraint("size_bytes > 0", name="ck_conversation_file_size"),
         CheckConstraint("length(name) BETWEEN 1 AND 255", name="ck_conversation_file_name"),
+        CheckConstraint("origin IN ('generated','uploaded')", name="ck_conversation_file_origin"),
+        CheckConstraint(
+            "(origin = 'generated' AND turn_id IS NOT NULL AND execution_id IS NOT NULL "
+            "AND operation_id IS NOT NULL) OR (origin = 'uploaded' AND execution_id IS NULL "
+            "AND operation_id IS NULL)",
+            name="ck_conversation_file_origin_operation",
+        ),
     )
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    turn_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    execution_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    operation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    operation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    origin: Mapped[str] = mapped_column(Text, nullable=False, server_default="generated")
     name: Mapped[str] = mapped_column(Text, nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
