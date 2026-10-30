@@ -16,11 +16,16 @@ import { useAttachFile, useDocuments } from "@/hooks/useDocuments";
 import { useTranslations } from "next-intl";
 import { useErrorMessage } from "@/lib/errors";
 import { deleteConversationImage, uploadConversationImage } from "@/lib/images-api";
+import { deleteConversationFile, uploadConversationFile, type AttachedFile } from "@/lib/files-api";
 
 /** Match the backend's validated image formats and IMAGES_UPLOAD_MAX_BYTES. */
 const IMAGE_SUFFIXES = [".png", ".jpg", ".jpeg", ".webp"] as const;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGES_PER_MESSAGE = 4;
+/** Files Hermes Agent works on in its workspace (business-backend's conversation file types). */
+const HERMES_SUFFIXES = [".xlsx", ".csv", ".txt", ".md", ".json", ".pdf", ".docx", ".pptx", ".zip"] as const;
+const MAX_HERMES_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_FILES_PER_MESSAGE = 10;
 
 interface PendingImage {
   imageId: string;
@@ -33,7 +38,8 @@ export interface ComposerProps {
     text: string,
     workflowId?: string,
     imageIds?: string[],
-    agent?: ChatAgentId
+    agent?: ChatAgentId,
+    files?: AttachedFile[]
   ) => void;
   isStreaming?: boolean;
   onStop?: () => void;
@@ -105,6 +111,9 @@ export function Composer({
   const [attachedKnowledgeBaseId, setAttachedKnowledgeBaseId] = useState<string | null>(null);
   // Uploaded images waiting for the next message.
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  // Files for Hermes Agent's workspace, waiting for the next message.
+  const [pendingFiles, setPendingFiles] = useState<AttachedFile[]>([]);
+  const hermes = agent === "hermes";
   const previewUrlsRef = useRef<string[]>([]);
   useEffect(() => {
     const urls = previewUrlsRef.current;
@@ -120,6 +129,7 @@ export function Composer({
     setAttachedKnowledgeBaseId(null);
     setAttachError(null);
     setPendingImages([]);
+    setPendingFiles([]);
   }
 
   const attachFile = useAttachFile();
@@ -142,9 +152,21 @@ export function Composer({
       const rejections: string[] = [];
       const accepted: File[] = [];
       const images: File[] = [];
+      const workspace: File[] = [];
       for (const file of files) {
         const name = file.name.toLowerCase();
-        if (IMAGE_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
+        if (hermes) {
+          // Hermes works on files in its workspace instead of searching them.
+          if (!HERMES_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
+            rejections.push(t("unsupported", { file: file.name }));
+          } else if (file.size > MAX_HERMES_FILE_BYTES) {
+            rejections.push(t("tooLarge", { file: file.name }));
+          } else if (pendingFiles.length + workspace.length >= MAX_FILES_PER_MESSAGE) {
+            rejections.push(t("tooManyFiles", { max: MAX_FILES_PER_MESSAGE }));
+          } else {
+            workspace.push(file);
+          }
+        } else if (IMAGE_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
           if (!imagesAllowed) {
             rejections.push(t("imagesNotAccepted", { file: file.name }));
           } else if (file.size > MAX_IMAGE_BYTES) {
@@ -165,7 +187,7 @@ export function Composer({
 
       const failures: string[] = [...rejections];
 
-      if (accepted.length > 0 || images.length > 0) {
+      if (accepted.length > 0 || images.length > 0 || workspace.length > 0) {
         try {
           // Resolved once for the whole batch — ensureConversationId creates
           // a conversation on first call, and every file in this selection
@@ -186,6 +208,19 @@ export function Composer({
                 ...prev,
                 { imageId: uploaded.imageId, name: file.name, previewUrl },
               ]);
+            } catch (err) {
+              failures.push(
+                t("attachFailedFor", {
+                  file: file.name,
+                  reason: err instanceof Error ? errorMessage(err) : t("attachFailedReason"),
+                })
+              );
+            }
+          }
+          for (const file of workspace) {
+            try {
+              const uploaded = await uploadConversationFile(id, file);
+              setPendingFiles((prev) => [...prev, uploaded]);
             } catch (err) {
               failures.push(
                 t("attachFailedFor", {
@@ -224,6 +259,8 @@ export function Composer({
       errorMessage,
       imagesAllowed,
       pendingImages.length,
+      hermes,
+      pendingFiles.length,
     ]
   );
 
@@ -280,6 +317,9 @@ export function Composer({
         pendingImages.map((image) => image.imageId)
       );
       setPendingImages([]);
+    } else if (hermes && pendingFiles.length > 0) {
+      onSend?.(trimmed, undefined, undefined, agent, pendingFiles);
+      setPendingFiles([]);
     } else if (!trimmed) {
       return;
     } else if (workflowId) {
@@ -295,7 +335,7 @@ export function Composer({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, onSend, isStreaming, isDisabled, workflowId, agent, pendingImages, imagesAllowed]);
+  }, [text, onSend, isStreaming, isDisabled, workflowId, agent, pendingImages, imagesAllowed, hermes, pendingFiles]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -309,15 +349,38 @@ export function Composer({
     !isStreaming &&
     !isDisabled &&
     !imagesBlocked &&
-    (text.trim().length > 0 || pendingImages.length > 0);
+    (text.trim().length > 0 || pendingImages.length > 0 || (hermes && pendingFiles.length > 0));
 
   return (
     <div className="flex-none px-6 pb-4 pt-1.5">
       <div className="mx-auto max-w-[824px]">
         {(attachedDocuments && attachedDocuments.length > 0) ||
         attachError ||
-        pendingImages.length > 0 ? (
+        pendingImages.length > 0 ||
+        pendingFiles.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-2">
+            {pendingFiles.map((file) => (
+              <span
+                key={file.fileId}
+                className="inline-flex items-center gap-1.5 rounded-full border border-aurum-border bg-aurum-surface px-2.5 py-1 text-xs text-aurum-text-2"
+              >
+                <Paperclip className="h-3 w-3" />
+                {file.name}
+                <button
+                  type="button"
+                  aria-label={t("removeFile", { file: file.name })}
+                  onClick={() => {
+                    setPendingFiles((prev) => prev.filter((item) => item.fileId !== file.fileId));
+                    // Best effort: a leftover upload is harmless, just unused.
+                    if (conversationId) {
+                      void deleteConversationFile(conversationId, file.fileId).catch(() => undefined);
+                    }
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
             {pendingImages.map((image) => (
               <span
                 key={image.imageId}
@@ -400,7 +463,12 @@ export function Composer({
               type="file"
               multiple
               aria-label={t("chooseFile")}
-              accept={(imagesAllowed ? [...ACCEPTED_SUFFIXES, ...IMAGE_SUFFIXES] : ACCEPTED_SUFFIXES).join(",")}
+              accept={(hermes
+                ? HERMES_SUFFIXES
+                : imagesAllowed
+                  ? [...ACCEPTED_SUFFIXES, ...IMAGE_SUFFIXES]
+                  : ACCEPTED_SUFFIXES
+              ).join(",")}
               className="hidden"
               onChange={handleFileSelected}
             />

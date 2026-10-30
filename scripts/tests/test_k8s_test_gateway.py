@@ -1339,3 +1339,28 @@ def test_hermes_files_marker_makes_attaches_and_reports_step_by_step() -> None:
     assert 'HERMES_FILES_DONE: {\\"result\\": 1} | {\\"result\\": 2} | {\\"result\\": 3}' in done.text
     unoffered = client.post("/v1/chat/completions", json={"messages": messages[:3], "tools": tools[:1]})
     assert "HERMES_FILES_NOT_OFFERED:mcp__aurum__attach_file" in unoffered.text
+
+
+def test_hermes_inputs_marker_pivots_the_uploads_then_attaches_and_reports() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": name}} for name in ("terminal", "mcp__aurum__attach_file")]
+    # The note the backend adds names the uploads; the marker is the user's.
+    messages: list[dict] = [{"role": "user", "content": "HERMES_INPUTS\n\n[The user attached these files; ...]"}]
+    calls = []
+    for step in range(3):
+        response = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+        [call] = json.loads(response.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+        calls.append((call["function"]["name"], json.loads(call["function"]["arguments"])))
+        messages += [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": call["id"]}]},
+            {"role": "tool", "tool_call_id": call["id"], "content": f"result {step}"},
+        ]
+
+    assert "glob.glob('/workspace/inputs/*.xlsx')" in calls[0][1]["command"]
+    assert "deck.save('/workspace/out/report.pptx')" in calls[0][1]["command"]
+    assert [arguments.get("path") for _, arguments in calls[1:]] == ["/workspace/out/pivot.xlsx", "/workspace/out/report.pptx"]
+    done = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+    assert "HERMES_INPUTS_DONE: result 0 | result 1 | result 2" in done.text

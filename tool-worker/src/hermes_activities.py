@@ -330,6 +330,16 @@ async def hermes_hydrate_skills(token: str, session_id: str) -> dict[str, int]:
     raise _failure(code)
 
 
+# A sandbox to replace keeps its code, which the session workflow acts on; any
+# other failure is the one reason the user is told about their files.
+_KEPT_INPUT_CODES = frozenset({"hermes_sandbox_not_found", "hermes_sandbox_stopped", "hermes_turn_inactive"})
+
+
+def _inputs_code(response: httpx.Response) -> str:
+    code = _code(response, "hermes_inputs_unavailable")
+    return code if code in _KEPT_INPUT_CODES else "hermes_inputs_unavailable"
+
+
 @activity.defn(name="hermes_sync_inputs")
 async def hermes_sync_inputs(token: str, session_id: str) -> dict[str, int]:
     """Put the files the user gave the conversation into the sandbox's inputs
@@ -338,7 +348,7 @@ async def hermes_sync_inputs(token: str, session_id: str) -> dict[str, int]:
     the files stay out of the workflow's history."""
     listed = await _backend("GET", "/inputs", token)
     if listed.status_code != 200:
-        raise _failure(_code(listed, "hermes_inputs_unavailable"))
+        raise _failure(_inputs_code(listed))
     try:
         wanted = [
             (str(item["fileId"]), str(item["name"]), int(item["sizeBytes"]), str(item["sha256"]))
@@ -350,7 +360,7 @@ async def hermes_sync_inputs(token: str, session_id: str) -> dict[str, int]:
         return {"written": 0, "kept": 0}
     held = await _executor("GET", f"/sandboxes/{session_id}/inputs")
     if held.status_code != 200:
-        raise _failure(_code(held, "hermes_inputs_unavailable"))
+        raise _failure(_inputs_code(held))
     present = held.json().get("files") or {}
     written = 0
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -362,7 +372,7 @@ async def hermes_sync_inputs(token: str, session_id: str) -> dict[str, int]:
                 headers={"Authorization": f"Bearer {token}"},
             )
             if content.status_code != 200:
-                raise _failure(_code(content, "hermes_inputs_unavailable"))
+                raise _failure(_inputs_code(content))
             data = content.content
             if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
                 raise _failure("hermes_inputs_unavailable")
@@ -373,7 +383,7 @@ async def hermes_sync_inputs(token: str, session_id: str) -> dict[str, int]:
                 headers={"Content-Type": "application/octet-stream"},
             )
             if stored.status_code != 204:
-                raise _failure(_code(stored, "hermes_inputs_unavailable"))
+                raise _failure(_inputs_code(stored))
             written += 1
     return {"written": written, "kept": len(wanted) - written}
 

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { expect, test, type BrowserContext } from "@playwright/test";
+import { FEBRUARY_XLSX, JANUARY_XLSX } from "./fixtures/workbooks";
 import {
   ADMIN_UI_URL,
   BUSINESS_URL,
@@ -19,8 +20,10 @@ import {
  * HERMES_E2E_REAL_LLM=true): nothing is scripted, so every check rests on an
  * effect the model cannot produce without the tool. It hashes a random value
  * in its terminal (the test computes the same hash), attaches a chart and a
- * CSV it made with matplotlib, asks through a question
- * card and uses the answer, saves a random value to the member's memory, and
+ * CSV it made with matplotlib, builds a pivot workbook and a deck from two
+ * workbooks the member gives it (its answer is the pivot's total), asks
+ * through a question card and uses the answer, saves a random value to the
+ * member's memory, and
  * writes a skill that waits for review. Opt-in with E2E_USE_REAL_LLM=true; the
  * model (E2E_HERMES_MODEL) needs native tool calling. The organization's
  * settings are restored, the memory is cleared and the draft withdrawn.
@@ -90,6 +93,25 @@ test.describe("Hermes Agent with a real model", () => {
       );
       await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
       await expect(member.getByRole("list", { name: "Attached files" }).last()).toContainText("sales.csv");
+
+      // The member's workbooks: a pivot workbook and a deck the model builds from them.
+      const workbook = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      await member.locator('input[type="file"]').setInputFiles([
+        { name: "january.xlsx", mimeType: workbook, buffer: Buffer.from(JANUARY_XLSX, "base64") },
+        { name: "february.xlsx", mimeType: workbook, buffer: Buffer.from(FEBRUARY_XLSX, "base64") },
+      ]);
+      await expect(member.getByRole("button", { name: "Remove february.xlsx" })).toBeVisible({ timeout: 30_000 });
+      await ask(
+        member,
+        "Using pandas in your terminal, build a pivot table of sales by region and month from the two workbooks I " +
+          "attached, save it as /workspace/pivot.xlsx, and make a PowerPoint deck /workspace/sales.pptx with a bar " +
+          "chart of it (python-pptx and matplotlib are installed). Give me both files with your attach_file tool, " +
+          "then reply with only the total sales of the North region as a number.",
+        /\b22\b/u
+      );
+      const made = member.getByRole("list", { name: "Attached files" }).last();
+      await expect(made).toContainText(".xlsx");
+      await expect(made).toContainText(".pptx");
 
       // A question card the model asks through clarify, and the answer it uses.
       await expect(member.getByLabel("Message")).toBeEnabled({ timeout: TURN_TIMEOUT });

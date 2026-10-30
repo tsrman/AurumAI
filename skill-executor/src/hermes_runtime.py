@@ -196,10 +196,13 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
     }
 
 
-def _tar(files: dict[str, bytes]) -> bytes:
+def _tar(files: dict[str, bytes], parents: tuple[str, ...] = ()) -> bytes:
+    """Files for the sandbox, owned by its user. Docker creates a directory the
+    archive leaves out as root, so `parents` names the ones the relay must be
+    able to change."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
-        directories = sorted({path.rsplit("/", 1)[0] for path in files if "/" in path})
+        directories = sorted({*parents, *(path.rsplit("/", 1)[0] for path in files if "/" in path)})
         for directory in directories:
             info = tarfile.TarInfo(directory)
             info.type, info.mode, info.uid, info.gid = tarfile.DIRTYPE, 0o700, SANDBOX_UID, SANDBOX_UID
@@ -804,7 +807,9 @@ class DockerHermesSandboxes:
             raise HermesSandboxError("hermes_workspace_full")
         staging = f".aurum/inputs/{secrets.token_hex(16)}"
         container = await self.docker.containers.get(sandbox.container_id)
-        await container.put_archive("/workspace", _tar({f"{staging}/{name}": data}))  # type: ignore[no-untyped-call]
+        # The relay removes staging folders from .aurum/inputs, so it must own it.
+        archive = _tar({f"{staging}/{name}": data}, parents=(".aurum/inputs",))
+        await container.put_archive("/workspace", archive)  # type: ignore[no-untyped-call]
         _, output = await self._exec(sandbox, ["hermes-relay", "inputs-write", f"/workspace/{staging}"])
         if b'"inputs-written"' not in output:
             raise HermesSandboxError("hermes_inputs_failed")

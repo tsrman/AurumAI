@@ -445,6 +445,13 @@ async def test_inputs_are_listed_by_hash_and_written_through_a_staging_folder(ma
     assert commands[1][:2] == ["hermes-relay", "inputs-write"] and commands[1][2].startswith("/workspace/.aurum/inputs/")
     [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
     assert b"PK workbook" in archive and b"sales q1.xlsx" in archive
+    import io as _io
+    import tarfile as _tarfile
+
+    with _tarfile.open(fileobj=_io.BytesIO(archive)) as unpacked:
+        owners = {member.name: (member.uid, member.isdir()) for member in unpacked.getmembers()}
+    # Docker would create a folder the archive leaves out as root, which the relay could not change.
+    assert owners[".aurum/inputs"] == (10001, True)
     for name in ("../escape", "a/b", ".."):
         with pytest.raises(HermesSandboxError) as invalid:
             await sandboxes.write_input(_session(1), name, b"x")

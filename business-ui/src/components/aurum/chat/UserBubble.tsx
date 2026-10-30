@@ -1,4 +1,5 @@
 import type { UserMessage } from "@/types/aurum";
+import { ConversationFiles } from "./ConversationFiles";
 import { ConversationImages } from "./ConversationImages";
 
 export interface UserBubbleProps {
@@ -12,6 +13,11 @@ export function UserBubble({ message }: UserBubbleProps) {
       {images.length > 0 ? (
         <div className="w-full max-w-xs">
           <ConversationImages imageIds={images} variant="attached" />
+        </div>
+      ) : null}
+      {message.files && message.files.length > 0 ? (
+        <div className="w-full max-w-md">
+          <ConversationFiles files={message.files} variant="attached" />
         </div>
       ) : null}
       {message.content ? (

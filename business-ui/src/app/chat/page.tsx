@@ -12,6 +12,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useAppShell } from "@/hooks/useAppShell";
 import { useTranslations } from "next-intl";
 import type { ChatAgentId } from "@/lib/chat-api";
+import type { AttachedFile } from "@/lib/files-api";
 
 export default function ChatPage() {
   const t = useTranslations("chat");
@@ -45,10 +46,11 @@ export default function ChatPage() {
       text: string,
       workflowId?: string,
       imageIds?: string[],
-      agent?: ChatAgentId
+      agent?: ChatAgentId,
+      files?: AttachedFile[]
     ) => {
       if (admissionPending) return;
-      send(text, workflowId, imageIds, agent);
+      send(text, workflowId, imageIds, agent, files);
     },
     [admissionPending, send]
   );

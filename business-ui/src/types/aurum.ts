@@ -76,6 +76,8 @@ export interface UserMessage {
   content: string;
   // Ids of images the user attached to this message.
   images?: string[];
+  // Files the user gave Hermes Agent with this message.
+  files?: AttachedFile[];
   createdAt?: string;
 }
 

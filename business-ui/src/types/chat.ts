@@ -12,6 +12,8 @@ export interface ChatMessage {
   model?: string;
   // Uploaded image ids; the backend accepts them on the user message only.
   imageIds?: string[];
+  // Uploaded file ids, for Hermes Agent's workspace; user messages only.
+  fileIds?: string[];
 }
 
 export interface ConversationResponse {

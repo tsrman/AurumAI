@@ -46,7 +46,7 @@ test("authenticated users cannot send an empty model while the catalog loads", (
   expect(input).not.toBeDisabled();
   fireEvent.change(input, { target: { value: "First message" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  expect(send).toHaveBeenCalledWith("First message", undefined, undefined, undefined);
+  expect(send).toHaveBeenCalledWith("First message", undefined, undefined, undefined, undefined);
 });
 
 test("suggestions wait for a selected model and become usable when it arrives", () => {
@@ -58,5 +58,5 @@ test("suggestions wait for a selected model and become usable when it arrives", 
   view.rerender(<Page />);
   fireEvent.click(screen.getByRole("button", { name: prompt }));
   expect(send).toHaveBeenCalledOnce();
-  expect(send).toHaveBeenCalledWith(prompt, undefined, undefined, undefined);
+  expect(send).toHaveBeenCalledWith(prompt, undefined, undefined, undefined, undefined);
 });

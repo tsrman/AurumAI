@@ -76,13 +76,19 @@ function FileCard({ conversationId, file }: { conversationId: string; file: Atta
   );
 }
 
-/** Files an answer's agent attached, downloaded with the user's session. */
-export function ConversationFiles({ files }: { files: AttachedFile[] }) {
+/** Files of a conversation (an answer's or the user's own), downloaded with the user's session. */
+export function ConversationFiles({
+  files,
+  variant = "generated",
+}: {
+  files: AttachedFile[];
+  variant?: "generated" | "attached";
+}) {
   const t = useTranslations("chat.files");
   const { activeConversationId } = useAppShell();
   if (!activeConversationId || files.length === 0) return null;
   return (
-    <ul aria-label={t("label")} className="flex max-w-md flex-col gap-2">
+    <ul aria-label={t(variant === "attached" ? "attachedLabel" : "label")} className="flex max-w-md flex-col gap-2">
       {files.map((file) => (
         <FileCard key={file.fileId} conversationId={activeConversationId} file={file} />
       ))}

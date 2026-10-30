@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type BrowserContext } from "@playwright/test";
+import { FEBRUARY_XLSX, JANUARY_XLSX } from "./fixtures/workbooks";
 import {
   ADMIN_UI_URL,
   BUSINESS_URL,
@@ -24,7 +25,8 @@ import {
  * clears it; and finds a skill it wrote waiting for review. The administrator
  * reads the draft's files and approves it, and the member's next turn has the
  * skill in the sandbox; Hermes attaches a chart and a CSV it made in its
- * terminal, which the member sees and downloads; a provider out of quota ends
+ * terminal, which the member sees and downloads, and builds a pivot workbook
+ * and a deck from two workbooks the member gives it; a provider out of quota ends
  * a turn with a reason the member can act on. The organization's capabilities, model grant and
  * Hermes settings are restored and the approved skill is removed.
  */
@@ -139,6 +141,42 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
         timeout: 30_000,
       });
       await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
+
+      // Files the member gives Hermes: two workbooks into its workspace, a
+      // pivot workbook and a deck back, with the pivot's totals from the uploads.
+      const workbook = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      // After the reload the composer takes Hermes from the conversation once it has loaded.
+      await expect(member.getByRole("button", { name: "Choose workflow" })).toHaveText(/Hermes Agent/, {
+        timeout: 30_000,
+      });
+      await member.locator('input[type="file"]').setInputFiles([
+        { name: "january.xlsx", mimeType: workbook, buffer: Buffer.from(JANUARY_XLSX, "base64") },
+        { name: "february.xlsx", mimeType: workbook, buffer: Buffer.from(FEBRUARY_XLSX, "base64") },
+      ]);
+      await expect(member.getByRole("button", { name: "Remove february.xlsx" })).toBeVisible({ timeout: 30_000 });
+      await ask(member, "HERMES_INPUTS: build a pivot and a deck", "PIVOT_TOTALS:North=22;South=16");
+      const given = member.getByRole("list", { name: "Your files" }).last();
+      await expect(given).toContainText("january.xlsx");
+      await expect(given).toContainText("february.xlsx");
+      const made = member.getByRole("list", { name: "Attached files" }).last();
+      await expect(made).toContainText("pivot.xlsx");
+      await expect(made).toContainText("report.pptx");
+      for (const [name, entry] of [
+        ["pivot.xlsx", "xl/workbook.xml"],
+        ["report.pptx", "ppt/slides/slide2.xml"],
+      ] as const) {
+        const downloading = member.waitForEvent("download");
+        await made.getByRole("button", { name: `Download ${name}` }).click();
+        const downloaded = await downloading;
+        expect(downloaded.suggestedFilename()).toBe(name);
+        // Zip entry names are stored as they are in each local header.
+        expect((await readFile((await downloaded.path())!)).includes(Buffer.from(entry))).toBe(true);
+      }
+      await member.reload();
+      await expect(member.getByRole("list", { name: "Your files" }).last()).toContainText("february.xlsx", {
+        timeout: 30_000,
+      });
+      await expect(member.getByRole("list", { name: "Attached files" }).last()).toContainText("report.pptx");
 
       // An agent definition can be a Hermes Agent, for workflow nodes, on the
       // organization's Hermes model and without tools of its own.

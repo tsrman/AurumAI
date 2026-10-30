@@ -276,7 +276,9 @@
       "imageTooLarge": "Images must be at most 10 MB: {file}",
       "tooManyImages": "At most {max} images per message",
       "removeImage": "Remove {file}",
-      "modelRejectsImages": "The selected model does not accept images. Pick a vision model or a workflow, or remove the images."
+      "modelRejectsImages": "The selected model does not accept images. Pick a vision model or a workflow, or remove the images.",
+      "tooManyFiles": "Attach at most {max} files to a message.",
+      "removeFile": "Remove {file}"
     },
     "runtime": {
       "toolFallback": "Tool",
@@ -297,7 +299,8 @@
     "files": {
       "label": "Attached files",
       "download": "Download {name}",
-      "failed": "The file could not be downloaded."
+      "failed": "The file could not be downloaded.",
+      "attachedLabel": "Your files"
     }
   },
   "settings": {

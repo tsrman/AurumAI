@@ -589,3 +589,24 @@ async def test_a_conversation_without_inputs_never_asks_the_sandbox(http) -> Non
         "kept": 0,
     }
     assert len(router.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [("hermes_inputs_failed", "hermes_inputs_unavailable"), ("hermes_sandbox_not_found", "hermes_sandbox_not_found")],
+)
+async def test_a_failed_write_is_the_users_reason_unless_the_sandbox_must_be_replaced(http, code, expected) -> None:
+    http(
+        {
+            ("GET", "/v1/internal/hermes/inputs"): _inputs(("sales.xlsx", b"PK sales workbook")),
+            ("GET", f"/hermes/sandboxes/{SESSION}/inputs"): httpx.Response(200, json={"files": {}}),
+            ("GET", f"/v1/internal/hermes/inputs/{INPUT_ID[:-1]}0/content"): httpx.Response(200, content=b"PK sales workbook"),
+            ("PUT", f"/hermes/sandboxes/{SESSION}/inputs"): httpx.Response(502, json={"detail": {"code": code}}),
+        }
+    )
+
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(hermes_activities.hermes_sync_inputs, "t", SESSION)
+
+    assert raised.value.type == expected
