@@ -293,6 +293,11 @@
       "download": "Download image {index}",
       "attachedLabel": "Attached images",
       "attachedAlt": "Attached image {index}"
+    },
+    "files": {
+      "label": "Attached files",
+      "download": "Download {name}",
+      "failed": "The file could not be downloaded."
     }
   },
   "settings": {

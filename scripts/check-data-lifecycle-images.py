@@ -1,8 +1,9 @@
-"""Independent exact check of conversation images across archive and restore.
+"""Independent exact check of conversation images and files across archive and restore.
 
 before:   rows and platform bytes are recorded as the baseline.
-archived: no image rows remain, platform objects are gone and every archived copy
-          (archives/v1/<org>/<archive>/images/<image>) has the baseline bytes.
+archived: no image or file rows remain, platform objects are gone and every
+          archived copy (archives/v1/<org>/<archive>/images/<image>, .../files/<file>)
+          has the baseline bytes.
 restored: rows equal the baseline (including the edit's source reference) and the
           platform bytes are back; the conversation has a newer generation.
 Rows are read with the lifecycle operator login, objects with the scoped accounts.
@@ -24,6 +25,8 @@ from botocore.exceptions import ClientError
 STATE = Path("/tmp/phaseb-lifecycle-acceptance/images-fixture.json")
 COLUMNS = ("id,org_id,conversation_id,turn_id,execution_id,operation_id,origin,source_image_id,"
            "storage_key,content_type,size_bytes,width,height,prompt,model,created_at,updated_at")
+FILE_COLUMNS = ("id,org_id,conversation_id,turn_id,execution_id,operation_id,name,storage_key,content_type,"
+                "size_bytes,sha256,created_at,updated_at")
 
 
 def storage(user: str):
@@ -75,6 +78,9 @@ async def check(stage: str) -> None:
             rows = [dict(row) for row in await connection.fetch(
                 f"SELECT {COLUMNS} FROM conversation_images WHERE org_id=$1 AND conversation_id=$2 ORDER BY id",
                 org, conversation)]
+            rows += [dict(row) for row in await connection.fetch(
+                f"SELECT {FILE_COLUMNS} FROM conversation_files WHERE org_id=$1 AND conversation_id=$2 ORDER BY id",
+                org, conversation)]
             identity = await connection.fetchrow(
                 "SELECT lifecycle,generation,archive_id,restored_at FROM conversation_identities WHERE org_id=$1 AND id=$2",
                 org, conversation)
@@ -87,7 +93,7 @@ async def check(stage: str) -> None:
     baseline = state.get("images_baseline")
     if stage == "before":
         if (baseline is not None or identity["lifecycle"] != "active" or identity["archive_id"] is not None
-                or len(rows) != 3 or platform != state["sha256"]):
+                or len(rows) != 4 or platform != state["sha256"]):
             raise ValueError("original_image_fixture_required")
         state["images_baseline"] = {"rows": digest(rows), "generation": identity["generation"]}
         save(state)
@@ -99,9 +105,9 @@ async def check(stage: str) -> None:
         if rows or any(value is not None for value in platform.values()):
             raise ValueError("image_payload_not_purged")
         archives = storage("archives")
-        prefix = f"archives/v1/{org}/{identity['archive_id']}/images"
-        archived = {name: object_sha(archives, "lifecycle-archives", f"{prefix}/{state['images'][name]}")
-                    for name in state["images"]}
+        prefix = f"archives/v1/{org}/{identity['archive_id']}"
+        archived = {name: object_sha(archives, "lifecycle-archives", f"{prefix}/{folder}/{row_id}")
+                    for folder in ("images", "files") for name, row_id in state[folder].items()}
         if archived != state["sha256"]:
             raise ValueError("archived_image_bytes_mismatch")
         baseline.update(archive_id=str(identity["archive_id"]), archive_generation=identity["generation"])
@@ -117,7 +123,7 @@ async def check(stage: str) -> None:
             raise ValueError("restored_image_rows_mismatch")
         if platform != state["sha256"]:
             raise ValueError("restored_image_bytes_mismatch")
-    print(f"Owned conversation images verified: {stage} ({len(rows)} rows)")
+    print(f"Owned conversation images and files verified: {stage} ({len(rows)} rows)")
 
 
 if __name__ == "__main__":

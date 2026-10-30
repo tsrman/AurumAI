@@ -2,7 +2,7 @@
 
 Routing decisions are reconstructed from current messages, as a real gateway
 would see them. For Hermes Agent, which uses native function calling, a
-HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge. A test-only metadata barrier synchronizes admitted web turns.
+HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, and HERMES_FILES makes it attach a chart and a CSV it made in its terminal. A test-only metadata barrier synchronizes admitted web turns.
 It never performs an outbound request and never stores prompts in barrier state.
 """
 
@@ -885,6 +885,39 @@ def _hermes_clarify_response(request: CompletionRequest) -> str | dict[str, Any]
     return {"name": "clarify", "arguments": json.dumps({"questions": questions})}
 
 
+# Drawn and written in Hermes's terminal, with the image's own matplotlib.
+_HERMES_FILES_COMMAND = (
+    "mkdir -p /workspace/out && python3 -c \""
+    "import matplotlib.pyplot as plot; plot.bar(['Jan', 'Feb'], [10, 12]); "
+    "plot.savefig('/workspace/out/e2e-chart.png'); "
+    "open('/workspace/out/e2e-data.csv', 'w').write('month,revenue\\nJan,10\\nFeb,12\\n')\""
+)
+_HERMES_FILES_STEPS = (
+    {"name": "terminal", "arguments": {"command": _HERMES_FILES_COMMAND}},
+    {"name": "mcp__aurum__attach_file", "arguments": {"path": "/workspace/out/e2e-chart.png"}},
+    {"name": "mcp__aurum__attach_file", "arguments": {"path": "/workspace/out/e2e-data.csv"}},
+    # A platform secret in the workspace is never attached.
+    {"name": "mcp__aurum__attach_file", "arguments": {"path": "/workspace/.aurum/proxy"}},
+)
+
+
+def _hermes_files_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_FILES: a chart and a CSV made in the terminal and attached, a
+    secret refused, then the attach results as text."""
+    if "HERMES_FILES" not in _last_user_message(request.messages):
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
+    if len(results) >= len(_HERMES_FILES_STEPS):
+        attached = " | ".join(" ".join(str(result).split())[:500] for result in results[1:])
+        return f"HERMES_FILES_DONE: {attached}"
+    offered = {str((item.get("function") or {}).get("name")) for item in request.tools}
+    step = _HERMES_FILES_STEPS[len(results)]
+    if step["name"] not in offered:
+        return f"HERMES_FILES_NOT_OFFERED:{step['name']}"
+    return {"name": step["name"], "arguments": json.dumps(step["arguments"])}
+
+
 def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """A native tool call to the marked platform tool, then its result as text."""
     match = _HERMES_MCP.search(_last_user_message(request.messages))
@@ -909,10 +942,12 @@ def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | N
 
 
 async def _tool_call_sse(model: str, call: dict[str, Any]) -> AsyncIterator[str]:
-    completion_id = "chatcmpl-k8s-" + hashlib.sha256(call["name"].encode()).hexdigest()[:32]
+    digest = hashlib.sha256(json.dumps(call, sort_keys=True).encode()).hexdigest()
+    completion_id = "chatcmpl-k8s-" + digest[:32]
+    # One id per call: a turn may make several.
     delta = {
         "role": "assistant",
-        "tool_calls": [{"index": 0, "id": "call_hermes_mcp", "type": "function", "function": call}],
+        "tool_calls": [{"index": 0, "id": f"call_hermes_{digest[:16]}", "type": "function", "function": call}],
     }
     for choice in (
         {"index": 0, "delta": delta, "finish_reason": None},
@@ -1024,6 +1059,7 @@ async def chat_completions(request: CompletionRequest) -> Response:
         or _hermes_node_response(request)
         or _hermes_clarify_response(request)
         or _hermes_mcp_response(request)
+        or _hermes_files_response(request)
     )
     if isinstance(hermes, dict):
         return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")

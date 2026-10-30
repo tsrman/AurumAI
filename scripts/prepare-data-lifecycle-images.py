@@ -1,7 +1,8 @@
 """Create an old conversation with images only in the fixed disposable lifecycle project.
 
 One finished turn with complete execution provenance, a generated image with its
-tool operation, an edit of it (self-reference) and a user upload. Rows are written
+tool operation, an edit of it (self-reference), a user upload and a CSV file an
+agent attached (its bytes in the conversation's files/ folder). Rows are written
 under the ordinary app role; execution receipts, which only the operator observer
 writes, under the owner account. Bytes go to the business bucket as the backend's
 own account would put them. A private journal records every identity and digest.
@@ -26,6 +27,7 @@ IMAGES = {
     "edited": b"\x89PNG\r\n\x1a\nlifecycle edited image, a little larger",
     "uploaded": b"\xff\xd8\xfflifecycle uploaded photo",
 }
+FILES = {"report": b"month,revenue\nJan,10\nFeb,12\n"}
 
 
 def history_fixture():
@@ -54,21 +56,23 @@ def save(state) -> None:
 
 def new_state(container_id: str) -> dict:
     org, user, conversation = uuid4(), uuid4(), uuid4()
-    operations = {"generated": str(uuid4()), "edited": str(uuid4())}
+    operations = {"generated": str(uuid4()), "edited": str(uuid4()), "report": str(uuid4())}
     images = {name: str(uuid4()) for name in IMAGES}
+    files = {name: str(uuid4()) for name in FILES}
     prefix = f"conversation-images/{org}/{conversation}"
     return {
         "version": 1, "postgres_container_id": container_id,
         "org_id": str(org), "user_id": str(user), "conversation_id": str(conversation),
         "turn_id": str(uuid4()), "execution_id": str(uuid4()), "run_id": str(uuid4()),
         "created_at": (datetime.now(timezone.utc) - timedelta(days=181)).isoformat(),
-        "operations": operations, "images": images,
+        "operations": operations, "images": images, "files": files,
         "keys": {
             "generated": f"{prefix}/{operations['generated']}.png",
             "edited": f"{prefix}/{operations['edited']}.png",
             "uploaded": f"{prefix}/uploads/{images['uploaded']}.jpg",
+            "report": f"{prefix}/files/{operations['report']}.csv",
         },
-        "sha256": {name: hashlib.sha256(data).hexdigest() for name, data in IMAGES.items()},
+        "sha256": {name: hashlib.sha256(data).hexdigest() for name, data in {**IMAGES, **FILES}.items()},
     }
 
 
@@ -104,11 +108,12 @@ async def prepare() -> None:
                 turn, org, conversation, user, at)
             await owner.execute("""INSERT INTO interaction_executions(id,org_id,turn_id,workflow_id,run_id,task_queue,phase)
                 VALUES($1,$2,$3,$4,$5,'lifecycle','ordinary')""", execution, org, turn, f"conversation-{conversation}", run)
-            for name, kind in (("generated", "image_generate"), ("edited", "image_edit")):
+            for name, kind in (("generated", "image_generate"), ("edited", "image_edit"), ("report", "file_attach")):
                 operation = UUID(state["operations"][name])
                 await owner.execute("""INSERT INTO tool_operations(id,org_id,turn_id,execution_id,invocation_id,kind,
                     arguments_hash,status,result) VALUES($1,$2,$3,$4,$1,$5,$6,'completed',$7)""",
-                    operation, org, turn, execution, kind, "d" * 64, json.dumps({"imageId": state["images"][name]}))
+                    operation, org, turn, execution, kind, "d" * 64,
+                    json.dumps({"fileId": state["files"][name]} if kind == "file_attach" else {"imageId": state["images"][name]}))
             rows = (
                 ("generated", UUID(state["operations"]["generated"]), "generated", None, "image/png"),
                 ("edited", UUID(state["operations"]["edited"]), "generated", UUID(state["images"]["generated"]), "image/png"),
@@ -120,6 +125,11 @@ async def prepare() -> None:
                     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'a lighthouse','lifecycle-image',$12,$12)""",
                     UUID(state["images"][name]), org, conversation, turn, execution if operation else None,
                     operation, origin, source, state["keys"][name], content_type, len(IMAGES[name]), at)
+            await owner.execute("""INSERT INTO conversation_files(id,org_id,conversation_id,turn_id,execution_id,
+                operation_id,name,storage_key,content_type,size_bytes,sha256,created_at,updated_at)
+                VALUES($1,$2,$3,$4,$5,$6,'report.csv',$7,'text/csv',$8,$9,$10,$10)""",
+                UUID(state["files"]["report"]), org, conversation, turn, execution, UUID(state["operations"]["report"]),
+                state["keys"]["report"], len(FILES["report"]), state["sha256"]["report"], at)
         async with owner.transaction():
             # Receipts are the operator observer's to write, not the app's.
             await owner.execute("""INSERT INTO conversation_executions(id,org_id,conversation_id,generation,namespace,
@@ -130,11 +140,11 @@ async def prepare() -> None:
     finally:
         await owner.close()
     storage = business_storage()
-    for name, data in IMAGES.items():
+    for name, data in {**IMAGES, **FILES}.items():
         storage.put_object(Bucket=BUCKET, Key=state["keys"][name], Body=data)
     state["prepared"] = True
     save(state)
-    print("Prepared an old conversation with 3 images (generated, edited, uploaded); private journal saved")
+    print("Prepared an old conversation with 3 images (generated, edited, uploaded) and a file; private journal saved")
 
 
 if __name__ == "__main__":

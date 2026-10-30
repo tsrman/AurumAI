@@ -1,3 +1,5 @@
+import type { AttachedFile } from "@/lib/files-api";
+
 export interface Agent {
   id: string;
   name: string;
@@ -88,6 +90,8 @@ export interface AssistantMessage {
   sources: Source[];
   // Ids of images this answer produced; shown under the answer.
   images?: string[];
+  // Files this answer's agent attached; offered for download under it.
+  files?: AttachedFile[];
   sql?: string;
   createdAt?: string;
 }

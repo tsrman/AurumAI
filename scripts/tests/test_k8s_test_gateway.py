@@ -1305,3 +1305,37 @@ def test_a_workflow_node_hermes_runs_is_marked_through_to_the_final_answer() -> 
     assert "MULTI_AGENT_NODE_RESULT:build HERMES_NODE_SEEN" in by_hermes.text
     assert "HERMES_NODE_SEEN" not in by_agent.text and "MULTI_AGENT_NODE_RESULT:build" in by_agent.text
     assert "MULTI_AGENT_FINAL:build HERMES" in final.text
+
+
+def test_hermes_files_marker_makes_attaches_and_reports_step_by_step() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [
+        {"type": "function", "function": {"name": name}}
+        for name in ("terminal", "mcp__aurum__attach_file")
+    ]
+    messages: list[dict] = [{"role": "user", "content": "HERMES_FILES"}]
+    calls = []
+    for step in range(4):
+        response = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+        [call] = json.loads(response.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+        calls.append((call["id"], call["function"]["name"], json.loads(call["function"]["arguments"])))
+        messages += [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": call["id"]}]},
+            {"role": "tool", "tool_call_id": call["id"], "content": f'{{"result": {step}}}'},
+        ]
+
+    assert [name for _, name, _ in calls] == ["terminal", *["mcp__aurum__attach_file"] * 3]
+    assert "plot.savefig('/workspace/out/e2e-chart.png')" in calls[0][2]["command"]
+    assert [arguments["path"] for _, _, arguments in calls[1:]] == [
+        "/workspace/out/e2e-chart.png",
+        "/workspace/out/e2e-data.csv",
+        "/workspace/.aurum/proxy",
+    ]
+    assert len({call_id for call_id, _, _ in calls}) == 4
+    done = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+    assert 'HERMES_FILES_DONE: {\\"result\\": 1} | {\\"result\\": 2} | {\\"result\\": 3}' in done.text
+    unoffered = client.post("/v1/chat/completions", json={"messages": messages[:3], "tools": tools[:1]})
+    assert "HERMES_FILES_NOT_OFFERED:mcp__aurum__attach_file" in unoffered.text

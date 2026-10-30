@@ -18,7 +18,8 @@ import {
  * Hermes Agent with a real model (smoke-test-hermes-ui.sh with
  * HERMES_E2E_REAL_LLM=true): nothing is scripted, so every check rests on an
  * effect the model cannot produce without the tool. It hashes a random value
- * in its terminal (the test computes the same hash), asks through a question
+ * in its terminal (the test computes the same hash), attaches a chart and a
+ * CSV it made with matplotlib, asks through a question
  * card and uses the answer, saves a random value to the member's memory, and
  * writes a skill that waits for review. Opt-in with E2E_USE_REAL_LLM=true; the
  * model (E2E_HERMES_MODEL) needs native tool calling. The organization's
@@ -78,6 +79,17 @@ test.describe("Hermes Agent with a real model", () => {
       await expect(member.getByRole("button", { name: "Choose workflow" })).toHaveText(/Hermes Agent/, {
         timeout: 30_000,
       });
+
+      // A chart and its data the model makes with matplotlib and attaches.
+      await ask(
+        member,
+        "Use your terminal and Python's matplotlib to draw a bar chart of these monthly sales: Jan 10, Feb 12, " +
+          "Mar 7. Save it as /workspace/sales.png and the data as /workspace/sales.csv, then give me both files " +
+          "with your attach_file tool. Reply with one short sentence.",
+        /\S/u
+      );
+      await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
+      await expect(member.getByRole("list", { name: "Attached files" }).last()).toContainText("sales.csv");
 
       // A question card the model asks through clarify, and the answer it uses.
       await expect(member.getByLabel("Message")).toBeEnabled({ timeout: TURN_TIMEOUT });
