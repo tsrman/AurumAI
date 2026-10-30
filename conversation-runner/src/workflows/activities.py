@@ -514,6 +514,11 @@ def _raise_image_api_error(response: httpx.Response) -> None:
         payload = response.json()
         detail = payload.get("detail")
         candidate = detail.get("code") if isinstance(detail, dict) else None
+        if not isinstance(candidate, str):
+            # business-backend wraps an HTTPException's detail in its error body.
+            error = payload.get("error")
+            message = error.get("message") if isinstance(error, dict) else None
+            candidate = message.get("code") if isinstance(message, dict) else None
         if isinstance(candidate, str) and candidate in _IMAGE_ERROR_CODES:
             code = candidate
     except (ValueError, AttributeError):
