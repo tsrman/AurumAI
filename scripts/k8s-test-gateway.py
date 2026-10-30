@@ -2,7 +2,7 @@
 
 Routing decisions are reconstructed from current messages, as a real gateway
 would see them. For Hermes Agent, which uses native function calling, a
-HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, and HERMES_FILES makes it attach a chart and a CSV it made in its terminal. A test-only metadata barrier synchronizes admitted web turns.
+HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, HERMES_FILES makes it attach a chart and a CSV it made in its terminal, and HERMES_INPUTS a pivot workbook and a deck made from the user's uploads. A test-only metadata barrier synchronizes admitted web turns.
 It never performs an outbound request and never stores prompts in barrier state.
 """
 
@@ -918,6 +918,52 @@ def _hermes_files_response(request: CompletionRequest) -> str | dict[str, Any] |
     return {"name": step["name"], "arguments": json.dumps(step["arguments"])}
 
 
+# Reads the user's two workbooks in /workspace/inputs, prints the pivot's
+# totals for the acceptance to check, and writes a pivot workbook and a deck.
+_HERMES_INPUTS_SCRIPT = """mkdir -p /workspace/out && python3 - <<'PY'
+import glob
+import matplotlib.pyplot as plot
+import pandas
+from pptx import Presentation
+from pptx.util import Inches
+data = pandas.concat(pandas.read_excel(path) for path in sorted(glob.glob('/workspace/inputs/*.xlsx')))
+pivot = data.pivot_table(index='region', columns='month', values='sales', aggfunc='sum')
+pivot.to_excel('/workspace/out/pivot.xlsx')
+totals = data.groupby('region')['sales'].sum()
+print('PIVOT_TOTALS:' + ';'.join(f'{region}={int(total)}' for region, total in totals.items()))
+pivot.plot(kind='bar')
+plot.savefig('/workspace/out/pivot.png')
+deck = Presentation()
+title = deck.slides.add_slide(deck.slide_layouts[0])
+title.shapes.title.text = 'Sales by region'
+chart = deck.slides.add_slide(deck.slide_layouts[5])
+chart.shapes.title.text = 'Pivot'
+chart.shapes.add_picture('/workspace/out/pivot.png', Inches(1), Inches(1.5), width=Inches(8))
+deck.save('/workspace/out/report.pptx')
+PY"""
+_HERMES_INPUTS_STEPS = (
+    {"name": "terminal", "arguments": {"command": _HERMES_INPUTS_SCRIPT}},
+    {"name": "mcp__aurum__attach_file", "arguments": {"path": "/workspace/out/pivot.xlsx"}},
+    {"name": "mcp__aurum__attach_file", "arguments": {"path": "/workspace/out/report.pptx"}},
+)
+
+
+def _hermes_inputs_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_INPUTS: a pivot of the user's workbooks made in the terminal, its
+    workbook and a deck attached, then the terminal's output as text."""
+    if "HERMES_INPUTS" not in _last_user_message(request.messages):
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
+    if len(results) >= len(_HERMES_INPUTS_STEPS):
+        return "HERMES_INPUTS_DONE: " + " | ".join(" ".join(str(result).split())[:500] for result in results)
+    offered = {str((item.get("function") or {}).get("name")) for item in request.tools}
+    step = _HERMES_INPUTS_STEPS[len(results)]
+    if step["name"] not in offered:
+        return f"HERMES_INPUTS_NOT_OFFERED:{step['name']}"
+    return {"name": step["name"], "arguments": json.dumps(step["arguments"])}
+
+
 def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """A native tool call to the marked platform tool, then its result as text."""
     match = _HERMES_MCP.search(_last_user_message(request.messages))
@@ -1060,6 +1106,7 @@ async def chat_completions(request: CompletionRequest) -> Response:
         or _hermes_clarify_response(request)
         or _hermes_mcp_response(request)
         or _hermes_files_response(request)
+        or _hermes_inputs_response(request)
     )
     if isinstance(hermes, dict):
         return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")

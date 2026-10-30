@@ -14,7 +14,7 @@ import {
 } from "@/lib/chat-api";
 import { cancelWorkflowRun } from "@/lib/workflows-api";
 import { loadSourcesForMessage } from "@/lib/web-sources-api";
-import { filesFrom } from "@/lib/files-api";
+import { filesFrom, type AttachedFile } from "@/lib/files-api";
 import { imageIdsFrom } from "@/lib/images-api";
 import { questionKeys, useQuestions } from "@/hooks/useQuestions";
 import {
@@ -133,6 +133,7 @@ function backendMessageToUIMessage(
       role: "user",
       content: msg.content ?? "",
       images: imageIdsFrom(msg.imageIds),
+      files: filesFrom(msg.files),
       createdAt: msg.createdAt,
     };
   }
@@ -166,7 +167,8 @@ export interface UseChatReturn {
     text: string,
     workflowId?: string,
     imageIds?: string[],
-    agent?: ChatAgentId
+    agent?: ChatAgentId,
+    files?: AttachedFile[]
   ) => void;
   regenerate: (messageId: string) => void;
   isStreaming: boolean;
@@ -935,10 +937,11 @@ export function useChat(): UseChatReturn {
       text: string,
       workflowId?: string,
       imageIds: string[] = [],
-      agent?: ChatAgentId
+      agent?: ChatAgentId,
+      files: AttachedFile[] = []
     ) => {
       const trimmed = text.trim();
-      if (!trimmed && imageIds.length === 0) return;
+      if (!trimmed && imageIds.length === 0 && files.length === 0) return;
 
       clearAllTimeouts();
       // A previous turn might still be streaming (e.g. this slipped through
@@ -969,6 +972,7 @@ export function useChat(): UseChatReturn {
           role: "user",
           content: trimmed,
           ...(imageIds.length > 0 ? { images: imageIds } : {}),
+          ...(files.length > 0 ? { files } : {}),
           createdAt: new Date().toISOString(),
         };
 
@@ -1013,7 +1017,12 @@ export function useChat(): UseChatReturn {
         const { cancel: cancelFetch } = streamChat({
           conversation_id: convId,
           messages: [
-            { role: "user", content: trimmed, ...(imageIds.length > 0 ? { imageIds } : {}) },
+            {
+              role: "user",
+              content: trimmed,
+              ...(imageIds.length > 0 ? { imageIds } : {}),
+              ...(files.length > 0 ? { fileIds: files.map((file) => file.fileId) } : {}),
+            },
           ],
           model: activeModelId,
           options: { temperature: 0.7, max_tokens: 4096 },
@@ -1090,10 +1099,11 @@ export function useChat(): UseChatReturn {
       text: string,
       workflowId?: string,
       imageIds?: string[],
-      agent?: ChatAgentId
+      agent?: ChatAgentId,
+      files?: AttachedFile[]
     ) => {
       if (isRealMode()) {
-        void sendBackend(text, workflowId, imageIds, agent);
+        void sendBackend(text, workflowId, imageIds, agent, files);
       } else {
         // Mock mode has no workflow runtime. Keep its existing deterministic
         // single-agent response even if a stale caller passes a selection.

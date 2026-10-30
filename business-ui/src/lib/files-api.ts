@@ -42,3 +42,18 @@ export async function getConversationFileBlob(conversationId: string, fileId: st
     )
     .blob();
 }
+
+/** Store a file for the user's next message to Hermes Agent's workspace. */
+export async function uploadConversationFile(conversationId: string, file: File): Promise<AttachedFile> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await api
+    .post(`conversations/${encodeURIComponent(conversationId)}/files`, { body: form, timeout: 120_000 })
+    .json<{ data: AttachedFile }>();
+  return response.data;
+}
+
+/** Discard a file the user removed before sending it. */
+export async function deleteConversationFile(conversationId: string, fileId: string): Promise<void> {
+  await api.delete(`conversations/${encodeURIComponent(conversationId)}/files/${encodeURIComponent(fileId)}`);
+}

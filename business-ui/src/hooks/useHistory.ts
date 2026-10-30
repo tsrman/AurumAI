@@ -49,6 +49,7 @@ function mapMessageToUIMessage(
       role: "user",
       content: msg.content ?? "",
       images: imageIdsFrom(msg.imageIds),
+      files: filesFrom(msg.files),
     };
   }
 
