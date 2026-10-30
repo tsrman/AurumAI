@@ -85,6 +85,7 @@ async def test_the_handshake_and_listing_work_between_turns(hermes_env) -> None:
     assert pinged.json() == {"jsonrpc": "2.0", "id": "p", "result": {}}
     assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
         "knowledge_search",
+        "attach_file",
         "list_skills",
         "run_skill",
     ]
@@ -110,6 +111,7 @@ async def test_the_catalogue_follows_the_operator_switches(hermes_env, both_enab
         "web_read",
         "generate_image",
         "edit_image",
+        "attach_file",
         "list_skills",
         "run_skill",
     ]

@@ -28,9 +28,12 @@ RUN curl -fsSL -o /tmp/hermes.tar.gz \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 --no-same-owner \
     && rm -rf /tmp/hermes.tar.gz /opt/hermes/tests /opt/hermes/.github \
     && ln -s /opt/hermes/hermes /usr/local/bin/hermes
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+# With the data libraries the agent makes charts and files with
+# (requirements-data.txt, from the same script).
+COPY requirements.txt requirements-data.txt /tmp/
+RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: \
+        -r /tmp/requirements.txt -r /tmp/requirements-data.txt \
+    && rm /tmp/requirements.txt /tmp/requirements-data.txt
 
 COPY start.sh /usr/local/bin/hermes-sandbox-start
 COPY hermes_relay.py /usr/local/bin/hermes-relay
@@ -39,13 +42,17 @@ RUN chmod 0555 /usr/local/bin/hermes-sandbox-start /usr/local/bin/hermes-relay \
     && mkdir -p /workspace && chown 10001:10001 /workspace
 
 # Everything the agent writes lives in the workspace volume: Hermes's state,
-# its home directory and `pip install --user` packages.
+# its home directory and `pip install --user` packages. Matplotlib draws
+# without a display and keeps its font cache in the sandbox's /tmp, out of
+# snapshots.
 ENV HERMES_HOME=/workspace/.hermes \
     HOME=/workspace/home \
     PYTHONUSERBASE=/workspace/.local \
     PATH=/workspace/.local/bin:/usr/local/bin:/usr/bin:/bin \
     PIP_USER=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    MPLBACKEND=Agg \
+    MPLCONFIGDIR=/tmp/matplotlib
 USER 10001:10001
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/hermes-sandbox-start"]

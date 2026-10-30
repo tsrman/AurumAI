@@ -666,3 +666,34 @@ def test_the_purge_route_checks_its_identifiers(lifecycle, monkeypatch) -> None:
     assert client.delete(f"/hermes/conversations/{ORG}/{CONVERSATION}").json() == {"sandboxes": 0, "snapshots": 0}
     assert client.delete(f"/hermes/conversations/{ORG}/conv_1").status_code == 400
     assert client.delete(f"/hermes/conversations/{ORG}/conv%2F..").status_code == 404
+
+
+def test_a_file_is_served_as_bytes_and_a_refusal_keeps_its_code(lifecycle, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from src import hermes_routes
+    from src.main import app
+
+    sandboxes, _, _ = lifecycle
+    paths: list[str] = []
+
+    async def read_file(session_id: str, path: str) -> bytes:
+        paths.append(path)
+        if path == "secret":
+            raise HermesSandboxError("file_not_allowed")
+        return b"\x00binary"
+
+    monkeypatch.setattr(sandboxes, "read_file", read_file)
+    monkeypatch.setattr(hermes_routes, "sandboxes", sandboxes)
+    monkeypatch.setattr(hermes_routes, "settings", Settings(hermes_enabled=True))
+    client = TestClient(app)
+
+    served = client.get(f"/hermes/sandboxes/{SESSION}/files", params={"path": "out/chart.png"})
+    refused = client.get(f"/hermes/sandboxes/{SESSION}/files", params={"path": "secret"})
+    unbounded = client.get(f"/hermes/sandboxes/{SESSION}/files", params={"path": "x" * 1025})
+
+    assert served.status_code == 200 and served.content == b"\x00binary"
+    assert served.headers["content-type"] == "application/octet-stream"
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "file_not_allowed"
+    assert unbounded.status_code == 422
+    assert paths == ["out/chart.png", "secret"]

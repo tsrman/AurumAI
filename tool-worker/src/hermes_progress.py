@@ -64,6 +64,7 @@ _PLATFORM = {
     "edit_image": "image",
     "list_skills": "skills",
     "run_skill": "skills",
+    "attach_file": "attach",
 }
 # English labels for clients without the catalog; business-ui translates by id.
 LABELS = {
@@ -80,6 +81,7 @@ LABELS = {
     "web_search": "Searching sources",
     "web_read": "Reading page",
     "image": "Working on an image",
+    "attach": "Attaching a file",
     "other": "Using a tool",
 }
 

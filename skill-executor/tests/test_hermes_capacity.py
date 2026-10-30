@@ -376,6 +376,49 @@ async def test_skills_come_back_one_per_line_and_only_in_their_shape(make, monke
 
 
 @pytest.mark.asyncio
+async def test_a_file_comes_back_only_when_its_chunks_match_the_closing_line(make, monkeypatch) -> None:
+    import base64 as _base64
+    import hashlib as _hashlib
+
+    sandboxes, _, _, _ = make()
+    await _create(sandboxes, 1)
+    data = b"month,revenue\nJan,10\n"
+    commands: list[list[str]] = []
+    lines: list[dict[str, Any]] = []
+
+    async def stream(sandbox: Any, cmd: list[str]):  # noqa: ANN202
+        commands.append(cmd)
+        for line in lines:
+            yield line
+
+    monkeypatch.setattr(sandboxes, "_stream", stream)
+    chunks = [{"type": "chunk", "data": _base64.b64encode(part).decode()} for part in (data[:5], data[5:])]
+    closing = {"type": "file", "size": len(data), "sha256": _hashlib.sha256(data).hexdigest()}
+
+    lines[:] = [*chunks, closing]
+    assert await sandboxes.read_file(_session(1), "out/data.csv") == data
+    assert commands == [["hermes-relay", "file-read", "out/data.csv"]]
+
+    failures = {
+        "hermes_file_failed": [
+            [*chunks],  # no closing line
+            [chunks[0], closing],  # a chunk lost
+            [*chunks, {**closing, "sha256": "0" * 64}],
+            [{"type": "chunk", "data": "not base64!"}, closing],
+            [{"type": "file-refused", "code": "something the agent made up"}],
+        ],
+        "file_not_allowed": [[{"type": "file-refused", "code": "file_not_allowed"}]],
+        "file_too_large": [[{"type": "chunk", "data": _base64.b64encode(b"x" * (20 * 1024 * 1024 + 1)).decode()}]],
+    }
+    for code, cases in failures.items():
+        for case in cases:
+            lines[:] = case
+            with pytest.raises(HermesSandboxError) as failed:
+                await sandboxes.read_file(_session(1), "out/data.csv")
+            assert failed.value.code == code
+
+
+@pytest.mark.asyncio
 async def test_platform_skills_are_staged_then_swapped_in_by_the_relay(make, monkeypatch) -> None:
     import hashlib as _hashlib
     import io as _io

@@ -80,6 +80,7 @@ from src.models.conversation import Conversation
 from src.models.hermes_session import HermesSession
 from src.models.message import Message
 from src.models.workflow_run import WorkflowRun, WorkflowRunStatus
+from src.repositories.conversation_file_repository import turn_files
 from src.repositories.conversation_repository import conversation_repository
 from src.repositories.message_repository import message_repository
 from src.repositories.workflow_definition_repository import workflow_definition_repository
@@ -159,6 +160,7 @@ def _msg_response(msg: Message) -> MessageResponse:
         sourceIds=extra.get("web_source_ids", []),
         unsupportedSourceIds=extra.get("unsupported_web_source_ids", []),
         imageIds=extra.get("image_ids", []),
+        files=extra.get("files", []),
         failed=extra.get("failed") is True,
     )
 
@@ -888,6 +890,28 @@ async def chat_stream(
     return create_streaming_response(event_generator())
 
 
+async def _answer_media(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer shows every image and file its turn made. The runner claims
+    the images it saw; Hermes's tool results never reach it, so the turn's
+    other images follow them."""
+    shown = list((extra or {}).get("image_ids", []))
+    turn_images = await ImageRepository(org_id).turn_image_ids(session, conversation_id, owner_id, turn_id)
+    shown += [image_id for image_id in turn_images if image_id not in shown]
+    if shown:
+        extra = {**(extra or {}), "image_ids": shown}
+    attached = await turn_files(session, org_id, conversation_id, owner_id, turn_id)
+    if attached:
+        extra = {**(extra or {}), "files": attached}
+    return extra
+
+
 @router.post("/conversations/{conversation_id}/messages", status_code=status.HTTP_201_CREATED)
 async def persist_conversation_message(
     conversation_id: str,
@@ -995,6 +1019,11 @@ async def persist_conversation_message(
             **(message_extra or {}),
             "image_ids": [image_id for image_id in claimed_images if image_id in owned_images],
         }
+
+    if data.role == "assistant":
+        message_extra = await _answer_media(
+            session, session_org_id, conv.id, session_user_id, data.turn_id, message_extra
+        )
 
     now = datetime.now(timezone.utc)
     message = await message_repository.upsert_assistant_by_turn(

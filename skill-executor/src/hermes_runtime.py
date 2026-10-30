@@ -34,6 +34,7 @@ files from it), or a size-bounded tmpfs volume (see Settings.hermes_workspace_mo
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import io
 import ipaddress
@@ -76,8 +77,13 @@ DISABLED_TOOLSETS = (
 # The platform tools of the MCP bridge (business-backend's hermes_mcp).
 PLATFORM_TOOLS = (
     "knowledge_search", "web_search", "web_read", "generate_image", "edit_image", "list_skills", "run_skill",
+    "attach_file",
 )
 _CHUNK = 64 * 1024
+# A file an agent attaches (business-backend's conversation_files bound).
+FILE_MAX_BYTES = 20 * 1024 * 1024
+# What the relay may answer for a file it refuses; anything else is a failure.
+FILE_REFUSALS = frozenset({"file_not_found", "file_not_allowed", "file_too_large"})
 # Written by the platform into every workspace; a snapshot source without it
 # lost its workspace (see DockerHermesSandboxes._retire).
 WORKSPACE_MARKER = ".aurum/proxy"
@@ -737,6 +743,33 @@ class DockerHermesSandboxes:
                     {"path": line["path"], "files": [{"path": item["path"], "content": item["content"]} for item in files]}
                 )
         raise HermesSandboxError("hermes_skills_failed")
+
+    async def read_file(self, session_id: str, path: str) -> bytes:
+        """A file the agent attaches, as the relay streams it: the bytes must
+        add up to the size and SHA-256 its closing line states."""
+        sandbox = self.get_running(session_id)
+        chunks: list[bytes] = []
+        size = 0
+        async for line in self._stream(sandbox, ["hermes-relay", "file-read", path]):
+            kind = line.get("type")
+            if kind == "file-refused":
+                code = line.get("code")
+                raise HermesSandboxError(code if code in FILE_REFUSALS else "hermes_file_failed")
+            if kind == "chunk" and isinstance(line.get("data"), str):
+                try:
+                    chunk = base64.b64decode(line["data"], validate=True)
+                except ValueError:
+                    raise HermesSandboxError("hermes_file_failed") from None
+                size += len(chunk)
+                if size > FILE_MAX_BYTES:
+                    raise HermesSandboxError("file_too_large")
+                chunks.append(chunk)
+            elif kind == "file":
+                data = b"".join(chunks)
+                if line.get("size") != len(data) or line.get("sha256") != hashlib.sha256(data).hexdigest():
+                    raise HermesSandboxError("hermes_file_failed")
+                return data
+        raise HermesSandboxError("hermes_file_failed")
 
     async def hydrate_skills(
         self, session_id: str, skills: list[PlatformSkill], fetch: Any = None

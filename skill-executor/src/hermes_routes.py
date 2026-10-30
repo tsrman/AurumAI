@@ -11,7 +11,7 @@ import re
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,6 +48,10 @@ _STATUS = {
     "hermes_snapshot_key_invalid": 400,
     "hermes_memory_failed": 502,
     "hermes_skills_failed": 502,
+    "file_not_found": 404,
+    "file_not_allowed": 403,
+    "file_too_large": 413,
+    "hermes_file_failed": 502,
 }
 
 
@@ -247,6 +251,20 @@ async def read_skills(session_id: str) -> dict[str, Any]:
         return await sandboxes.read_skills(session_id)
     except HermesSandboxError as exc:
         raise _error(exc) from None
+
+
+@router.get("/sandboxes/{session_id}/files")
+async def read_file(session_id: str, path: str = Query(min_length=1, max_length=1024)) -> Response:
+    """A file from the sandbox's workspace, which the relay bounds; its
+    bytes are the agent's and the caller checks what they are."""
+    _available()
+    if "\x00" in path:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    try:
+        data = await sandboxes.read_file(session_id, path)
+    except HermesSandboxError as exc:
+        raise _error(exc) from None
+    return Response(content=data, media_type="application/octet-stream")
 
 
 @router.post("/sandboxes/{session_id}/runs/{run_id}/clarify")

@@ -27,9 +27,11 @@ from src.models.knowledge_base import KnowledgeBase
 from src.repositories.knowledge_base_repository import knowledge_base_repository
 from src.schemas.image_tools import EditImageRequest, GenerateImageRequest
 from src.schemas.web_tools import WebReadRequest, WebSearchRequest
-from src.services import hermes_skills
+from src.services import hermes_files, hermes_skills
+from src.services.hermes_files import AttachFileRequest, FileToolError
 from src.services.hermes_skills import ListSkillsRequest, RunSkillRequest, SkillToolError
 from src.services.image_tools import IMAGE_ERROR_CODES, ImageToolExecutionError, image_tools_service
+from src.repositories.interaction_repository import InteractionError
 from src.services.rag_client import rag_client
 from src.services.web_tools import WebToolExecutionError, web_tools_service
 
@@ -127,6 +129,16 @@ TOOLS = (
         "image_disabled",
     ),
     BridgeTool(
+        "attach_file",
+        "Give the user a file you made in your workspace, such as a chart, a "
+        "spreadsheet or a report: save it under /workspace, then call this with "
+        "its absolute path (/workspace/...). Pictures (PNG, JPEG, WebP) appear below your answer; other "
+        "files (CSV, text, Markdown, JSON, PDF, XLSX, DOCX, PPTX, ZIP, up to "
+        "20 MiB, ten per answer) are offered for download. Do not write links "
+        "to it into the answer.",
+        AttachFileRequest,
+    ),
+    BridgeTool(
         "list_skills",
         "List the platform skills you may run now: their skillId, description and "
         "input schema.",
@@ -181,7 +193,7 @@ async def call_tool(
     except ValidationError:
         raise BridgeToolError("invalid_arguments") from None
     # Read before the services commit and expire the row.
-    conversation_id, execution_id = row.conversation_id, row.active_execution_id
+    conversation_id, execution_id, session_id = row.conversation_id, row.active_execution_id, row.id
     assert execution_id is not None
     if isinstance(parsed, KnowledgeSearchRequest):
         return await _knowledge_search(session, subject, conversation_id, parsed)
@@ -198,8 +210,26 @@ async def call_tool(
                 generation=generation,
                 invocation=invocation,
             )
+        if isinstance(parsed, AttachFileRequest):
+            return await hermes_files.attach_file(
+                session,
+                subject,
+                parsed,
+                session_id=session_id,
+                conversation_id=conversation_id,
+                execution_id=execution_id,
+                generation=generation,
+                invocation=invocation,
+            )
     except SkillToolError as exc:
         raise BridgeToolError(exc.code) from None
+    except FileToolError as exc:
+        raise BridgeToolError(exc.code) from None
+    except InteractionError as exc:
+        await session.rollback()
+        raise BridgeToolError(
+            "file_limit" if exc.code == "tool_limit" else _code(exc.code, set(), "file_unavailable")
+        ) from None
     normalized = parsed.model_dump(mode="json")
     if name in {"web_search", "web_read"}:
         try:

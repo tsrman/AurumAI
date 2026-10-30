@@ -13,6 +13,7 @@ from src.activities import (
 from src.config import settings
 from src.hermes_activities import (
     hermes_answer_question,
+    hermes_attach_file,
     hermes_bind_turn,
     hermes_close_session,
     hermes_load_memory,
@@ -27,6 +28,7 @@ from src.hermes_activities import (
 )
 from src.hermes_session_workflow import HEARTBEAT_THROTTLE, HermesSessionWorkflow
 from src.hermes_purge_workflow import HermesConversationPurgeWorkflow
+from src.hermes_file_workflow import HermesFileAttachWorkflow
 from src.hermes_skill_workflow import HermesSkillCallWorkflow
 
 logger = logging.getLogger(__name__)
@@ -70,7 +72,12 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.task_queue,
-        workflows=[HermesSkillCallWorkflow, HermesSessionWorkflow, HermesConversationPurgeWorkflow],
+        workflows=[
+            HermesSkillCallWorkflow,
+            HermesFileAttachWorkflow,
+            HermesSessionWorkflow,
+            HermesConversationPurgeWorkflow,
+        ],
         max_heartbeat_throttle_interval=HEARTBEAT_THROTTLE,
         activities=[
             execute_skill,
@@ -89,6 +96,7 @@ async def main() -> None:
             hermes_run_turn,
             hermes_retire_sandbox,
             hermes_close_session,
+            hermes_attach_file,
         ],
     )
     await worker.run()

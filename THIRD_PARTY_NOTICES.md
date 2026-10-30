@@ -53,6 +53,12 @@ dependencies from PyPI, pinned by hash in `hermes-sandbox/requirements.txt`; the
 installed distributions carry their own license files. All of them are under
 permissive licenses (MIT, BSD, Apache-2.0, ISC, PSF) except `certifi` and
 `pathspec` (MPL-2.0).
+The data libraries in `hermes-sandbox/requirements-data.txt` (matplotlib,
+pandas, openpyxl, numpy and what they need) are permissive as well: the
+Matplotlib license (PSF-based), BSD, MIT. Matplotlib bundles the DejaVu (Bitstream
+Vera license) and STIX (SIL Open Font License) fonts, and numpy's wheels bundle
+OpenBLAS (BSD) and the GCC Fortran runtime (GPL-3.0 with the GCC Runtime Library
+Exception); each distribution carries these licenses.
 
 The vendored Temporal setup/namespace/dynamic-configuration samples retain their
 MIT license and original Temporal Technologies copyright. See

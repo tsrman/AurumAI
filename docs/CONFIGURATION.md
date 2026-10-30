@@ -248,6 +248,13 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   skill calls do, so tool-worker must be running. The bridge waits
   `APP_HERMES_SKILL_TIMEOUT_SECONDS` (240) for it; a repeated request attaches to the
   same run. Skill runs have no per-turn budget beyond the rate limit.
+- `attach_file` gives the user a file Hermes made in its workspace. The bridge
+  reserves a `file_attach` operation (at most ten per turn) and starts a
+  `HermesFileAttachWorkflow` on the same queue: tool-worker reads the file through
+  skill-executor and posts the bytes to the backend, which recognises them and stores
+  a picture as a conversation image and anything else as a conversation file. The
+  bridge waits `APP_HERMES_FILE_TIMEOUT_SECONDS` (120); a call that gives up fails its
+  operation, so a late upload is refused.
 
 ### Hermes sandbox egress
 

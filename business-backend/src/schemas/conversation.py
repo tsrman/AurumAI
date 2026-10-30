@@ -39,6 +39,13 @@ class ConversationResponse(BaseModel):
     agent: Optional[Literal["hermes"]] = None
 
 
+class AttachedFile(BaseModel):
+    fileId: str
+    name: str
+    contentType: str
+    sizeBytes: int
+
+
 class MessageResponse(BaseModel):
     id: str
     role: str
@@ -61,5 +68,7 @@ class MessageResponse(BaseModel):
     unsupportedSourceIds: List[str] = Field(default_factory=list)
     # Images this assistant turn generated, verified against the turn.
     imageIds: List[str] = Field(default_factory=list)
+    # Files the answer's agent attached: {fileId, name, contentType, sizeBytes}.
+    files: List[AttachedFile] = Field(default_factory=list)
     # The reason a failed turn ended with: shown, never sent back to a model.
     failed: bool = False

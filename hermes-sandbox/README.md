@@ -22,7 +22,9 @@ Upgrading Hermes is a deliberate change. Hermes ships no package (its wheel buil
 refuses outside Nix), so set `HERMES_VERSION` and `HERMES_SHA256` in the
 `Dockerfile` to the new tag and the sha256 of
 `https://github.com/NousResearch/hermes-agent/archive/refs/tags/v<version>.tar.gz`,
-then regenerate `requirements.txt` from that release's own `uv.lock` with
+then regenerate `requirements.txt` from that release's own `uv.lock`, and
+`requirements-data.txt` (the data libraries in `requirements-data.in`, resolved
+within those pins), with
 
 ```bash
 ./update-requirements.sh

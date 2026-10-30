@@ -415,6 +415,7 @@ async def test_ordinary_runner_failure_marks_exact_interaction_turn_failed() -> 
         patch.object(chat.message_repository, "create", AsyncMock(return_value=stored_message)),
         patch.object(chat.interaction_service, "begin_turn", AsyncMock()) as begin_turn,
         patch.object(chat.interaction_service, "finish_turn", AsyncMock()) as finish_turn,
+        patch.object(chat, "_answer_media", AsyncMock(side_effect=lambda *args: args[-1])),
         patch.object(chat.event_bus, "subscribe_channel", AsyncMock(return_value=pubsub)),
         patch.object(
             chat.session_manager,
@@ -488,6 +489,7 @@ async def test_assistant_persistence_finishes_exact_interaction_turn_before_comm
             chat.message_repository, "upsert_assistant_by_turn", AsyncMock(return_value=message)
         ),
         patch.object(chat.interaction_service, "finish_turn", side_effect=finish) as finish_turn,
+        patch.object(chat, "_answer_media", AsyncMock(side_effect=lambda *args: args[-1])),
     ):
         response = await chat.persist_conversation_message(
             str(conv.id),

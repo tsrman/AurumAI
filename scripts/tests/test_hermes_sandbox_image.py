@@ -29,11 +29,27 @@ def test_every_dependency_is_pinned_by_hash() -> None:
     assert not re.search(r"^hermes-agent\b", requirements, re.M)
 
 
+def test_data_libraries_are_pinned_by_hash_without_repeating_hermes_pins() -> None:
+    data = (IMAGE / "requirements-data.txt").read_text()
+    base = (IMAGE / "requirements.txt").read_text()
+    pattern = r"^([A-Za-z0-9_.-]+)=="
+    names = re.findall(pattern, data, re.M)
+    blocks = [block for block in re.split(r"\n(?=[A-Za-z0-9_.-]+==)", data) if "==" in block]
+
+    assert {"matplotlib", "pandas", "openpyxl", "numpy"} <= set(names)
+    assert len(names) == len(blocks) and all("--hash=sha256:" in block for block in blocks)
+    assert not set(names) & {name.lower() for name in re.findall(pattern, base, re.M)}
+    assert "git+" not in data
+    dockerfile = (IMAGE / "Dockerfile").read_text()
+    assert "-r /tmp/requirements.txt -r /tmp/requirements-data.txt" in dockerfile
+    assert "MPLBACKEND=Agg" in dockerfile and "MPLCONFIGDIR=/tmp/matplotlib" in dockerfile
+
+
 def test_image_installs_by_hash_and_runs_unprivileged_without_compilers() -> None:
     dockerfile = (IMAGE / "Dockerfile").read_text()
 
     assert "FROM python:3.14-slim" in dockerfile
-    assert "pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r" in dockerfile
+    assert "pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all:" in dockerfile
     # Hermes's own source tree, from its tag archive, verified by hash.
     assert re.search(r"^ARG HERMES_SHA256=[0-9a-f]{64}$", dockerfile, re.M)
     assert 'sha256sum -c -' in dockerfile
@@ -386,3 +402,73 @@ def test_active_lists_the_recent_runs_hermes_still_runs(relay) -> None:
     [line] = run("active")
 
     assert line["type"] == "active" and sorted(line["run_ids"]) == ["run_1", "run_3"]
+
+
+def _file_bytes(lines: list[dict]) -> bytes:
+    import base64
+
+    return b"".join(base64.b64decode(line["data"]) for line in lines if line["type"] == "chunk")
+
+
+def test_file_read_streams_a_workspace_file_in_chunks(relay, tmp_path: Path) -> None:
+    import hashlib
+
+    run, _ = relay
+    data = os.urandom(300 * 1024)
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "chart.png").write_bytes(data)
+
+    for path in ("out/chart.png", f"{tmp_path}/out/chart.png", "./out//chart.png"):
+        lines = run("file-read", path)
+        assert len([line for line in lines if line["type"] == "chunk"]) == 4
+        assert all(len(json.dumps(line)) < 256 * 1024 for line in lines)
+        assert _file_bytes(lines) == data
+        assert lines[-1] == {"type": "file", "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def test_file_read_refuses_what_leaves_the_workspace_or_is_not_a_plain_file(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    outside = tmp_path.parent / f"outside-{tmp_path.name}"
+    outside.mkdir()
+    (outside / "secret").write_text("s")
+    (tmp_path / ".aurum").mkdir(exist_ok=True)
+    (tmp_path / ".aurum" / "proxy").write_text("token")
+    (tmp_path / "linked").symlink_to(outside, target_is_directory=True)
+    (tmp_path / "link.txt").symlink_to(outside / "secret")
+    os.link(tmp_path / ".aurum" / "proxy", tmp_path / "hard.txt")
+    os.mkfifo(tmp_path / "pipe")
+    (tmp_path / "dir").mkdir()
+
+    refused = {
+        "../" + outside.name + "/secret": "file_not_allowed",
+        str(outside / "secret"): "file_not_allowed",
+        "linked/secret": "file_not_allowed",
+        "link.txt": "file_not_allowed",
+        "hard.txt": "file_not_allowed",
+        "pipe": "file_not_allowed",
+        "dir": "file_not_allowed",
+        ".aurum/proxy": "file_not_allowed",
+        ".hermes/config.yaml": "file_not_allowed",
+        ".hermes/backups/config.yaml": "file_not_allowed",
+        "missing.csv": "file_not_found",
+        "": "file_not_allowed",
+    }
+    for path, code in refused.items():
+        assert run("file-read", path) == [{"type": "file-refused", "code": code}], path
+
+
+def test_file_read_refuses_a_file_above_the_limit(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    with open(tmp_path / "big.bin", "wb") as big:
+        big.truncate(20 * 1024 * 1024 + 1)
+    assert run("file-read", "big.bin") == [{"type": "file-refused", "code": "file_too_large"}]
+
+
+def test_file_read_leaves_out_what_snapshots_leave_out() -> None:
+    def excluded(source: str) -> list[str]:
+        start = source.index("EXCLUDED = (")
+        return re.findall(r'^\s*"([^"]+)",', source[start : source.index("\n)", start)], re.M)
+
+    snapshots = excluded((ROOT / "skill-executor" / "src" / "hermes_snapshots.py").read_text())
+    assert ".aurum" in snapshots and ".hermes/config.yaml" in snapshots
+    assert excluded((IMAGE / "hermes_relay.py").read_text()) == snapshots

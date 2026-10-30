@@ -19,6 +19,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src.config import settings
+from src.hermes_file_workflow import HermesFileAttach
 from src.hermes_progress import TurnProgress, keepalive
 from src.hermes_questions import ParentQuestions
 
@@ -404,3 +405,65 @@ def _outcome(message: dict[str, Any], progress: TurnProgress) -> dict[str, Any]:
 
 def _uuid(session_id: str) -> str:
     return f"{session_id[:8]}-{session_id[8:12]}-{session_id[12:16]}-{session_id[16:20]}-{session_id[20:]}"
+
+
+# skill-executor's and business-backend's answers that no retry can change.
+_FILE_REFUSALS = frozenset(
+    {
+        "file_not_found",
+        "file_not_allowed",
+        "file_too_large",
+        "file_empty",
+        "file_type_unsupported",
+        "file_limit",
+        "hermes_turn_inactive",
+        "hermes_sandbox_not_found",
+        "hermes_sandbox_stopped",
+    }
+)
+_FILE_TIMEOUT = 60.0
+
+
+def _file_refusal(response: httpx.Response) -> str | None:
+    """skill-executor answers {"detail": {"code"}}; business-backend wraps the
+    same detail as {"error": {"message": {"code"}}}."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("detail")
+    if detail is None and isinstance(body.get("error"), dict):
+        detail = body["error"].get("message")
+    code = detail.get("code") if isinstance(detail, dict) else None
+    return code if code in _FILE_REFUSALS else None
+
+
+# The file workflow's one step (hermes_file_workflow): the bytes go from
+# skill-executor to business-backend here and never into workflow history.
+@activity.defn(name="hermes_attach_file")
+async def hermes_attach_file(call: HermesFileAttach) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=_FILE_TIMEOUT) as client:
+        read = await client.get(
+            f"{settings.skill_executor_url}/hermes/sandboxes/{call.session_id}/files",
+            params={"path": call.path},
+        )
+        if read.status_code != 200:
+            if code := _file_refusal(read):
+                return {"error": code}
+            raise ApplicationError("hermes_file_unavailable", type="hermes_file_unavailable")
+        stored = await client.post(
+            f"{settings.backend_api_url}/v1/internal/hermes/files/{call.operation_id}",
+            headers={
+                "Authorization": f"Bearer {call.session_token}",
+                "Content-Type": "application/octet-stream",
+            },
+            params={"path": call.path},
+            content=read.content,
+        )
+    if stored.status_code == 200:
+        return {"file": stored.json()}
+    if code := _file_refusal(stored):
+        return {"error": code}
+    raise ApplicationError("hermes_file_unavailable", type="hermes_file_unavailable")
