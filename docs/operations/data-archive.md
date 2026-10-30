@@ -128,8 +128,8 @@ The manifest and every Parquet part carry an archive version. Version 2 adds
 the `conversation_files` table, whose bytes live in the conversation's
 `conversation-images/<org>/<conversation>/files/` folder and use the same image
 account; version 4 adds its `origin` and the files the user uploads, which have no
-operation and live in `files/uploads/` (a version-3 job refuses a conversation
-holding one); version 1 is the format before images. A job keeps the version it was frozen with: version-1
+operation and live in `files/uploads/`, and may be pictures (a version-3 job
+refuses a conversation holding one); version 1 is the format before images. A job keeps the version it was frozen with: version-1
 jobs (no `_archive_version` in their inventory) still seal, verify, purge and
 restore with the version-1 columns, and refuse to purge if a column version 1
 leaves out no longer holds its default. Keys stay under `archives/v1/`.

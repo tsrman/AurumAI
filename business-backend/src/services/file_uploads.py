@@ -16,7 +16,9 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.conversation_file import ConversationFile
-from src.services.conversation_files import FileKind, display_name, sniff
+from src.services.conversation_files import MAX_FILE_BYTES
+from src.services.conversation_files import FileKind, FileRejected, display_name, sniff
+from src.services.image_content import ImageContentError, inspect_image
 
 MAX_FILES_PER_MESSAGE = 10
 # Bounded so that a new sandbox receives them within one hydration and its
@@ -37,6 +39,18 @@ class UploadStorage(Protocol):
     async def put_bytes(self, key: str, data: bytes) -> None: ...
 
 
+def upload_kind(data: bytes, name: str) -> FileKind:
+    """What an upload is, from its bytes: a picture Hermes works on in its
+    terminal, or one of the conversation file types."""
+    if data.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")) or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
+        try:
+            info = inspect_image(data, max_bytes=MAX_FILE_BYTES)
+        except ImageContentError:
+            raise FileRejected("file_type_unsupported") from None
+        return FileKind(info.content_type, info.extension)
+    return sniff(data, name)
+
+
 def uploaded_file_key(org_id: UUID, conversation_id: UUID, file_id: UUID, kind: FileKind) -> str:
     return f"conversation-images/{org_id}/{conversation_id}/files/uploads/{file_id}.{kind.extension}"
 
@@ -51,7 +65,7 @@ async def store_uploaded_file(
 ) -> ConversationFile:
     """Check and store one upload; raises FileRejected or FileUploadError.
     The caller holds the conversation, so the limits are counted exactly."""
-    kind = sniff(data, name)
+    kind = upload_kind(data, name)
     count, total = (
         await session.execute(
             select(func.count(), func.coalesce(func.sum(ConversationFile.size_bytes), 0)).where(

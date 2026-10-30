@@ -17,7 +17,8 @@ IMAGE_KEY = re.compile(r"^archives/v1/[0-9a-f-]{36}/[0-9a-f-]{36}/(?:images|file
 IMAGE_OBJECT_LIMIT = 100 * 1024 * 1024
 PLATFORM_IMAGE_KEY = re.compile(
     r"^conversation-images/[0-9a-f-]{36}/[0-9a-f-]{36}/(?:(?:uploads/)?[0-9a-f-]{36}\.(?:png|jpg|webp)"
-    r"|files/(?:uploads/)?[0-9a-f-]{36}\.(?:csv|txt|md|json|pdf|xlsx|docx|pptx|zip))$"
+    r"|files/(?:[0-9a-f-]{36}\.(?:csv|txt|md|json|pdf|xlsx|docx|pptx|zip)"
+    r"|uploads/[0-9a-f-]{36}\.(?:csv|txt|md|json|pdf|xlsx|docx|pptx|zip|png|jpg|webp)))$"
 )
 
 

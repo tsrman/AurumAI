@@ -941,8 +941,10 @@ its workspace:
 ### Files the user gives Hermes
 
 In a Hermes conversation the user attaches files to a message (spreadsheets,
-CSV, documents; the conversation file types) and Hermes works on them in its
-terminal, for example to build a pivot table and a presentation from several
+CSV, documents; the conversation file types; and PNG, JPEG or WebP pictures,
+which only uploads may be, recognised and bounded as image uploads) and Hermes
+works on them in its terminal: its code reads a picture, the model does not
+see it, for example to build a pivot table and a presentation from several
 workbooks. The image carries python-pptx, python-docx and pypdf for that:
 
 - the composer uploads each file (`POST /v1/conversations/<id>/files`) and the

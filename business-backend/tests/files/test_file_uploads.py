@@ -202,3 +202,54 @@ async def test_the_routes_store_and_remove_uploads_only_with_hermes(db, test_org
     assert removed.status_code == 204 and missing.status_code == 404
     assert await db.get(ConversationFile, uuid.UUID(file_id)) is None
     assert len(storage.deleted) == 1
+
+
+PNG = (
+    b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (64).to_bytes(4, "big") + (32).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
+)
+
+
+async def test_a_picture_is_an_upload_hermes_works_on_in_its_workspace(db, test_org, test_user) -> None:  # noqa: ANN001
+    conversation = await _conversation(db, test_org, test_user)
+    storage = Storage()
+
+    uploaded = await store_uploaded_file(db, storage, test_org.id, conversation.id, "logo.jpeg.PNG", PNG)
+
+    assert (uploaded.content_type, uploaded.name) == ("image/png", "logo.jpeg.png")
+    assert uploaded.storage_key.endswith(f"/files/uploads/{uploaded.id}.png")
+    huge = PNG.replace((64).to_bytes(4, "big"), (100_000).to_bytes(4, "big"), 1)
+    with pytest.raises(FileRejected):
+        await store_uploaded_file(db, storage, test_org.id, conversation.id, "huge.png", huge)
+    # An SVG is text, never a picture: it is kept as plain text, only ever downloaded.
+    svg = await store_uploaded_file(db, storage, test_org.id, conversation.id, "logo.svg", b"<svg onload='x'/>")
+    assert (svg.content_type, svg.name) == ("text/plain", "logo.txt")
+
+
+async def test_only_an_upload_may_be_a_picture(db, test_org, test_user) -> None:  # noqa: ANN001
+    from sqlalchemy.exc import IntegrityError
+
+    conversation = await _conversation(db, test_org, test_user)
+    turn = await _turn(db, test_org, test_user, conversation)
+    operation, execution = uuid.uuid4(), uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO interaction_executions(id,org_id,turn_id,workflow_id,run_id,task_queue,phase) VALUES(:e,:o,:t,:wf,:e,'test','ordinary')"
+        ),
+        dict(e=execution, o=test_org.id, t=turn, wf=f"pictures-{execution}"),
+    )
+    await db.execute(
+        text(
+            "INSERT INTO tool_operations(id,org_id,turn_id,execution_id,invocation_id,kind,arguments_hash,status) VALUES(:op,:o,:t,:e,:op,'file_attach',:h,'completed')"
+        ),
+        dict(op=operation, o=test_org.id, t=turn, e=execution, h="a" * 64),
+    )
+    with pytest.raises(IntegrityError):
+        await db.execute(
+            text(
+                "INSERT INTO conversation_files(id,org_id,conversation_id,turn_id,execution_id,operation_id,origin,name,storage_key,content_type,size_bytes,sha256) VALUES(:id,:o,:c,:t,:e,:op,'generated','x.png',:key,'image/png',4,:sha)"
+            ),
+            dict(
+                id=uuid.uuid4(), o=test_org.id, c=conversation.id, t=turn, e=execution, op=operation,
+                key=f"conversation-images/{test_org.id}/{conversation.id}/files/{operation}.png", sha="a" * 64,
+            ),
+        )

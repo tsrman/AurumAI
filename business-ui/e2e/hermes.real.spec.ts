@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type BrowserContext } from "@playwright/test";
-import { FEBRUARY_XLSX, JANUARY_XLSX } from "./fixtures/workbooks";
+import { FEBRUARY_XLSX, JANUARY_XLSX, LOGO_PNG } from "./fixtures/workbooks";
 import {
   ADMIN_UI_URL,
   BUSINESS_URL,
@@ -142,8 +142,9 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       });
       await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
 
-      // Files the member gives Hermes: two workbooks into its workspace, a
-      // pivot workbook and a deck back, with the pivot's totals from the uploads.
+      // Files the member gives Hermes: two workbooks and a logo into its
+      // workspace, a pivot workbook and a deck back, with the pivot's totals
+      // from the uploads and the logo's size as Hermes's code read it.
       const workbook = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
       // After the reload the composer takes Hermes from the conversation once it has loaded.
       await expect(member.getByRole("button", { name: "Choose workflow" })).toHaveText(/Hermes Agent/, {
@@ -152,12 +153,16 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       await member.locator('input[type="file"]').setInputFiles([
         { name: "january.xlsx", mimeType: workbook, buffer: Buffer.from(JANUARY_XLSX, "base64") },
         { name: "february.xlsx", mimeType: workbook, buffer: Buffer.from(FEBRUARY_XLSX, "base64") },
+        { name: "logo.png", mimeType: "image/png", buffer: Buffer.from(LOGO_PNG, "base64") },
       ]);
-      await expect(member.getByRole("button", { name: "Remove february.xlsx" })).toBeVisible({ timeout: 30_000 });
+      await expect(member.getByRole("button", { name: "Remove logo.png" })).toBeVisible({ timeout: 30_000 });
       await ask(member, "HERMES_INPUTS: build a pivot and a deck", "PIVOT_TOTALS:North=22;South=16");
+      // A picture reaches the workspace as a file, which Hermes's code reads.
+      await expect(member.getByTestId("assistant-content").last()).toContainText("INPUT_IMAGES:logo.png=64x32");
       const given = member.getByRole("list", { name: "Your files" }).last();
       await expect(given).toContainText("january.xlsx");
       await expect(given).toContainText("february.xlsx");
+      await expect(given).toContainText("logo.png");
       const made = member.getByRole("list", { name: "Attached files" }).last();
       await expect(made).toContainText("pivot.xlsx");
       await expect(made).toContainText("report.pptx");
