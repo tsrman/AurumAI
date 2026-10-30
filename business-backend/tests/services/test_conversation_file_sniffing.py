@@ -91,3 +91,27 @@ def test_the_key_lives_in_the_conversation_files_folder() -> None:
     org, conversation, operation = uuid4(), uuid4(), uuid4()
     key = file_key(org, conversation, operation, FileKind("text/csv", "csv"))
     assert key == f"conversation-images/{org}/{conversation}/files/{operation}.csv"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("app.py", "app.py"),
+        ("src/App.TSX", "App.tsx"),
+        ("index.html", "index.html"),
+        ("docker-compose.yml", "docker-compose.yml"),
+        ("notes.weird", "notes.txt"),
+        ("Makefile", "Makefile.txt"),
+    ],
+)
+def test_plain_text_keeps_its_code_extension(name: str, expected: str) -> None:
+    kind = sniff(b"print('hello')\n", name)
+
+    assert kind == FileKind("text/plain", "txt")
+    assert display_name(name, kind) == expected
+
+
+def test_only_plain_text_keeps_a_name_it_chose() -> None:
+    pdf = FileKind("application/pdf", "pdf")
+    assert display_name("report.py", pdf) == "report.pdf"
+    assert display_name("data.html", FileKind("text/csv", "csv")) == "data.csv"

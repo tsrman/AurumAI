@@ -222,7 +222,8 @@ async def test_a_picture_is_an_upload_hermes_works_on_in_its_workspace(db, test_
         await store_uploaded_file(db, storage, test_org.id, conversation.id, "huge.png", huge)
     # An SVG is text, never a picture: it is kept as plain text, only ever downloaded.
     svg = await store_uploaded_file(db, storage, test_org.id, conversation.id, "logo.svg", b"<svg onload='x'/>")
-    assert (svg.content_type, svg.name) == ("text/plain", "logo.txt")
+    assert (svg.content_type, svg.name) == ("text/plain", "logo.svg")
+    assert svg.storage_key.endswith(f"/files/uploads/{svg.id}.txt")
 
 
 async def test_only_an_upload_may_be_a_picture(db, test_org, test_user) -> None:  # noqa: ANN001

@@ -22,9 +22,14 @@ import { deleteConversationFile, uploadConversationFile, type AttachedFile } fro
 const IMAGE_SUFFIXES = [".png", ".jpg", ".jpeg", ".webp"] as const;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGES_PER_MESSAGE = 4;
-/** Files Hermes Agent works on in its workspace: the conversation file types and pictures. */
+/**
+ * Files Hermes Agent works on in its workspace: the conversation file types,
+ * pictures and code, which the backend keeps as plain text under its own name.
+ */
 const HERMES_SUFFIXES = [
   ".xlsx", ".csv", ".txt", ".md", ".json", ".pdf", ".docx", ".pptx", ".zip", ".png", ".jpg", ".jpeg", ".webp",
+  ".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".vue", ".html", ".css", ".scss", ".sql", ".sh", ".yaml", ".yml",
+  ".toml", ".ini", ".xml", ".go", ".rs", ".java", ".kt", ".c", ".cpp", ".h", ".cs", ".rb", ".php",
 ] as const;
 const MAX_HERMES_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_FILES_PER_MESSAGE = 10;
