@@ -10,7 +10,7 @@ routes: get_current_user_or_session rejects it before any handler runs.
 from typing import Any, Literal, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +25,8 @@ from src.services.hermes_access import (
     active_hermes_turn,
     require_hermes_capabilities,
 )
-from src.services import hermes_memory, hermes_skill_drafts, hermes_skills
+from src.services import hermes_files, hermes_memory, hermes_skill_drafts, hermes_skills
+from src.services.conversation_files import MAX_FILE_BYTES
 from src.services.session_manager import session_manager
 from src.services.hermes_sessions import (
     HermesSessionError,
@@ -237,6 +238,42 @@ async def close_hermes_session(
         _fail(exc)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+_FILE_STATUS = {
+    "file_operation_not_found": status.HTTP_404_NOT_FOUND,
+    "hermes_turn_inactive": status.HTTP_409_CONFLICT,
+    "file_too_large": status.HTTP_413_CONTENT_TOO_LARGE,
+}
+
+
+@router.post("/hermes/files/{operation_id}", dependencies=[Depends(require_hermes_enabled)])
+async def upload_hermes_file(
+    operation_id: UUID,
+    request: Request,
+    path: str = Query(min_length=1, max_length=1024),
+    user: UserInfo = Depends(get_current_user_or_session),
+    session: AsyncSession = Depends(get_service_db_session),
+) -> dict[str, Any]:
+    """The bytes of a file Hermes attaches, from tool-worker's file workflow,
+    for an open operation of this conversation's active turn."""
+    subject, conversation_id = _runner(user)
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_FILE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "file_too_large"})
+        chunks.append(chunk)
+    try:
+        return await hermes_files.store_upload(
+            session, subject.org_id, conversation_id, operation_id, path, b"".join(chunks)
+        )
+    except hermes_files.FileToolError as exc:
+        raise HTTPException(
+            status_code=_FILE_STATUS.get(exc.code, status.HTTP_422_UNPROCESSABLE_CONTENT),
+            detail={"code": exc.code},
+        ) from None
 
 
 async def _turn_owner(user: UserInfo, session: AsyncSession) -> AuthorizationSubject:

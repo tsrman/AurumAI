@@ -356,7 +356,8 @@ the AurumAI tools the user may use for this turn. Hermes's `mcp_servers` config
 points at it with `tools.include`.
 
 - **Tools exposed.** Knowledge search, `web.search` and `web.read`, image generation
-  and editing, granted MCP skills and code skills, and model questions to the user.
+  and editing, granted MCP skills and code skills, model questions to the user, and
+  `attach_file` for the files and charts it makes (see Files and charts).
 - **Live authorization.** Every call re-authorizes. Revoking a grant during a turn
   takes effect on the next call.
 - **Delegation.** Calls reuse the existing services: web through `web-tools`,
@@ -906,6 +907,36 @@ Each phase is a separate PR behind the flag:
      quarter of an hour).
 
 Recommended v1 for real use: phases 1–4. Memory, drafts and nodes follow.
+
+### Files and charts
+
+Hermes makes charts and files in its terminal (the image carries matplotlib,
+pandas and openpyxl, pinned by hash in `hermes-sandbox/requirements-data.txt`)
+and gives them to the user with the bridge's `attach_file` tool and a path in
+its workspace:
+
+- the bridge reserves a `file_attach` operation of the bound execution, at most
+  ten per turn, counted from the turn's operations under its lock rather than in
+  a turn column the archive would carry. It commits, then starts a
+  `HermesFileAttachWorkflow` on tool-worker's queue, keyed by the operation;
+- tool-worker reads the file through skill-executor, whose `hermes-relay
+  file-read` takes only a regular file in the workspace with one link, reached
+  component by component without following links, outside what snapshots leave
+  out, at most 20 MiB, and streams it in base64 lines that must add up to the
+  size and SHA-256 of its closing line. The bytes go straight to the backend's
+  runner-only upload route, never into workflow history;
+- the backend recognises the bytes, never trusting the name: PNG, JPEG and WebP
+  become a generated conversation image of the turn (outside the image budget),
+  anything else must be one of the conversation file types and becomes a
+  conversation file;
+- the bridge waits `APP_HERMES_FILE_TIMEOUT_SECONDS`; a call that gives up fails
+  its operation, so bytes arriving later are refused instead of being attached
+  twice when the model tries again;
+- the runner never sees Hermes's tool results, so when an answer is persisted
+  the backend shows every image of its turn after the ones the runner claimed,
+  and every file of the turn, which the message lists with its name, type and
+  size. Workflow nodes share the turn, so a Hermes node's files reach the final
+  answer.
 
 ### Idle sessions
 

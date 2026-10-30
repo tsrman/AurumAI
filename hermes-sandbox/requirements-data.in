@@ -1,0 +1,5 @@
+# Libraries the agent uses for charts and files (docs/HERMES_AGENT.md);
+# update-requirements.sh pins them, with what they need, in requirements-data.txt.
+matplotlib
+pandas
+openpyxl

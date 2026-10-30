@@ -15,3 +15,20 @@ tar -xzf "$work/hermes.tar.gz" -C "$work" --strip-components=1 hermes-agent-"$ve
 # The lock's only VCS requirement is Android's psutil, which pip cannot hash.
 (cd "$work" && uvx uv@0.13.1 export --frozen --no-dev --extra mcp --extra sms --no-emit-project \
   --format requirements-txt --no-header) | grep -v '^psutil @ git+' > requirements.txt
+# Data libraries for charts and files, pinned with hashes for the image's
+# Python and resolved within Hermes's own pins; what requirements.txt already
+# pins is left out, as both files install in one pip run.
+grep -E '^[A-Za-z0-9_.-]+==' requirements.txt | sed -E 's/ *;.*//; s/ *\\$//' > "$work/constraints.txt"
+uvx uv@0.13.1 pip compile requirements-data.in -c "$work/constraints.txt" --generate-hashes \
+  --python-version 3.14 --python-platform x86_64-manylinux_2_28 --only-binary :all: \
+  --no-header --no-annotate -o "$work/data.txt"
+python3 - "$work/data.txt" requirements.txt requirements-data.txt <<'PY'
+import re
+import sys
+
+compiled, base, output = sys.argv[1:]
+pinned = {re.split(r"[=\s;\[]", line, maxsplit=1)[0].lower() for line in open(base) if re.match(r"[A-Za-z0-9_.-]+==", line)}
+blocks = re.split(r"\n(?=[A-Za-z0-9_.-]+==)", open(compiled).read().strip())
+kept = [block for block in blocks if block.split("==", 1)[0].lower() not in pinned]
+open(output, "w").write("\n".join(kept) + "\n")
+PY

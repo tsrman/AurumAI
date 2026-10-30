@@ -132,6 +132,7 @@ async def test_runner_citations_are_rechecked_for_exact_turn_before_persistence(
             AsyncMock(return_value=stored),
         ) as upsert,
         patch.object(chat.interaction_service, "finish_turn", AsyncMock()),
+        patch.object(chat, "_answer_media", AsyncMock(side_effect=lambda *args: args[-1])),
         patch.object(chat, "WebSourceRepository", return_value=repository),
     ):
         response = await chat.persist_conversation_message(

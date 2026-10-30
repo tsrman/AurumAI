@@ -138,3 +138,28 @@ class ImageRepository(ToolOperationLeases):
             )
         )
         return {str(image_id) for image_id in rows}
+
+    async def turn_image_ids(
+        self, session: AsyncSession, conversation_id: UUID, owner_id: UUID, turn_id: UUID
+    ) -> list[str]:
+        """Every image this owner's turn produced, oldest first: what an agent
+        whose tool results the runner never sees (Hermes) made."""
+        rows = await session.scalars(
+            select(ConversationImage.id)
+            .join(
+                InteractionTurn,
+                (InteractionTurn.org_id == ConversationImage.org_id)
+                & (InteractionTurn.id == ConversationImage.turn_id),
+            )
+            .where(
+                ConversationImage.org_id == self.org_id,
+                ConversationImage.conversation_id == conversation_id,
+                ConversationImage.turn_id == turn_id,
+                # The user's own uploads to the turn belong to their message.
+                ConversationImage.origin == "generated",
+                InteractionTurn.conversation_id == conversation_id,
+                InteractionTurn.owner_id == owner_id,
+            )
+            .order_by(ConversationImage.created_at, ConversationImage.id)
+        )
+        return [str(image_id) for image_id in rows]

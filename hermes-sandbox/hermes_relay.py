@@ -26,8 +26,13 @@ the agent can stop the server and answer in its place.
   skills-hydrate DIR replaces the platform skills with those in DIR (placed by
                    skill-executor under .aurum/hydrate, then removed): an
                    empty DIR removes them all
+  file-read PATH   a file the agent attaches to its answer, in base64 chunks
+                   and a closing line with its size and SHA-256: a regular
+                   file in the workspace, reached through no link, outside
+                   what snapshots leave out, at most FILE_MAX_BYTES
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -46,6 +51,21 @@ TERMINAL = {"run.completed", "run.failed", "run.cancelled", "run.interrupted"}
 ACTIVE = {"queued", "running", "waiting_for_approval"}
 # A run not yet settled: still active, or asked to stop.
 UNSETTLED = ACTIVE | {"stopping"}
+WORKSPACE = os.environ.get("HERMES_RELAY_WORKSPACE", os.path.dirname(HERMES_HOME))
+# As skill-executor's hermes_snapshots.EXCLUDED: secrets and per-user state.
+EXCLUDED = (
+    ".aurum",
+    ".hermes/config.yaml",
+    ".hermes/backups",
+    ".hermes/.env",
+    ".hermes/auth.json",
+    ".hermes/logs",
+    ".hermes/memories",
+    ".hermes/skills",
+)
+FILE_MAX_BYTES = 20 * 1024 * 1024
+# Base64 of a chunk, in its JSON line, stays well below MAX_LINE.
+FILE_CHUNK = 96 * 1024
 POLL_SECONDS = float(os.environ.get("HERMES_RELAY_POLL_SECONDS", "2"))
 # Only runs started within the longest turn deadline, newest first, are asked about.
 RECENT_SECONDS = 86400
@@ -427,6 +447,82 @@ def active() -> int:
     return 0
 
 
+class Refused(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _workspace_parts(path: str) -> list[str]:
+    """The path's components below the workspace; nothing that leaves it."""
+    if not path or "\x00" in path or len(path) > 1024:
+        raise Refused("file_not_allowed")
+    if os.path.isabs(path):
+        prefix = WORKSPACE.rstrip("/") + "/"
+        if not path.startswith(prefix):
+            raise Refused("file_not_allowed")
+        path = path[len(prefix):]
+    parts = [part for part in path.split("/") if part not in ("", ".")]
+    if not parts or ".." in parts:
+        raise Refused("file_not_allowed")
+    relative = "/".join(parts)
+    if any(relative == item or relative.startswith(item + "/") for item in EXCLUDED):
+        raise Refused("file_not_allowed")
+    return parts
+
+
+def _open_in_workspace(parts: list[str]) -> int:
+    """Each component opened relative to the last, links never followed."""
+    directory = os.open(WORKSPACE, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            try:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            except FileNotFoundError:
+                raise Refused("file_not_found") from None
+            except OSError:
+                raise Refused("file_not_allowed") from None
+            os.close(directory)
+            directory = child
+        try:
+            return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except FileNotFoundError:
+            raise Refused("file_not_found") from None
+        except OSError:
+            raise Refused("file_not_allowed") from None
+    finally:
+        os.close(directory)
+
+
+def file_read(path: str) -> int:
+    try:
+        descriptor = _open_in_workspace(_workspace_parts(path))
+    except Refused as exc:
+        emit("file-refused", code=exc.code)
+        return 1
+    info = os.fstat(descriptor)
+    # A hard link could name an excluded file under another path.
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        os.close(descriptor)
+        emit("file-refused", code="file_not_allowed")
+        return 1
+    if info.st_size > FILE_MAX_BYTES:
+        os.close(descriptor)
+        emit("file-refused", code="file_too_large")
+        return 1
+    with os.fdopen(descriptor, "rb") as source:
+        digest, size = hashlib.sha256(), 0
+        while chunk := source.read(FILE_CHUNK):
+            size += len(chunk)
+            if size > FILE_MAX_BYTES:
+                emit("file-refused", code="file_too_large")
+                return 1
+            digest.update(chunk)
+            emit("chunk", data=base64.b64encode(chunk).decode())
+    emit("file", size=size, sha256=digest.hexdigest())
+    return 0
+
+
 def main(argv: list[str]) -> int:
     command = argv[0] if argv else ""
     if command == "health":
@@ -451,11 +547,13 @@ def main(argv: list[str]) -> int:
         return skills_read()
     if command == "active" and len(argv) == 1:
         return active()
+    if command == "file-read" and len(argv) == 2:
+        return file_read(argv[1])
     if command == "stop" and len(argv) == 2:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|skills-hydrate DIR|active", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|skills-hydrate DIR|file-read PATH|active", file=sys.stderr)
     return 2
 
 

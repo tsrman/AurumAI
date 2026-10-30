@@ -21,6 +21,7 @@ from src.models.interaction import (
     UserQuestion,
 )
 from src.schemas.interaction import AnswerRequest, QuestionRequest, TurnLimits
+from src.services.conversation_files import MAX_FILES_PER_TURN
 from src.services.interaction_rules import answer_allowed, question_arguments_hash
 
 
@@ -173,6 +174,7 @@ class InteractionRepository:
             "web_read",
             "image_generate",
             "image_edit",
+            "file_attach",
         } or not re.fullmatch(
             r"[0-9a-f]{64}", arguments_hash
         ):
@@ -204,6 +206,31 @@ class InteractionRepository:
         if not allow_new:
             raise InteractionError("user_input_disabled")
         self._active(turn)
+        if kind == "file_attach":
+            # Counted from the turn's operations under the turn lock: no turn
+            # column, which the archive format would have to carry.
+            attached = await session.scalar(
+                select(func.count())
+                .select_from(ToolOperation)
+                .where(
+                    ToolOperation.org_id == self.org_id,
+                    ToolOperation.turn_id == turn_id,
+                    ToolOperation.kind == "file_attach",
+                )
+            )
+            if (attached or 0) >= MAX_FILES_PER_TURN:
+                raise InteractionError("tool_limit")
+            operation = ToolOperation(
+                org_id=self.org_id,
+                turn_id=turn_id,
+                execution_id=execution_id,
+                invocation_id=invocation_id,
+                kind=kind,
+                arguments_hash=arguments_hash,
+            )
+            session.add(operation)
+            await session.flush()
+            return operation
         limits = TurnLimits.model_validate(turn.limits)
         budget = {
             "ask_user": ("question_count", limits.question_total),
