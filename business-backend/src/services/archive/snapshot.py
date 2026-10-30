@@ -306,12 +306,13 @@ def check_file_key(row: Mapping[str, Any], org: UUID, conversation: UUID | None)
     # or its uploads folder, named by the upload itself. Rows of version 3
     # carry no origin; they are all an agent's.
     match = re.fullmatch(
-        rf"conversation-images/{org}/{conversation}/files/(uploads/)?({_UUID})\.(csv|txt|md|json|pdf|xlsx|docx|pptx|zip)",
+        rf"conversation-images/{org}/{conversation}/files/(uploads/)?({_UUID})\.(csv|txt|md|json|pdf|xlsx|docx|pptx|zip|png|jpg|webp)",
         row["storage_key"],
     )
     uploaded = row.get("origin", "generated") == "uploaded"
     owner = row["id"] if uploaded else row["operation_id"]
-    if match is None or bool(match[1]) != uploaded or owner is None or match[2] != str(owner):
+    picture = match is not None and match[3] in ("png", "jpg", "webp")
+    if match is None or bool(match[1]) != uploaded or owner is None or match[2] != str(owner) or (picture and not uploaded):
         raise ArchiveFormatError("file_inventory_unknown")
 
 

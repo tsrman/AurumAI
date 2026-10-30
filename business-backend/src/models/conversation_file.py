@@ -29,6 +29,8 @@ FILE_CONTENT_TYPES = (
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "application/zip",
 )
+# Only the user's uploads may be pictures; an agent's pictures are conversation images.
+UPLOAD_IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp")
 
 
 class ConversationFile(OrgScopedModel):
@@ -55,7 +57,10 @@ class ConversationFile(OrgScopedModel):
             ondelete="CASCADE",
         ),
         CheckConstraint(
-            "content_type IN (" + ",".join(f"'{value}'" for value in FILE_CONTENT_TYPES) + ")",
+            "content_type IN (" + ",".join(f"'{value}'" for value in FILE_CONTENT_TYPES) + ") OR "
+            "(origin = 'uploaded' AND content_type IN ("
+            + ",".join(f"'{value}'" for value in UPLOAD_IMAGE_TYPES)
+            + "))",
             name="ck_conversation_file_content_type",
         ),
         CheckConstraint("size_bytes > 0", name="ck_conversation_file_size"),

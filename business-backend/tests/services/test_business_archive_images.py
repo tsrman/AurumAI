@@ -301,6 +301,32 @@ async def test_uploaded_files_survive_archive_and_restore(archive_fixture, tmp_p
         assert list(origins) == ["generated", "generated", "uploaded", "uploaded"]
 
 
+async def test_an_uploaded_picture_survives_archive_and_restore(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    args = await _history(sessions, org, conversation)
+    file_id = uuid4()
+    key = f"conversation-images/{org}/{conversation}/files/uploads/{file_id}.png"
+    async with sessions() as db:
+        await db.execute(
+            text(
+                "INSERT INTO conversation_files(id,org_id,conversation_id,turn_id,origin,name,storage_key,content_type,size_bytes,sha256) VALUES(:id,:o,:c,:t,'uploaded','logo.png',:key,'image/png',:size,:sha)"
+            ),
+            dict(args, id=file_id, key=key, size=len(GENERATED), sha="f" * 64),
+        )
+        await db.commit()
+    platform.put(key, GENERATED)
+    before = await _file_rows(sessions, org)
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+
+    result = await service.run(org, conversation, apply=True)
+    assert result["state"] == "purged" and not platform.exists(key)
+    await service.restore(org, result["archive_id"], apply=True)
+
+    assert await _file_rows(sessions, org) == before
+    assert (platform.root / key).read_bytes() == GENERATED
+
+
 async def test_a_version_three_job_refuses_a_conversation_with_uploads(archive_fixture, tmp_path, monkeypatch):
     sessions, org, conversation = archive_fixture
     platform = LocalPlatformImages(tmp_path / "platform")
@@ -508,6 +534,7 @@ def test_object_keys_are_bounded_to_their_kind():
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/uploads/{image}.jpg")
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/files/{image}.xlsx")
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/files/uploads/{image}.csv")
+    assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/files/uploads/{image}.webp")
     assert read_limit(f"archives/v1/{org}/{archive}/files/{image}") == IMAGE_OBJECT_LIMIT
     for key in (
         f"documents/{org}/{archive}/{image}.png",

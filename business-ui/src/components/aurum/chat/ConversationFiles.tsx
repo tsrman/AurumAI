@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Download, FileArchive, FileSpreadsheet, FileText, Loader2 } from "lucide-react";
+import { Download, FileArchive, FileImage, FileSpreadsheet, FileText, Loader2 } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import { useAppShell } from "@/hooks/useAppShell";
 import { getConversationFileBlob, type AttachedFile } from "@/lib/files-api";
 
 function FileIcon({ contentType }: { contentType: string }) {
-  const Icon =
-    contentType === "text/csv" || contentType.includes("spreadsheet")
+  const Icon = contentType.startsWith("image/")
+    ? FileImage
+    : contentType === "text/csv" || contentType.includes("spreadsheet")
       ? FileSpreadsheet
       : contentType === "application/zip"
         ? FileArchive

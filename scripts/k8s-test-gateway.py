@@ -919,7 +919,8 @@ def _hermes_files_response(request: CompletionRequest) -> str | dict[str, Any] |
 
 
 # Reads the user's two workbooks in /workspace/inputs, prints the pivot's
-# totals for the acceptance to check, and writes a pivot workbook and a deck.
+# totals for the acceptance to check, and writes a pivot workbook and a deck,
+# with the user's pictures on its title slide and their sizes printed.
 _HERMES_INPUTS_SCRIPT = """mkdir -p /workspace/out && python3 - <<'PY'
 import glob
 import matplotlib.pyplot as plot
@@ -939,6 +940,13 @@ title.shapes.title.text = 'Sales by region'
 chart = deck.slides.add_slide(deck.slide_layouts[5])
 chart.shapes.title.text = 'Pivot'
 chart.shapes.add_picture('/workspace/out/pivot.png', Inches(1), Inches(1.5), width=Inches(8))
+from PIL import Image
+pictures = []
+for path in sorted(glob.glob('/workspace/inputs/*.png')):
+    with Image.open(path) as picture:
+        pictures.append(f"{path.rsplit('/', 1)[-1]}={picture.width}x{picture.height}")
+    title.shapes.add_picture(path, Inches(0.5), Inches(0.5), width=Inches(1))
+print('INPUT_IMAGES:' + ';'.join(pictures))
 deck.save('/workspace/out/report.pptx')
 PY"""
 _HERMES_INPUTS_STEPS = (
