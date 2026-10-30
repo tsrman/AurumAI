@@ -132,6 +132,9 @@ def main(argv: list[str]) -> None:
         emit(status=status, reason=reason)
     elif command == "https":
         emit(host=argv[1], status=https_status(argv[1]))
+    elif command == "npm":
+        # What npm fetches first: a package's metadata from the registry.
+        emit(status=https_status("registry.npmjs.org", "/left-pad"))
     elif command == "pip":
         proxy = f"http://hermes:{TOKEN}@{EGRESS}:3128"
         result = subprocess.run(

@@ -56,7 +56,11 @@ permissive licenses (MIT, BSD, Apache-2.0, ISC, PSF) except `certifi` and
 The data libraries in `hermes-sandbox/requirements-data.txt` (matplotlib,
 pandas, openpyxl, python-pptx, python-docx, pypdf, numpy and what they need) are
 permissive as well: the Matplotlib license (PSF-based), BSD, MIT. lxml's wheels
-bundle libxml2 and libxslt (MIT). Matplotlib bundles the DejaVu (Bitstream
+bundle libxml2 and libxslt (MIT). Playwright is Apache-2.0. The image also installs
+Node.js (MIT; its binary bundles OpenSSL, ICU, V8 and libuv under their own
+permissive licenses, listed in its LICENSE) from the official release, verified by
+hash, and Debian's Chromium headless shell (BSD-3-Clause with the licenses of its components,
+recorded in the package's copyright file) with the DejaVu and Liberation fonts. Matplotlib bundles the DejaVu (Bitstream
 Vera license) and STIX (SIL Open Font License) fonts, and numpy's wheels bundle
 OpenBLAS (BSD) and the GCC Fortran runtime (GPL-3.0 with the GCC Runtime Library
 Exception); each distribution carries these licenses.

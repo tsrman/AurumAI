@@ -67,6 +67,8 @@ EXCLUDED = (
     ".hermes/logs",
     ".hermes/memories",
     ".hermes/skills",
+    # Package caches (pip, npm): a second copy of what is installed.
+    ".cache",
 )
 FILE_MAX_BYTES = 20 * 1024 * 1024
 # Base64 of a chunk, in its JSON line, stays well below MAX_LINE.

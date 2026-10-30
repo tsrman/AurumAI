@@ -90,7 +90,7 @@ def test_defaults_are_off_and_packages() -> None:
 
     assert services["backend"]["environment"]["APP_HERMES_ENABLED"] == "false"
     assert services["hermes-egress"]["environment"]["HERMES_EGRESS_MAX_MODE"] == "packages"
-    assert services["hermes-egress"]["environment"]["HERMES_EGRESS_PACKAGE_HOSTS"] == "pypi.org,files.pythonhosted.org"
+    assert services["hermes-egress"]["environment"]["HERMES_EGRESS_PACKAGE_HOSTS"] == "pypi.org,files.pythonhosted.org,registry.npmjs.org"
 
 
 def test_the_service_secret_is_required() -> None:

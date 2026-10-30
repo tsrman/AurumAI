@@ -10,9 +10,31 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.source="${AURUMAI_SOURCE_URL}" \
       org.opencontainers.image.revision="${AURUMAI_REVISION}"
 
+# Chromium's headless shell (Debian's signed package, with fonts that cover
+# Cyrillic) lets the agent check the web pages it builds, through Playwright.
 RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends ca-certificates curl git \
+    && apt-get install -y --no-install-recommends ca-certificates curl git xz-utils \
+        chromium-headless-shell fonts-dejavu-core fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
+
+# Node.js for JavaScript projects: the official release, verified by its hash.
+# Native addons cannot build (no compilers); npm reaches the registry through
+# hermes-egress, with the HTTPS proxy start.sh sets.
+ARG TARGETARCH
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256_AMD64=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+ARG NODE_SHA256_ARM64=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) arch=x64 sha256="${NODE_SHA256_AMD64}" ;; \
+        arm64) arch=arm64 sha256="${NODE_SHA256_ARM64}" ;; \
+        *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${arch}.tar.xz" \
+    && echo "${sha256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
+        --exclude='*/include' --exclude='*/share/doc' --exclude='*/CHANGELOG.md' --exclude='*/README.md' \
+    && rm /tmp/node.tar.xz \
+    && node --version && npm --version
 
 # Hermes ships no wheel (its build refuses outside Nix) and runs from its
 # source tree: the release's tag archive, verified by its hash. Its
@@ -42,9 +64,10 @@ RUN chmod 0555 /usr/local/bin/hermes-sandbox-start /usr/local/bin/hermes-relay \
     && mkdir -p /workspace && chown 10001:10001 /workspace
 
 # Everything the agent writes lives in the workspace volume: Hermes's state,
-# its home directory and `pip install --user` packages. Matplotlib draws
-# without a display and keeps its font cache in the sandbox's /tmp, out of
-# snapshots.
+# its home directory and `pip install --user` and `npm install -g` packages.
+# Package caches live in .cache, which snapshots leave out; matplotlib draws
+# without a display and keeps its font cache in the sandbox's /tmp. Browsers
+# are never downloaded by npm packages: they use the system Chromium.
 ENV HERMES_HOME=/workspace/.hermes \
     HOME=/workspace/home \
     PYTHONUSERBASE=/workspace/.local \
@@ -52,7 +75,17 @@ ENV HERMES_HOME=/workspace/.hermes \
     PIP_USER=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     MPLBACKEND=Agg \
-    MPLCONFIGDIR=/tmp/matplotlib
+    MPLCONFIGDIR=/tmp/matplotlib \
+    XDG_CACHE_HOME=/workspace/.cache \
+    PIP_CACHE_DIR=/workspace/.cache/pip \
+    NPM_CONFIG_CACHE=/workspace/.cache/npm \
+    NPM_CONFIG_PREFIX=/workspace/.local \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FUND=false \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-headless-shell \
+    CHROME_BIN=/usr/bin/chromium-headless-shell
 USER 10001:10001
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/hermes-sandbox-start"]

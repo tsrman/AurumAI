@@ -17,5 +17,5 @@ proxy=$(cat /workspace/.aurum/proxy)
 # Only HTTPS goes through the CONNECT proxy; the platform endpoint is plain
 # HTTP to hermes-egress and must never be proxied.
 export HTTPS_PROXY="$proxy" https_proxy="$proxy" NO_PROXY="hermes-egress,localhost,127.0.0.1" no_proxy="hermes-egress,localhost,127.0.0.1"
-export PIP_PROXY="$proxy"
+export PIP_PROXY="$proxy" NPM_CONFIG_HTTPS_PROXY="$proxy" NPM_CONFIG_NOPROXY="hermes-egress,localhost,127.0.0.1"
 exec hermes gateway run

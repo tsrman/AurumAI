@@ -36,13 +36,38 @@ def test_data_libraries_are_pinned_by_hash_without_repeating_hermes_pins() -> No
     names = re.findall(pattern, data, re.M)
     blocks = [block for block in re.split(r"\n(?=[A-Za-z0-9_.-]+==)", data) if "==" in block]
 
-    assert {"matplotlib", "pandas", "openpyxl", "numpy", "python-pptx", "python-docx", "pypdf"} <= set(names)
+    assert {"matplotlib", "pandas", "openpyxl", "numpy", "python-pptx", "python-docx", "pypdf", "playwright"} <= set(names)
     assert len(names) == len(blocks) and all("--hash=sha256:" in block for block in blocks)
     assert not set(names) & {name.lower() for name in re.findall(pattern, base, re.M)}
     assert "git+" not in data
     dockerfile = (IMAGE / "Dockerfile").read_text()
     assert "-r /tmp/requirements.txt -r /tmp/requirements-data.txt" in dockerfile
     assert "MPLBACKEND=Agg" in dockerfile and "MPLCONFIGDIR=/tmp/matplotlib" in dockerfile
+
+
+def test_node_is_the_official_release_verified_per_architecture() -> None:
+    dockerfile = (IMAGE / "Dockerfile").read_text()
+
+    assert re.search(r"^ARG NODE_VERSION=24\.\d+\.\d+$", dockerfile, re.M)
+    for arch in ("AMD64", "ARM64"):
+        assert re.search(rf"^ARG NODE_SHA256_{arch}=[0-9a-f]{{64}}$", dockerfile, re.M)
+    assert '"https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${arch}.tar.xz"' in dockerfile
+    assert 'echo "${sha256}  /tmp/node.tar.xz" | sha256sum -c -' in dockerfile
+
+
+def test_web_tooling_keeps_caches_and_browsers_out_of_snapshots_and_the_network() -> None:
+    dockerfile = (IMAGE / "Dockerfile").read_text()
+    start = (IMAGE / "start.sh").read_text()
+
+    assert "chromium-headless-shell" in dockerfile
+    assert "PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-headless-shell" in dockerfile
+    # npm packages never download a browser the egress proxy would refuse.
+    assert "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1" in dockerfile and "PUPPETEER_SKIP_DOWNLOAD=true" in dockerfile
+    # Caches sit in .cache, which snapshots leave out; global installs in the workspace.
+    for setting in ("NPM_CONFIG_CACHE=/workspace/.cache/npm", "PIP_CACHE_DIR=/workspace/.cache/pip", "NPM_CONFIG_PREFIX=/workspace/.local"):
+        assert setting in dockerfile
+    # The proxy, with its token, reaches npm through the environment, never a file.
+    assert 'NPM_CONFIG_HTTPS_PROXY="$proxy"' in start and ".npmrc" not in start
 
 
 def test_image_installs_by_hash_and_runs_unprivileged_without_compilers() -> None:
