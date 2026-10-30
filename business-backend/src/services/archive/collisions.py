@@ -22,6 +22,7 @@ UNIQUE_KEYS: dict[str, list[tuple[str, ...]]] = {
     "interaction_outbox": [("org_id", "question_id", "question_version", "event_kind")],
     "web_sources": [("org_id", "operation_id", "position")],
     "conversation_images": [("storage_key",), ("org_id", "operation_id")],
+    "conversation_files": [("storage_key",), ("org_id", "operation_id")],
 }
 
 

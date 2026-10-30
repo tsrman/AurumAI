@@ -40,6 +40,7 @@ from src.services.archive.schemas import (
 from src.services.archive.catalogue import catalogue
 from src.services.archive.snapshot import (
     TABLES,
+    check_file_key,
     check_image_key,
     conversation_tables,
     inventory,
@@ -55,12 +56,21 @@ from src.services.archive.storage import (
     PlatformImageStorage,
     digest,
 )
+from src.models.conversation_file import ConversationFile
 from src.models.conversation_image import ConversationImage
 from src.models.hermes_session import HermesSession
 
 Sessions = Callable[[], AsyncSession]
 # (org, conversation): removes the conversation's Hermes sandboxes and snapshots.
 HermesPurge = Callable[[UUID, UUID], Awaitable[None]]
+
+# Conversation media whose bytes live in the platform bucket and travel with
+# the archive: the table, its folder in the archive and in the manifest, the
+# key check of its rows, and the archive version that first carries it.
+MEDIA = {
+    "conversation_images": ("images", check_image_key, 2),
+    "conversation_files": ("files", check_file_key, 3),
+}
 
 
 class ArchiveService:
@@ -100,12 +110,13 @@ class ArchiveService:
     async def _images_blocker(self, session: AsyncSession, org: UUID, conversation: UUID) -> str | None:
         if self.images is not None:
             return None
-        present = await session.scalar(
-            select(ConversationImage.id)
-            .where(ConversationImage.org_id == org, ConversationImage.conversation_id == conversation)
-            .limit(1)
-        )
-        return "image_archive_not_configured" if present is not None else None
+        for model in (ConversationImage, ConversationFile):
+            present = await session.scalar(
+                select(model.id).where(model.org_id == org, model.conversation_id == conversation).limit(1)
+            )
+            if present is not None:
+                return "image_archive_not_configured"
+        return None
 
     @asynccontextmanager
     async def session(self, org: UUID) -> AsyncIterator[AsyncSession]:
@@ -425,9 +436,8 @@ class ArchiveService:
 
     async def _seal(self, org: UUID, job: ArchiveJob) -> None:
         parts = []
-        images: builtins.list[dict[str, Any]] = []
-        pending_images: builtins.list[dict[str, Any]] = []
         version = self._version(job)
+        pending: dict[str, builtins.list[dict[str, Any]]] = {table: [] for table in MEDIA}
         prefix = f"archives/v1/{org}/{job.id}"
         with tempfile.TemporaryDirectory(prefix="platform-archive-") as temporary:
             directory = Path(temporary)
@@ -442,8 +452,8 @@ class ArchiveService:
                     async for rows in pages(
                         session, table, org, job.conversation_id, self._ids(job), version
                     ):
-                        if table == "conversation_images":
-                            pending_images.extend(rows)
+                        if table in pending:
+                            pending[table].extend(rows)
                         path = directory / f"{table}-{index}.parquet"
                         encode_rows(table, rows, path, version)
                         key = f"{prefix}/{table}/{index:06d}.parquet"
@@ -464,8 +474,13 @@ class ArchiveService:
             # transaction ends. The rows were checked against the frozen
             # inventory above, their keys are immutable and the conversation
             # is fenced while it is archiving.
-            for row in pending_images:
-                images.append(await self._seal_image(prefix, row, directory, version))
+            media: dict[str, builtins.list[dict[str, Any]]] = {}
+            for table, (folder, _, since) in MEDIA.items():
+                if version >= since:
+                    media[folder] = [
+                        await self._seal_image(prefix, row, directory, version, folder)
+                        for row in pending[table]
+                    ]
             manifest = dict(
                 version=version,
                 org_id=str(org),
@@ -483,8 +498,7 @@ class ArchiveService:
                     "expiring node output",
                 ],
             )
-            if version >= 2:
-                manifest["images"] = images
+            manifest.update(media)
             path = directory / "manifest.json"
             path.write_text(canonical(manifest))
             path.chmod(0o600)
@@ -509,31 +523,26 @@ class ArchiveService:
     async def _image_objects_blocker(self, org: UUID, conversation: UUID) -> str | None:
         if self.images is None:
             return None
-        async with self.session(org) as session:
-            rows = (
-                await session.execute(
-                    select(
-                        ConversationImage.id,
-                        ConversationImage.operation_id,
-                        ConversationImage.storage_key,
-                        ConversationImage.size_bytes,
-                    ).where(
-                        ConversationImage.org_id == org,
-                        ConversationImage.conversation_id == conversation,
+        for model, check in ((ConversationImage, check_image_key), (ConversationFile, check_file_key)):
+            async with self.session(org) as session:
+                rows = (
+                    await session.execute(
+                        select(model.id, model.operation_id, model.storage_key, model.size_bytes).where(
+                            model.org_id == org, model.conversation_id == conversation
+                        )
                     )
-                )
-            ).mappings().all()
-        for row in rows:
-            # The same ownership check as the inventory, before any request.
-            check_image_key(dict(row), org, conversation)
-            if await self.images.size(row["storage_key"]) != row["size_bytes"]:
-                return "image_bytes_unavailable"
+                ).mappings().all()
+            for row in rows:
+                # The same ownership check as the inventory, before any request.
+                check(dict(row), org, conversation)
+                if await self.images.size(row["storage_key"]) != row["size_bytes"]:
+                    return "image_bytes_unavailable"
         return None
 
     async def _seal_image(
-        self, prefix: str, row: dict[str, Any], directory: Path, version: int
+        self, prefix: str, row: dict[str, Any], directory: Path, version: int, folder: str = "images"
     ) -> dict[str, Any]:
-        """Copy one image's bytes into the archive as its own immutable object."""
+        """Copy one image's or file's bytes into the archive as its own immutable object."""
         if self.images is None:
             raise ArchiveBlocked("image_archive_not_configured")
         path = directory / f"{row['id']}.image"
@@ -541,7 +550,7 @@ class ArchiveService:
         try:
             if path.stat().st_size != row["size_bytes"]:
                 raise ArchiveBlocked("image_bytes_mismatch")
-            key = f"{prefix}/images/{row['id']}"
+            key = f"{prefix}/{folder}/{row['id']}"
             entry: dict[str, Any] = dict(
                 id=str(row["id"]), key=key, sha256=digest(path), size=path.stat().st_size
             )
@@ -596,7 +605,7 @@ class ArchiveService:
         }
         if len(manifest["parts"]) > 4096:
             raise ArchiveBlocked("archive_too_many_parts")
-        image_rows: dict[str, dict[str, Any]] = {}
+        media_rows: dict[str, dict[str, dict[str, Any]]] = {table: {} for table in MEDIA}
         for number, part in enumerate(manifest["parts"]):
             table = part["table"]
             if (
@@ -614,8 +623,8 @@ class ArchiveService:
             for row in read_rows(table, path, version):
                 if row["org_id"] != org:
                     raise ArchiveBlocked("part_tenant_mismatch")
-                if table == "conversation_images":
-                    image_rows[str(row["id"])] = row
+                if table in media_rows:
+                    media_rows[table][str(row["id"])] = row
                 totals[table]["hash"].update(row_json(row, table, version).encode() + b"\n")
                 totals[table]["count"] += 1
                 count += 1
@@ -626,7 +635,9 @@ class ArchiveService:
                 table
             ]:
                 raise ArchiveBlocked("inventory_hash_mismatch")
-        await self._verified_images(org, job, manifest, image_rows, directory)
+        manifest["_media_keys"] = {}
+        for table, (folder, _, since) in MEDIA.items():
+            await self._verified_images(org, job, manifest, media_rows[table], directory, folder, since)
         if job.rag:
             from src.services.archive.rag_artifacts import verify_rag
 
@@ -662,14 +673,16 @@ class ArchiveService:
         manifest: dict[str, Any],
         image_rows: dict[str, dict[str, Any]],
         directory: Path,
+        folder: str = "images",
+        since: int = 2,
     ) -> None:
-        """Every archived image row has exactly one verified object, kept in
-        ``directory`` for a restore."""
-        if self._version(job) < 2:
-            if "images" in manifest:
+        """Every archived image (or file) row has exactly one verified object,
+        kept in ``directory`` for a restore."""
+        if self._version(job) < since:
+            if folder in manifest:
                 raise ArchiveBlocked("image_manifest_unexpected")
             return
-        entries = manifest.get("images")
+        entries = manifest.get(folder)
         if not isinstance(entries, builtins.list) or len(entries) > 100_000:
             raise ArchiveBlocked("image_manifest_invalid")
         if {entry.get("id") for entry in entries} != set(image_rows) or len(entries) != len(
@@ -678,30 +691,31 @@ class ArchiveService:
             raise ArchiveBlocked("image_inventory_mismatch")
         for entry in entries:
             row = image_rows[entry["id"]]
-            if entry["key"] != f"archives/v1/{org}/{job.id}/images/{entry['id']}" or entry[
+            if entry["key"] != f"archives/v1/{org}/{job.id}/{folder}/{entry['id']}" or entry[
                 "size"
             ] != row["size_bytes"]:
                 raise ArchiveBlocked("image_owner_mismatch")
-            path = directory / f"image-{entry['id']}"
+            path = directory / f"{folder}-{entry['id']}"
             path.unlink(missing_ok=True)
             await self.storage.download(entry["key"], path)
             if digest(path) != entry["sha256"] or path.stat().st_size != entry["size"]:
                 raise ArchiveBlocked("image_hash_mismatch")
         # In memory only: platform keys come from the verified archived rows,
         # never from the manifest's own fields.
-        manifest["_image_keys"] = {key: row["storage_key"] for key, row in image_rows.items()}
+        manifest["_media_keys"][folder] = {key: row["storage_key"] for key, row in image_rows.items()}
 
     async def _purge_images(self, org: UUID, job: ArchiveJob, manifest: dict[str, Any]) -> None:
         """Remove the platform copies of verified archived images. Idempotent,
         so a resume after a crash simply repeats it before the row purge."""
-        entries = manifest.get("images") or []
-        if not entries:
-            return
-        if self.images is None:
-            raise ArchiveBlocked("image_archive_not_configured")
-        keys = manifest["_image_keys"]
-        for entry in entries:
-            await self.images.delete(keys[entry["id"]])
+        for folder, _, _ in MEDIA.values():
+            entries = manifest.get(folder) or []
+            if not entries:
+                continue
+            if self.images is None:
+                raise ArchiveBlocked("image_archive_not_configured")
+            keys = manifest["_media_keys"][folder]
+            for entry in entries:
+                await self.images.delete(keys[entry["id"]])
 
     async def _purge_hermes(self, org: UUID, job: ArchiveJob) -> None:
         """Hermes workspaces are runtime state and are not archived: a restored
@@ -729,22 +743,23 @@ class ArchiveService:
     ) -> None:
         """Put verified bytes back at their original keys, then read them back.
         Runs while the conversation is still hidden; repeating it is harmless."""
-        entries = manifest.get("images") or []
-        if not entries:
-            return
-        if self.images is None:
-            raise ArchiveBlocked("image_archive_not_configured")
-        keys = manifest["_image_keys"]
-        for entry in entries:
-            source = directory / f"image-{entry['id']}"
-            await self.images.upload(keys[entry["id"]], source)
-            check = directory / f"{uuid4()}.readback"
-            try:
-                await self.images.download(keys[entry["id"]], check, IMAGE_OBJECT_LIMIT)
-                if digest(check) != entry["sha256"]:
-                    raise ArchiveBlocked("image_restore_mismatch")
-            finally:
-                check.unlink(missing_ok=True)
+        for folder, _, _ in MEDIA.values():
+            entries = manifest.get(folder) or []
+            if not entries:
+                continue
+            if self.images is None:
+                raise ArchiveBlocked("image_archive_not_configured")
+            keys = manifest["_media_keys"][folder]
+            for entry in entries:
+                source = directory / f"{folder}-{entry['id']}"
+                await self.images.upload(keys[entry["id"]], source)
+                check = directory / f"{uuid4()}.readback"
+                try:
+                    await self.images.download(keys[entry["id"]], check, IMAGE_OBJECT_LIMIT)
+                    if digest(check) != entry["sha256"]:
+                        raise ArchiveBlocked("image_restore_mismatch")
+                finally:
+                    check.unlink(missing_ok=True)
 
     async def _lock_audit_claim(
         self,
@@ -865,7 +880,7 @@ class ArchiveService:
                 directory = Path(temporary)
                 manifest = await self._verified_files(org, job, directory)
                 await self._dependencies(org, job, manifest, directory)
-                if manifest.get("images") and self.images is None:
+                if any(manifest.get(folder) for folder, _, _ in MEDIA.values()) and self.images is None:
                     raise ArchiveBlocked("image_archive_not_configured")
                 if not apply:
                     if job.rag:
