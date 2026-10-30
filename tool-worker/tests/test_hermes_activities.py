@@ -117,6 +117,36 @@ async def test_a_refused_creation_carries_skill_executors_code(http) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_refused_binding_carries_business_backends_wrapped_code(http) -> None:
+    """business-backend wraps an HTTPException's detail as {"error": {"message": ...}}."""
+    wrapped = {"error": {"code": "FORBIDDEN", "message": {"code": "hermes_session_conflict"}, "details": {}}}
+    http({("PUT", f"/v1/internal/hermes/sessions/{SESSION_UUID}/turn"): httpx.Response(409, json=wrapped)})
+
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(hermes_activities.hermes_bind_turn, "t", SESSION, "turn-1", "exec-1")
+
+    assert raised.value.type == "hermes_session_conflict" and raised.value.non_retryable
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"message": "Only runner session tokens are allowed"}},
+        {"error": {"message": {"code": "https://internal.example/secret"}}},
+        ["not", "an", "object"],
+    ],
+)
+async def test_an_unknown_or_unsafe_backend_code_falls_back(http, body) -> None:
+    http({("PUT", f"/v1/internal/hermes/sessions/{SESSION_UUID}/turn"): httpx.Response(403, json=body)})
+
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(hermes_activities.hermes_bind_turn, "t", SESSION, "turn-1", "exec-1")
+
+    assert raised.value.type == "hermes_backend_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_binding_sends_the_turn_and_execution(http) -> None:
     router = http({("PUT", f"/v1/internal/hermes/sessions/{SESSION_UUID}/turn"): httpx.Response(204)})
 

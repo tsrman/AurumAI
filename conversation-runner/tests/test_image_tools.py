@@ -384,6 +384,10 @@ async def test_image_activity_posts_to_the_runner_only_route(monkeypatch: pytest
         ({"detail": {"code": "image_quota_exceeded"}}, "image_quota_exceeded"),
         ({"detail": {"code": "something_else"}}, "image_unavailable"),
         ({"detail": "Interaction not found"}, "image_unavailable"),
+        # business-backend's own error body around the same detail.
+        ({"error": {"code": "FORBIDDEN", "message": {"code": "image_limit"}, "details": {}}}, "image_limit"),
+        ({"error": {"code": "FORBIDDEN", "message": {"code": "something_else"}}}, "image_unavailable"),
+        ({"error": {"code": "FORBIDDEN", "message": "Interaction not found"}}, "image_unavailable"),
     ],
 )
 async def test_image_activity_errors_are_stable_and_non_retryable(

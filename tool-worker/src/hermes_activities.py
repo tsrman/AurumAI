@@ -47,12 +47,23 @@ def _failure(code: str) -> ApplicationError:
     return ApplicationError(code, type=code, non_retryable=code in _FINAL)
 
 
-def _code(response: httpx.Response, fallback: str) -> str:
+def _detail_code(response: httpx.Response) -> object:
+    """The code of an error answer. skill-executor answers {"detail": {"code"}};
+    business-backend wraps the same detail as {"error": {"message": {"code"}}}."""
     try:
-        detail = response.json().get("detail")
+        body = response.json()
     except ValueError:
-        return fallback
-    code = detail.get("code") if isinstance(detail, dict) else None
+        return None
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("detail")
+    if detail is None and isinstance(body.get("error"), dict):
+        detail = body["error"].get("message")
+    return detail.get("code") if isinstance(detail, dict) else None
+
+
+def _code(response: httpx.Response, fallback: str) -> str:
+    code = _detail_code(response)
     return code if isinstance(code, str) and code.startswith("hermes_") and len(code) <= 64 else fallback
 
 
@@ -425,19 +436,8 @@ _FILE_TIMEOUT = 60.0
 
 
 def _file_refusal(response: httpx.Response) -> str | None:
-    """skill-executor answers {"detail": {"code"}}; business-backend wraps the
-    same detail as {"error": {"message": {"code"}}}."""
-    try:
-        body = response.json()
-    except ValueError:
-        return None
-    if not isinstance(body, dict):
-        return None
-    detail = body.get("detail")
-    if detail is None and isinstance(body.get("error"), dict):
-        detail = body["error"].get("message")
-    code = detail.get("code") if isinstance(detail, dict) else None
-    return code if code in _FILE_REFUSALS else None
+    code = _detail_code(response)
+    return code if isinstance(code, str) and code in _FILE_REFUSALS else None
 
 
 # The file workflow's one step (hermes_file_workflow): the bytes go from
