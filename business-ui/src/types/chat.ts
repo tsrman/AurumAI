@@ -48,6 +48,8 @@ export interface MessageResponse {
   sourceIds?: string[];
   unsupportedSourceIds?: string[];
   imageIds?: string[];
+  // Files the answer's agent attached (see lib/files-api).
+  files?: unknown[];
   // The reason a failed turn ended with, kept by the history.
   failed?: boolean;
 }

@@ -12,6 +12,7 @@ import { Markdown } from "./Markdown";
 import { ToolCallRow } from "./ToolCallRow";
 import { SourceCitations } from "./SourceCitations";
 import { ConversationImages } from "./ConversationImages";
+import { ConversationFiles } from "./ConversationFiles";
 import { WorkflowProgress } from "./WorkflowProgress";
 import { MetricsWidget } from "./widgets/MetricsWidget";
 import { BarsWidget } from "./widgets/BarsWidget";
@@ -151,6 +152,8 @@ export function AssistantBlock({ message, onRegenerate }: AssistantBlockProps) {
         {message.images && message.images.length > 0 && (
           <ConversationImages imageIds={message.images} />
         )}
+
+        {message.files && message.files.length > 0 && <ConversationFiles files={message.files} />}
 
         {message.widgets.length > 0 && (
           <div className="flex flex-col gap-3">

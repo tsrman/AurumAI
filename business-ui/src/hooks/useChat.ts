@@ -14,6 +14,7 @@ import {
 } from "@/lib/chat-api";
 import { cancelWorkflowRun } from "@/lib/workflows-api";
 import { loadSourcesForMessage } from "@/lib/web-sources-api";
+import { filesFrom } from "@/lib/files-api";
 import { imageIdsFrom } from "@/lib/images-api";
 import { questionKeys, useQuestions } from "@/hooks/useQuestions";
 import {
@@ -147,6 +148,7 @@ function backendMessageToUIMessage(
     widgets: [],
     sources,
     images: imageIdsFrom(msg.imageIds),
+    files: filesFrom(msg.files),
     phase: "done",
     thinkingOpen: false,
     thinkingSeconds: 0,
@@ -424,9 +426,10 @@ export function useChat(): UseChatReturn {
         // The persisted list is the backend-verified one: it replaces ids
         // collected from the live stream.
         const images = imageIdsFrom(persisted.imageIds);
+        const files = filesFrom(persisted.files);
         updateAssistantMessage(conversationId, assistantId, (message) =>
           generationRef.current === generation
-            ? { ...message, sources, images }
+            ? { ...message, sources, images, files }
             : message
         );
       } catch {
