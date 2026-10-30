@@ -12,11 +12,12 @@ from src.services.archive.schemas import MAX_PART, ArchiveFormatError
 KEY = re.compile(
     r"^archives/v1/[0-9a-f-]{36}/[0-9a-f-]{36}/(?:[a-z_]+/[0-9]{6}\.parquet|manifest\.json)$"
 )
-IMAGE_KEY = re.compile(r"^archives/v1/[0-9a-f-]{36}/[0-9a-f-]{36}/images/[0-9a-f-]{36}$")
+IMAGE_KEY = re.compile(r"^archives/v1/[0-9a-f-]{36}/[0-9a-f-]{36}/(?:images|files)/[0-9a-f-]{36}$")
 # The largest image the platform accepts (APP_IMAGES_MAX_BYTES upper bound).
 IMAGE_OBJECT_LIMIT = 100 * 1024 * 1024
 PLATFORM_IMAGE_KEY = re.compile(
-    r"^conversation-images/[0-9a-f-]{36}/[0-9a-f-]{36}/(?:uploads/)?[0-9a-f-]{36}\.(?:png|jpg|webp)$"
+    r"^conversation-images/[0-9a-f-]{36}/[0-9a-f-]{36}/(?:(?:uploads/)?[0-9a-f-]{36}\.(?:png|jpg|webp)"
+    r"|files/[0-9a-f-]{36}\.(?:csv|txt|md|json|pdf|xlsx|docx|pptx|zip))$"
 )
 
 

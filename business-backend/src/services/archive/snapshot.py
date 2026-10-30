@@ -24,6 +24,7 @@ from src.models.interaction import (
     InteractionOutbox,
 )
 from src.models.web_source import WebSource
+from src.models.conversation_file import ConversationFile
 from src.models.conversation_image import ConversationImage
 from src.models.knowledge_base import KnowledgeBase
 from src.models.skill import Skill
@@ -52,6 +53,7 @@ MODELS = [
     InteractionOutbox,
     WebSource,
     ConversationImage,
+    ConversationFile,
     KnowledgeBase,
     Skill,
     FileMetadata,
@@ -81,7 +83,13 @@ ORDER_V2 = [
     "conversation_images",
     *ORDER_V1[ORDER_V1.index("web_sources") + 1 :],
 ]
-ORDERS = {1: ORDER_V1, 2: ORDER_V2}
+# Files follow their tool operations, after the images.
+ORDER_V3 = [
+    *ORDER_V2[: ORDER_V2.index("conversation_images") + 1],
+    "conversation_files",
+    *ORDER_V2[ORDER_V2.index("conversation_images") + 1 :],
+]
+ORDERS = {1: ORDER_V1, 2: ORDER_V2, 3: ORDER_V3}
 ORDER = ORDERS[CURRENT_VERSION]
 VERSION_KEY = "_archive_version"
 _UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -268,6 +276,18 @@ async def _omitted_columns_hold_defaults(
         raise ArchiveFormatError("archive_version_incompatible")
 
 
+async def _later_tables_are_empty(
+    session: AsyncSession, org: UUID, conversation: UUID, version: int
+) -> None:
+    """An older-version archive cannot carry a table added after it, and the
+    purge would cascade over its rows: they must not exist."""
+    for table in ORDER:
+        if table in ORDERS[version]:
+            continue
+        if await session.scalar(select(exists(selection(table, org, conversation)))):
+            raise ArchiveFormatError("archive_version_incompatible")
+
+
 def check_image_key(row: Mapping[str, Any], org: UUID, conversation: UUID | None) -> None:
     # Bytes are copied by storage key, so the key must be this conversation's
     # own and name the row that owns it: the operation, or the upload itself.
@@ -278,6 +298,16 @@ def check_image_key(row: Mapping[str, Any], org: UUID, conversation: UUID | None
     owner = row["id"] if match and match[1] else row["operation_id"]
     if match is None or owner is None or match[2] != str(owner):
         raise ArchiveFormatError("image_inventory_unknown")
+
+
+def check_file_key(row: Mapping[str, Any], org: UUID, conversation: UUID | None) -> None:
+    # As for images: this conversation's files folder, named by the operation.
+    match = re.fullmatch(
+        rf"conversation-images/{org}/{conversation}/files/({_UUID})\.(csv|txt|md|json|pdf|xlsx|docx|pptx|zip)",
+        row["storage_key"],
+    )
+    if match is None or row["operation_id"] is None or match[1] != str(row["operation_id"]):
+        raise ArchiveFormatError("file_inventory_unknown")
 
 
 async def inventory(
@@ -297,6 +327,8 @@ async def inventory(
         if conversation
         else None
     )
+    if conversation:
+        await _later_tables_are_empty(session, org, conversation, version)
     for table in conversation_tables(version) if conversation else ["audit_logs"]:
         digest = hashlib.sha256()
         count = 0
@@ -306,6 +338,8 @@ async def inventory(
             for row in rows:
                 if table == "conversation_images":
                     check_image_key(row, org, conversation)
+                if table == "conversation_files":
+                    check_file_key(row, org, conversation)
                 if table == "messages" and row["content_ref"] is not None:
                     raise ArchiveFormatError("external_message_reference_unsupported")
                 if table == "file_metadata":

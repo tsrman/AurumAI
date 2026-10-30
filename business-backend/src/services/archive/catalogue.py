@@ -278,8 +278,28 @@ COLUMNS_V2: Catalogue = {
     ],
 }
 
-CATALOGUES: dict[int, Catalogue] = {1: COLUMNS_V1, 2: COLUMNS_V2}
-CURRENT_VERSION = 2
+# v3 adds the files agents attach to their answers.
+COLUMNS_V3: Catalogue = {
+    **COLUMNS_V2,
+    "conversation_files": [
+        ("conversation_id", "uuid", False),
+        ("turn_id", "uuid", False),
+        ("execution_id", "uuid", False),
+        ("operation_id", "uuid", False),
+        ("name", "str", False),
+        ("storage_key", "str", False),
+        ("content_type", "str", False),
+        ("size_bytes", "int", False),
+        ("sha256", "str", False),
+        ("org_id", "uuid", False),
+        ("id", "uuid", False),
+        ("created_at", "utc", False),
+        ("updated_at", "utc", False),
+    ],
+}
+
+CATALOGUES: dict[int, Catalogue] = {1: COLUMNS_V1, 2: COLUMNS_V2, 3: COLUMNS_V3}
+CURRENT_VERSION = 3
 # Columns added after an older version. Archives of that version leave them
 # out; they must still hold these defaults, which a restore reinstates.
 OMITTED_DEFAULTS: dict[int, dict[str, dict[str, int]]] = {

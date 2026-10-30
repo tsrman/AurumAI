@@ -27,8 +27,9 @@ Infinite historical backfill has no bounded-wait guarantee; do not replace the
 bounded batch with an unbounded drain.
 
 Payload is written to private verified Parquet objects before source purge. Each
-conversation image is copied into the archive as its own object
-(`archives/v1/<org>/<archive>/images/<image>`), listed in the manifest with its
+conversation image and each file an agent attached is copied into the archive as its
+own object (`archives/v1/<org>/<archive>/images/<image>`,
+`archives/v1/<org>/<archive>/files/<file>`), listed in the manifest with its
 SHA-256 and size and verified like the parts; the platform copy is deleted only after
 that verification, and a restore puts the verified bytes back at their original key,
 reads them back and only then makes the conversation visible. Permanent
@@ -123,8 +124,10 @@ identity is immutable and old callbacks remain fenced.
 ## Archive format versions
 
 The manifest and every Parquet part carry an archive version. Version 2 adds
-`interaction_turns.image_count` and the `conversation_images` table; version 1 is
-the format before images. A job keeps the version it was frozen with: version-1
+`interaction_turns.image_count` and the `conversation_images` table; version 3 adds
+the `conversation_files` table, whose bytes live in the conversation's
+`conversation-images/<org>/<conversation>/files/` folder and use the same image
+account; version 1 is the format before images. A job keeps the version it was frozen with: version-1
 jobs (no `_archive_version` in their inventory) still seal, verify, purge and
 restore with the version-1 columns, and refuse to purge if a column version 1
 leaves out no longer holds its default. Keys stay under `archives/v1/`.

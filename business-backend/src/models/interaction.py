@@ -133,7 +133,7 @@ class ToolOperation(OrgScopedModel):
             ondelete="CASCADE",
         ),
         CheckConstraint(
-            "kind IN ('ask_user','web_search','web_read','image_generate','image_edit')",
+            "kind IN ('ask_user','web_search','web_read','image_generate','image_edit','file_attach')",
             name="ck_tool_operation_kind",
         ),
         CheckConstraint(

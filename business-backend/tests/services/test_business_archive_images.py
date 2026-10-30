@@ -13,7 +13,7 @@ from sqlalchemy import text
 from src.services.archive import service as service_module
 from src.services.archive.catalogue import COLUMNS_V1, CURRENT_VERSION
 from src.services.archive.schemas import ArchiveFormatError, read_rows, schema_for
-from src.services.archive.service import ArchiveService
+from src.services.archive.service import ArchiveBlocked, ArchiveService
 from src.services.archive.snapshot import inventory
 from tests.services.test_business_archive_service import (  # noqa: F401
     LocalArchiveStorage,
@@ -185,6 +185,119 @@ async def test_conversation_images_survive_archive_and_restore(archive_fixture, 
         ) == 2
 
 
+CSV = b"month,revenue\nJan,10\n"
+
+
+async def _files(sessions, platform: LocalPlatformImages, args: dict) -> dict[str, str]:  # noqa: ANN001
+    """A CSV and a PDF the agent attached, with their bytes."""
+    org, conversation = args["o"], args["c"]
+    keys = {}
+    async with sessions() as db:
+        for name, data, content_type, extension in (
+            ("data.csv", CSV, "text/csv", "csv"),
+            ("report.pdf", b"%PDF-1.7 report", "application/pdf", "pdf"),
+        ):
+            op = uuid4()
+            key = f"conversation-images/{org}/{conversation}/files/{op}.{extension}"
+            await db.execute(
+                text(
+                    "INSERT INTO tool_operations(id,org_id,turn_id,execution_id,invocation_id,kind,arguments_hash,status,result) VALUES(:op,:o,:t,:e,:op,'file_attach',:hash,'completed','{}')"
+                ),
+                dict(args, op=op, hash="d" * 64),
+            )
+            await db.execute(
+                text(
+                    "INSERT INTO conversation_files(id,org_id,conversation_id,turn_id,execution_id,operation_id,name,storage_key,content_type,size_bytes,sha256) VALUES(:id,:o,:c,:t,:e,:op,:name,:key,:ct,:size,:sha)"
+                ),
+                dict(
+                    args, id=uuid4(), op=op, name=name, key=key, ct=content_type,
+                    size=len(data), sha="e" * 64,
+                ),
+            )
+            platform.put(key, data)
+            keys[key] = data
+        await db.commit()
+    return keys
+
+
+async def _file_rows(sessions, org: UUID) -> list[tuple]:  # noqa: ANN001
+    async with sessions() as db:
+        return (
+            await db.execute(
+                text(
+                    "SELECT id,operation_id,name,storage_key,content_type,size_bytes,sha256 FROM conversation_files WHERE org_id=:o ORDER BY id"
+                ),
+                dict(o=org),
+            )
+        ).all()
+
+
+async def test_conversation_files_survive_archive_and_restore(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    args = await _history(sessions, org, conversation, image_count=2)
+    images = await _images(sessions, platform, args)
+    files = await _files(sessions, platform, args)
+    before = await _file_rows(sessions, org)
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+
+    result = await service.run(org, conversation, apply=True)
+
+    assert result["state"] == "purged"
+    assert await _file_rows(sessions, org) == []
+    assert not any(platform.exists(key) for key in files)
+    root = tmp_path / "objects" / f"archives/v1/{org}/{result['archive_id']}"
+    assert sorted(path.read_bytes() for path in (root / "files").iterdir()) == sorted(files.values())
+    assert len(list((root / "images").iterdir())) == 3
+    [job] = await service.list(org)
+    assert job["counts"]["conversation_files"] == 2
+
+    await service.restore(org, result["archive_id"], apply=True)
+
+    assert await _file_rows(sessions, org) == before
+    assert {key: (platform.root / key).read_bytes() for key in files} == files
+    assert platform.exists(images[f"key:{images['generated']}"])
+
+
+async def test_files_block_archiving_until_image_storage_is_configured(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    await _files(sessions, platform, await _history(sessions, org, conversation))
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"))
+
+    result = await service.run(org, conversation, apply=False)
+    assert result == {"eligible": False, "blocked_reason": "image_archive_not_configured"}
+
+
+async def test_a_missing_file_object_blocks_before_the_claim(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    files = await _files(sessions, platform, await _history(sessions, org, conversation))
+    await platform.delete(next(iter(files)))
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+
+    result = await service.run(org, conversation, apply=True)
+    assert result == {"eligible": False, "blocked_reason": "image_bytes_unavailable"}
+    assert await service.list(org) == []
+
+
+async def test_a_file_key_not_named_after_its_operation_blocks_the_archive(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    await _files(sessions, platform, await _history(sessions, org, conversation))
+    async with sessions() as db:
+        await db.execute(
+            text(
+                "UPDATE conversation_files SET storage_key=:key WHERE org_id=:o AND content_type='text/csv'"
+            ),
+            dict(o=org, key=f"conversation-images/{org}/{conversation}/files/{uuid4()}.csv"),
+        )
+        await db.commit()
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+    with pytest.raises(ArchiveFormatError, match="file_inventory_unknown"):
+        await service.run(org, conversation, apply=False)
+
+
 async def test_images_block_archiving_until_image_storage_is_configured(archive_fixture, tmp_path):
     sessions, org, conversation = archive_fixture
     platform = LocalPlatformImages(tmp_path / "platform")
@@ -269,7 +382,7 @@ def test_version_one_parts_stay_readable_and_differ_from_version_two(tmp_path):
     with pytest.raises(ArchiveFormatError, match="schema_mismatch"):
         list(read_rows("interaction_turns", path))
     assert "image_count" not in [name for name, _, _ in COLUMNS_V1["interaction_turns"]]
-    assert "conversation_images" not in COLUMNS_V1 and CURRENT_VERSION == 2
+    assert "conversation_images" not in COLUMNS_V1 and CURRENT_VERSION == 3
 
 
 async def test_a_version_one_job_archives_and_restores(archive_fixture, tmp_path, monkeypatch):
@@ -321,10 +434,15 @@ def test_object_keys_are_bounded_to_their_kind():
         read_limit(f"archives/v1/{org}/{archive}/images/{image}.png")
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/{image}.webp")
     assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/uploads/{image}.jpg")
+    assert PLATFORM_IMAGE_KEY.fullmatch(f"conversation-images/{org}/{archive}/files/{image}.xlsx")
+    assert read_limit(f"archives/v1/{org}/{archive}/files/{image}") == IMAGE_OBJECT_LIMIT
     for key in (
         f"documents/{org}/{archive}/{image}.png",
         f"conversation-images/{org}/{archive}/../{image}.png",
         f"conversation-images/{org}/{archive}/{image}.svg",
+        f"conversation-images/{org}/{archive}/files/{image}.exe",
+        f"conversation-images/{org}/{archive}/files/{image}.png",
+        f"conversation-images/{org}/{archive}/files/../{image}.csv",
     ):
         assert not PLATFORM_IMAGE_KEY.fullmatch(key)
 
@@ -362,3 +480,34 @@ async def test_a_missing_or_resized_image_object_blocks_before_the_claim(
         assert await db.scalar(
             text("SELECT lifecycle FROM conversation_identities WHERE id=:c"), dict(c=conversation)
         ) == "active"
+
+
+async def test_restoring_files_needs_image_storage_even_in_a_dry_run(archive_fixture, tmp_path):
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    await _files(sessions, platform, await _history(sessions, org, conversation))
+    objects = LocalArchiveStorage(tmp_path / "objects")
+    archive = (await ArchiveService(sessions, objects, images=platform).run(org, conversation, apply=True))[
+        "archive_id"
+    ]
+
+    with pytest.raises(ArchiveBlocked, match="image_archive_not_configured"):
+        await ArchiveService(sessions, objects).restore(org, archive, apply=False)
+
+
+async def test_a_version_two_job_refuses_a_conversation_with_files(archive_fixture, tmp_path, monkeypatch):
+    """A job frozen before files existed cannot carry them: it must not purge them."""
+    sessions, org, conversation = archive_fixture
+    platform = LocalPlatformImages(tmp_path / "platform")
+    files = await _files(sessions, platform, await _history(sessions, org, conversation))
+    original = service_module.inventory
+
+    async def frozen_as_v2(session, org_id, conversation_id, audit_ids=None, version=None):  # noqa: ANN001, ANN202
+        return await original(session, org_id, conversation_id, audit_ids, version or 2)
+
+    monkeypatch.setattr(service_module, "inventory", frozen_as_v2)
+    service = ArchiveService(sessions, LocalArchiveStorage(tmp_path / "objects"), images=platform)
+    with pytest.raises(ArchiveFormatError, match="archive_version_incompatible"):
+        await service.run(org, conversation, apply=True)
+    assert len(await _file_rows(sessions, org)) == 2
+    assert all(platform.exists(key) for key in files)

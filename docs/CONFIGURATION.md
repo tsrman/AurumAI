@@ -126,6 +126,11 @@ conversation's eight newest images to the model so a later turn can edit them.
 Conversations with images are not archived until the archive format carries image
 bytes.
 
+Files attached to an answer (CSV, plain text, Markdown, JSON, PDF, XLSX, DOCX, PPTX
+and ZIP, at most 20 MiB each) are stored next to the images, under `conversation-images/<org>/<conversation>/files/`. Their type is
+recognised from the bytes, never from the name the agent chose, and they are served
+only to the conversation owner and always as a download.
+
 The same switch also enables image attachments. In Admin UI → Models → Images an
 administrator marks the chat models that accept image input; the chat composer
 offers PNG, JPEG and WebP attachments only while such a model is selected, and the
@@ -379,7 +384,7 @@ New archive jobs are default-off. `APP_ARCHIVE_RETENTION_DAYS=180` and
 archive S3 credentials and private RAG service secret/endpoint. Normal API/RAG
 accounts must not receive lifecycle/schema-owner rights or archive bucket access.
 
-Conversations with images are archived only when the data worker has
+Conversations with images or agent files are archived only when the data worker has
 `APP_ARCHIVE_IMAGES_S3_ENDPOINT`, `APP_ARCHIVE_IMAGES_S3_ACCESS_KEY` and
 `APP_ARCHIVE_IMAGES_S3_SECRET_KEY` (bucket `APP_ARCHIVE_IMAGES_S3_BUCKET`, default
 `aurum-ai-business`): separate credentials for the platform bucket, scoped to the
