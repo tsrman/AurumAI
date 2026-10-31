@@ -778,6 +778,13 @@ def test_a_preview_stream_carries_binary_frames_both_ways_and_refuses_low_ports(
     with client.websocket_connect(f"/hermes/sandboxes/{SESSION}/connect?port=8899", headers=auth) as socket:
         socket.send_bytes(b"GET / HTTP/1.1\r\n\r\n")
         assert socket.receive_bytes() == b"app:GET / HTTP/1.1\r\n\r\n"
+        # Leaving the block cancels the route at once, so a cleanup still in
+        # flight is cut short and the cancellation escapes as an error. Close
+        # first and let the route finish, as a disconnecting client does.
+        socket.close()
+        deadline = time.monotonic() + 10
+        while not streams[0].closed and time.monotonic() < deadline:
+            time.sleep(0.01)
 
     assert opened == [(SESSION, 8899)] and streams[0].closed
     with pytest.raises(WebSocketDisconnect):
