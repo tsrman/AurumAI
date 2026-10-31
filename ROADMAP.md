@@ -61,7 +61,9 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
   and the preview service) and accepted on k3d by `smoke-test-hermes-k8s.sh`, against a
   stand-in backend, and its egress modes by `smoke-test-hermes-k8s-egress.sh` with real
   internet traffic (registries by TLS, refusals by host, port, SNI, address and mode, real
-  pip and npm, the re-check of open tunnels). Still to verify:
+  pip and npm, the re-check of open tunnels) and its behaviour on three nodes by
+  `smoke-test-hermes-k8s-nodes.sh` (a cold pull, capacity and workspace eviction, a PID
+  limit, a lost node). Still to verify:
   - Other policy controllers (Calico, Cilium and the like): that a sandbox Pod reaches
     only the guard through its Service address and nothing else, that no DNS escapes, and
     that the guard's address exclusions hold. Only k3s's built-in controller was checked.
@@ -72,12 +74,9 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
     wildcard certificate and a domain outside the platform's: the `__Host-` cookie, the
     WebSocket upgrade through the Ingress controller, and the periodic re-check that ends
     a preview with its session.
-  - A RuntimeClass whose nodes set a PID limit (Kubernetes has none per Pod), and the
-    node-side limits the chart cannot set.
-  - Several nodes: a cold image pull against `hermes.sandbox.podStartTimeoutSeconds`, a
-    sandbox Pod on a node that is lost or evicts it at the workspace backstop (its
-    workspace is gone and the session restarts from its last snapshot), and capacity
-    eviction under load.
+  - Failures and runtimes beyond k3d: a node lost to a real failure (the acceptance stops a
+    k3d node), a RuntimeClass whose handler is a sandboxing runtime (gVisor, Kata) rather
+    than a PID limit on `runc`, and the node-side limits the chart cannot set.
   - A Helm upgrade or a skill-executor restart with many live sandboxes: adoption, the
     `du` cost of the disk check, and snapshots of large workspaces from a running Pod.
 - Loop wall-clock budgets; nested/overlapping loop bodies and confirmation nodes

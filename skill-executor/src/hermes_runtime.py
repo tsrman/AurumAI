@@ -297,6 +297,15 @@ class HermesSandboxes:
         self._swept_at = 0.0
         self._disk_checked_at = 0.0
 
+    async def _lost(self, sandbox: HermesSandbox) -> bool:
+        """Whether the sandbox's workload is gone beyond recovery (its node lost, or
+        it deleted): nothing in it can be reached or snapshotted. False when unsure."""
+        return False
+
+    async def _discard(self, sandbox: HermesSandbox) -> None:
+        """Remove what is left of a lost sandbox."""
+        await self._remove(sandbox.network)
+
     async def shutdown(self) -> None:
         """Release the backend's client."""
 
@@ -389,6 +398,14 @@ class HermesSandboxes:
             if existing is not None:
                 if (existing.org_id, existing.conversation_id) != (org_id, conversation_id):
                     raise HermesSandboxError("hermes_sandbox_owner_mismatch")
+                if await self._lost(existing):
+                    # Its workload is gone with whatever ran it: nothing can be
+                    # snapshotted, so the session starts anew from its last snapshot.
+                    logger.warning("Hermes sandbox %s lost its workload; starting it anew", session_id)
+                    self._sandboxes.pop(session_id, None)
+                    await self._discard(existing)
+                    existing = None
+            if existing is not None:
                 if existing.state == "running":
                     return existing, "existing"
                 # A paused tmpfs sandbox would keep its old token: never resumed.

@@ -59,6 +59,9 @@ class FakeCore:
         # Reads a deleted Pod stays visible (Terminating) before it is gone.
         self.linger = 0
         self._terminating: dict[str, int] = {}
+        self.forced: list[str] = []
+        # Set to make the Pod report a Ready condition (the node's word about it).
+        self.ready: str | None = None
 
     async def read_namespaced_service(self, name: str, namespace: str) -> Any:
         assert namespace == NAMESPACE
@@ -71,7 +74,8 @@ class FakeCore:
             state = SimpleNamespace(running=None, waiting=SimpleNamespace(reason=self.waiting_reason))
         else:
             state = SimpleNamespace(running=object(), waiting=None)
-        return SimpleNamespace(phase=self.phase, container_statuses=[SimpleNamespace(state=state)])
+        conditions = [SimpleNamespace(type="Ready", status=self.ready)] if self.ready else []
+        return SimpleNamespace(phase=self.phase, container_statuses=[SimpleNamespace(state=state)], conditions=conditions)
 
     async def create_namespaced_pod(self, namespace: str, pod: Any) -> Any:
         assert namespace == NAMESPACE
@@ -106,7 +110,12 @@ class FakeCore:
         if name not in self.pods:
             raise _api_error(404)
         self.deleted.append(name)
-        if self.linger:
+        if grace_period_seconds == 0:
+            # Forced: the API object goes at once, whatever the node says.
+            self.forced.append(name)
+            self._terminating.pop(name, None)
+            del self.pods[name]
+        elif self.linger:
             self._terminating[name] = self.linger
             self.pods[name].metadata.deletion_timestamp = "t"
         else:
@@ -697,3 +706,132 @@ async def test_a_pod_that_will_not_go_does_not_hang_the_caller(cluster) -> None:
     sandboxes._settings.hermes_stop_timeout_seconds = 0
     sandboxes._remove_wait_seconds = 0.05
     await sandboxes.close(SESSION)  # returns: a Pod stuck Terminating is the cluster's to finish
+
+
+def _terminating_pod(name: str) -> Any:
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, labels={}, deletion_timestamp="t"),
+        status=SimpleNamespace(phase="Running", container_statuses=[]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_waits_for_a_terminating_pod_of_the_same_name(cluster) -> None:
+    sandboxes, core, *_ = cluster
+    name = resource_name(SESSION)
+    # A Pod deleted while its image was still being pulled keeps the name for a while.
+    core.pods[name] = _terminating_pod(name)
+    core._terminating[name] = 3
+
+    sandbox, outcome = await _create(sandboxes)
+
+    assert outcome == "created" and sandbox.container_id == name
+    assert core.pods[name].spec is not None  # the new Pod, not the old one
+
+
+@pytest.mark.asyncio
+async def test_a_pod_that_stays_terminating_past_the_start_timeout_is_a_conflict(cluster) -> None:
+    sandboxes, core, *_ = cluster
+    sandboxes._settings.hermes_pod_start_timeout_seconds = 0.1
+    name = resource_name(SESSION)
+    core.pods[name] = _terminating_pod(name)
+    core._terminating[name] = 10**6
+
+    with pytest.raises(HermesSandboxError) as excinfo:
+        await _create(sandboxes)
+
+    assert excinfo.value.code == "hermes_sandbox_exists"
+
+
+# A node that is lost ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_pod_stuck_terminating_is_force_deleted_after_the_wait(cluster) -> None:
+    sandboxes, core, *_ = cluster
+    await _create(sandboxes)
+    core.linger = 10**6  # its node is gone: nothing confirms the termination
+    sandboxes._settings.hermes_stop_timeout_seconds = 1
+    sandboxes._remove_wait_seconds = 0.05
+
+    await sandboxes.close(SESSION)
+
+    # A graceful delete first, then a forced one once the wait is over.
+    assert core.deleted == [resource_name(SESSION)] * 2
+    assert core.forced == [resource_name(SESSION)] and not core.pods
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ready", ["Unknown", "False"])
+async def test_a_sandbox_whose_node_reports_it_not_ready_is_started_anew(cluster, ready: str) -> None:
+    sandboxes, core, exec_client, store = cluster
+    snapshot = await _snapshot_of(sandboxes, store)
+    exec_client.streams.clear()
+    core.ready = ready  # the node controller marks its Pods so when the node is lost
+
+    sandbox, outcome = await _create(sandboxes)
+
+    assert outcome == "restored" and sandbox.session_id == SESSION
+    assert core.forced == [resource_name(SESSION)]
+    assert list(core.pods) == [resource_name(SESSION)]
+    restore, platform = exec_client.uploaded_archives()
+    assert ".hermes/state.db" in restore and ".aurum/proxy" in platform
+    assert snapshot
+
+
+@pytest.mark.asyncio
+async def test_a_ready_sandbox_is_left_alone(cluster) -> None:
+    sandboxes, core, *_ = cluster
+    first, _ = await _create(sandboxes)
+    core.ready = "True"
+    again, outcome = await _create(sandboxes)
+    assert outcome == "existing" and again is first and not core.forced
+
+
+@pytest.mark.asyncio
+async def test_a_sandbox_whose_pod_is_gone_or_terminating_is_started_anew(cluster) -> None:
+    sandboxes, core, *_ = cluster
+    await _create(sandboxes)
+    name = resource_name(SESSION)
+    del core.pods[name]  # evicted and collected, or lost with its node
+
+    sandbox, outcome = await _create(sandboxes)
+    assert outcome == "created" and name in core.pods
+
+    core.pods[name].metadata.deletion_timestamp = "t"  # marked for deletion, never confirmed
+    core._terminating[name] = 10**6
+    sandbox, outcome = await _create(sandboxes)
+    assert outcome == "created" and core.forced == [name]
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_sandbox_on_a_lost_node_is_not_stuck_on_its_snapshot(cluster) -> None:
+    sandboxes, core, exec_client, store = cluster
+    await _create(sandboxes)
+    exec_client.outputs[("tar", "-C", "/", "-cf")] = ([WORKSPACE], 0)
+    store.fail_put = True
+    _idle(sandboxes)
+    await sandboxes.reap()  # the snapshot fails: kept, stopped
+    assert sandboxes.get(SESSION).state == "stopped"
+    core.ready = "Unknown"  # and then its node is lost; nothing can be snapshotted any more
+    store.fail_put = False
+    exec_client.outputs[("tar", "-C", "/", "-cf")] = ([], 2)
+
+    sandbox, outcome = await _create(sandboxes)
+
+    assert sandbox.state == "running" and outcome in ("created", "restored")
+
+
+@pytest.mark.asyncio
+async def test_the_reaper_force_deletes_pods_terminating_for_long(cluster) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    sandboxes, core, *_ = cluster
+    long_ago = datetime.now(UTC) - timedelta(minutes=10)
+    just_now = datetime.now(UTC)
+    for session, when in (("3" * 32, long_ago), ("4" * 32, just_now)):
+        pod = _pod(session)
+        pod.metadata.deletion_timestamp = when
+        core.pods[pod.metadata.name] = pod
+    await sandboxes._reap_leftovers(time.time())
+    assert core.forced == [resource_name("3" * 32)]
