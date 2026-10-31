@@ -57,8 +57,9 @@ that the conversation persists.
 
 ## 5. Configure optional features
 
-Use [README](README.md) and [configuration](docs/CONFIGURATION.md) for a real
-gateway, MCP, code skills, RAG, questions, web and maintenance workers. Real-model
+Use [README](README.md), the [deployment guide](docs/guides/deployment.md) and
+[configuration](docs/CONFIGURATION.md) for a real gateway, MCP, code skills, RAG,
+questions, web, images, Hermes Agent and maintenance workers. Real-model
 E2E requires an explicit `E2E_LLM_MODEL`; no personal provider model is preselected.
 
 Browser-facing ports bind to `PUBLIC_BIND_ADDRESS`, which defaults to

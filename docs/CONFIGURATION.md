@@ -123,8 +123,8 @@ JPEG or WebP. Images are stored in the platform bucket under
 `conversation-images/<org>/<conversation>/` and served only to the conversation
 owner. Each turn may create at most four images; image-enabled turns list the
 conversation's eight newest images to the model so a later turn can edit them.
-Conversations with images are not archived until the archive format carries image
-bytes.
+Conversations with images and files are archived with their bytes (see
+[the archive guide](operations/data-archive.md#archive-format-versions)).
 
 Files attached to an answer (CSV, plain text, Markdown, JSON, PDF, XLSX, DOCX, PPTX
 and ZIP, at most 20 MiB each) are stored next to the images, under `conversation-images/<org>/<conversation>/files/`. Their type is
@@ -188,12 +188,15 @@ part of the chat completion's own prompt tokens.
 
 ## Hermes Agent
 
-Hermes Agent is being integrated in phases (see [the design](HERMES_AGENT.md)).
-`APP_HERMES_ENABLED=false` is its operator switch; while it is off, the Hermes routes
+This section is the reference for Hermes Agent's settings. For setup and daily use
+see [the Hermes guide](guides/hermes-agent.md); for the reasoning, see
+[the design](HERMES_AGENT.md).
+
+`APP_HERMES_ENABLED=false` is the operator switch; while it is off, the Hermes routes
 answer 404. Users also need the `agents.hermes` capability (Admin UI → Groups), which
-provisioning never grants. The first phase adds only the backend side a Hermes
-sandbox will call; nothing starts a sandbox yet. Compose passes the switch only with
-the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
+provisioning never grants. Compose passes the switch only with the
+`docker-compose.hermes.yml` overlay, from `HERMES_ENABLED` in `.env`; the Helm chart
+does not pass it, because Hermes runs on the Docker runtime only.
 
 - `POST /v1/hermes/chat/completions` is an OpenAI-compatible completion route with
   native tools: `tools`, `tool_choice`, assistant `tool_calls`, `tool` messages and
@@ -225,7 +228,8 @@ the `docker-compose.hermes.yml` overlay; the Helm chart does not pass it yet.
   administrator sets it with `PUT /v1/admin/settings/hermes` (`{"model": ...}`, a
   model the organization grants; `null` turns Hermes off for it). The request needs
   `APP_HERMES_ENABLED` (404 otherwise), both Hermes capabilities (403) and the model
-  (409); images are refused for now. The runner hands the turn to the conversation's
+  (409); `imageIds` are refused with 422, because pictures reach Hermes as uploaded
+  files (see [Images](#images)). The runner hands the turn to the conversation's
   `HermesSessionWorkflow` on tool-worker's queue (runner settings `HERMES_TASK_QUEUE`,
   `HERMES_TURN_DEADLINE_SECONDS` 7200 and `HERMES_IDLE_SECONDS` 1800), so tool-worker
   needs `TOOL_WORKER_SKILL_EXECUTOR_URL`. `GET /v1/internal/hermes/sessions/current`

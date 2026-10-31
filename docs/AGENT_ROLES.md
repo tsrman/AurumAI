@@ -4,6 +4,10 @@ AurumAI agent definitions describe a configurable model, instructions and allowe
 resources. They do not create independent runtime containers. A supervisor and
 node AgentWorkflow children execute in the current conversation's isolated runner.
 
+Hermes Agent is the exception: it is a system agent, not an agent definition, and
+each conversation with it gets a long-lived sandbox of its own (see
+[the Hermes guide](guides/hermes-agent.md)).
+
 ## Common roles
 
 - A general assistant answers ordinary conversational requests and selects tools.

@@ -59,6 +59,7 @@ TLS before exposing any service outside a trusted development environment.
 | Skill executor/sandbox | Isolated multi-round code-skill execution | `skill-executor/`, `skill-sandbox/` |
 | RAG API/worker | Document storage, parsing, indexing and hybrid search | `rag-api/`, `rag-worker/` |
 | Web tools | Bounded search/read with URL and outbound-network policy | `web-tools/` |
+| Hermes Agent | Long-lived sandbox per conversation, its network guard and previews of its apps | `hermes-sandbox/`, `infra/web-egress/`, `hermes-preview/` |
 | Deployment | Compose for development, Helm for Kubernetes | `docker-compose.yml`, `charts/aurum-ai/` |
 
 The data plane uses PostgreSQL, Redis, MinIO and optional Milvus. Keycloak handles
@@ -81,6 +82,10 @@ retain their own licenses.
 - Loop iteration `N+1` receives all terminal results from **only iteration `N`**;
   earlier snapshots are replaced rather than accumulated.
 - Durable `ask_user` questions and bounded web search/read/citations, both default-off.
+- Image generation and editing in chat, and image attachments for vision models.
+- Hermes Agent, an opt-in system agent with its own sandbox: it runs commands and
+  code, works on the files people give it, hands back spreadsheets, documents and
+  charts, and builds web app prototypes members can open.
 - Optional background Keycloak synchronization, monthly payload partitions, and
   verified MinIO/Parquet archive/export/restore with operator-only recovery.
 
@@ -124,6 +129,9 @@ including three complete examples, agent mapping, validation, access and chat ex
 | RAG | `docker compose --profile rag up -d --build` |
 | Durable questions | Enable server-owned `USER_QUESTIONS_ENABLED`; deploy compatible backend, runner and UI |
 | Web search/read | Use `docker-compose.web.yml`, profile `web`, service/search secrets and operator enforcement checks |
+| Images | Enable `IMAGES_ENABLED`, choose models in Admin UI → Models, grant `images.generate` |
+| Hermes Agent | `docker-compose.hermes.yml`, profile `hermes`, `HERMES_ENABLED` and its service secret ([guide](docs/guides/hermes-agent.md)) |
+| Hermes previews | Profile `hermes-preview`, `HERMES_PREVIEW_*` and a wildcard domain with TLS |
 | Identity synchronization | Profile `maintenance`, identity worker/egress guard, compatible realm claim mapper |
 | Archiving | Separate lifecycle roles/S3 accounts/private RAG endpoint; observer receipts before enabling new jobs |
 
@@ -182,7 +190,13 @@ runtime configuration, so updating it does not require rebuilding the UI.
 
 ## Documentation
 
+The [documentation index](docs/README.md) lists everything by audience.
+
 - [Quickstart](QUICKSTART.md)
+- [User guide](docs/guides/user-guide.md), [administrator guide](docs/guides/admin-guide.md),
+  [Hermes Agent guide](docs/guides/hermes-agent.md)
+- [Deployment](docs/guides/deployment.md), [operations](docs/guides/operations.md)
+- [API reference](docs/reference/api.md), [security model](docs/reference/security.md)
 - [Architecture and interface boundaries](docs/ARCHITECTURE.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Kubernetes/Helm](charts/aurum-ai/README.md)
