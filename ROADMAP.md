@@ -57,10 +57,30 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 
 ## Remaining product and verification work
 
-- Hermes Agent on other Kubernetes CNIs: the boundary, the sandbox runtime and the preview
-  service are deployed by the chart and accepted on k3d
-  (`smoke-test-hermes-k8s.sh`); other policy controllers, a runtime-class PID limit and
-  a previewed app opened through a real wildcard Ingress remain to be verified.
+- Hermes Agent on Kubernetes is deployed by the chart (the boundary, the sandbox runtime
+  and the preview service) and accepted on k3d by `smoke-test-hermes-k8s.sh`, against a
+  stand-in backend. Still to verify:
+  - Other policy controllers (Calico, Cilium and the like): that a sandbox Pod reaches
+    only the guard through its Service address and nothing else, that no DNS escapes, and
+    that the guard's address exclusions hold. Only k3s's built-in controller was checked.
+  - The whole platform on Kubernetes with a real model: a Hermes chat turn through the
+    guard to the real backend (session tokens, quota, the MCP bridge, skill drafts, files
+    in both directions), not the stand-in.
+  - The egress modes with real traffic: `packages` and `public` tunnels to the internet,
+    refusal of private and metadata addresses, and `internalDestinations` with an internal
+    package mirror.
+  - A previewed app opened from a browser through a real wildcard Ingress with a
+    wildcard certificate and a domain outside the platform's: the `__Host-` cookie, the
+    WebSocket upgrade through the Ingress controller, and the periodic re-check that ends
+    a preview with its session.
+  - A RuntimeClass whose nodes set a PID limit (Kubernetes has none per Pod), and the
+    node-side limits the chart cannot set.
+  - Several nodes: a cold image pull against `hermes.sandbox.podStartTimeoutSeconds`, a
+    sandbox Pod on a node that is lost or evicts it at the workspace backstop (its
+    workspace is gone and the session restarts from its last snapshot), and capacity
+    eviction under load.
+  - A Helm upgrade or a skill-executor restart with many live sandboxes: adoption, the
+    `du` cost of the disk check, and snapshots of large workspaces from a running Pod.
 - Loop wall-clock budgets; nested/overlapping loop bodies and confirmation nodes
   inside a loop remain outside the current graph contract.
 - Broader runtime/provider/load coverage, with fresh Kubernetes CNI/SSRF acceptance
