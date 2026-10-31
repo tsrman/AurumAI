@@ -90,6 +90,7 @@ from src.models.hermes_session import HermesSession
 from src.models.message import Message
 from src.models.workflow_run import WorkflowRun, WorkflowRunStatus
 from src.repositories.conversation_file_repository import turn_files
+from src.services.hermes_previews import turn_previews
 from src.repositories.conversation_repository import conversation_repository
 from src.repositories.message_repository import message_repository
 from src.repositories.workflow_definition_repository import workflow_definition_repository
@@ -170,6 +171,7 @@ def _msg_response(msg: Message) -> MessageResponse:
         unsupportedSourceIds=extra.get("unsupported_web_source_ids", []),
         imageIds=extra.get("image_ids", []),
         files=extra.get("files", []),
+        previews=extra.get("previews", []),
         failed=extra.get("failed") is True,
     )
 
@@ -953,6 +955,9 @@ async def _answer_media(
     attached = await turn_files(session, org_id, conversation_id, owner_id, turn_id)
     if attached:
         extra = {**(extra or {}), "files": attached}
+    previews = await turn_previews(session, org_id, conversation_id, owner_id, turn_id)
+    if previews:
+        extra = {**(extra or {}), "previews": previews}
     return extra
 
 

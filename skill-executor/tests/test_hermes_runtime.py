@@ -316,7 +316,7 @@ def test_generated_config_reaches_the_platform_tools_through_the_egress() -> Non
     assert server["skip_preflight"] is True
     assert server["tools"]["include"] == [
         "knowledge_search", "web_search", "web_read", "generate_image", "edit_image", "list_skills", "run_skill",
-        "attach_file",
+        "attach_file", "share_preview",
     ]
 
 

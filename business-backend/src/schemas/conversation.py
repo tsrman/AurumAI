@@ -46,6 +46,11 @@ class AttachedFile(BaseModel):
     sizeBytes: int
 
 
+class SharedPreview(BaseModel):
+    previewId: str
+    port: int
+
+
 class MessageResponse(BaseModel):
     id: str
     role: str
@@ -70,5 +75,7 @@ class MessageResponse(BaseModel):
     imageIds: List[str] = Field(default_factory=list)
     # Files the answer's agent attached: {fileId, name, contentType, sizeBytes}.
     files: List[AttachedFile] = Field(default_factory=list)
+    # Apps the answer's Hermes Agent shared from its sandbox: {previewId, port}.
+    previews: List[SharedPreview] = Field(default_factory=list)
     # The reason a failed turn ended with: shown, never sent back to a model.
     failed: bool = False

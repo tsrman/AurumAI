@@ -60,6 +60,7 @@ async def test_only_images_of_this_turn_are_kept_on_the_message() -> None:
         patch.object(chat.interaction_service, "finish_turn", AsyncMock()),
         patch.object(chat, "ImageRepository", return_value=repository),
         patch.object(chat, "turn_files", AsyncMock(return_value=[])),
+        patch.object(chat, "turn_previews", AsyncMock(return_value=[])),
     ):
         response = await chat.persist_conversation_message(
             str(conv.id),
@@ -148,6 +149,7 @@ async def test_the_answer_shows_the_images_and_files_the_runner_never_saw() -> N
         patch.object(chat.interaction_service, "finish_turn", AsyncMock()),
         patch.object(chat, "ImageRepository", return_value=repository),
         patch.object(chat, "turn_files", files),
+        patch.object(chat, "turn_previews", AsyncMock(return_value=[])),
     ):
         response = await chat.persist_conversation_message(
             str(conv.id),

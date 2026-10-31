@@ -78,7 +78,7 @@ DISABLED_TOOLSETS = (
 # The platform tools of the MCP bridge (business-backend's hermes_mcp).
 PLATFORM_TOOLS = (
     "knowledge_search", "web_search", "web_read", "generate_image", "edit_image", "list_skills", "run_skill",
-    "attach_file",
+    "attach_file", "share_preview",
 )
 _CHUNK = 64 * 1024
 # What Hermes is told about its sandbox on every turn, added to its system

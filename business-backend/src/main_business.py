@@ -45,6 +45,7 @@ from src.routers import (
     conversation_images,
     hermes,
     hermes_egress_internal,
+    hermes_previews,
     hermes_internal,
     hermes_mcp,
     hermes_memory,
@@ -143,6 +144,8 @@ app = create_app(
         (hermes_skill_drafts.router, "/v1", "hermes-skill-drafts"),
         (hermes_internal.router, "/v1/internal", "internal-hermes"),
         (hermes_egress_internal.router, "/v1/internal", "internal-hermes-egress"),
+        (hermes_previews.router, "/v1", "hermes-previews"),
+        (hermes_previews.internal_router, "/v1/internal", "internal-hermes-previews"),
         (turns.router, "/v1", "turns"),
     ],
 )

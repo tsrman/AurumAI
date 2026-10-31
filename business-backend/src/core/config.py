@@ -267,6 +267,14 @@ class Settings(BaseSettings):
     # hermes-egress authenticates its per-connection checks with this secret;
     # only the business API needs it (see hermes_egress.require_egress_secret).
     HERMES_EGRESS_SERVICE_SECRET: SecretStr = SecretStr("")
+    # Previews of apps Hermes runs in its sandbox, opened by the conversation's
+    # owner at an origin of their own, never the platform's: off until the
+    # operator gives an origin template with {preview} (a wildcard domain with
+    # TLS in production, *.preview.localhost in development) and the preview
+    # service's secret.
+    HERMES_PREVIEW_ENABLED: bool = False
+    HERMES_PREVIEW_ORIGIN: str = ""
+    HERMES_PREVIEW_SERVICE_SECRET: SecretStr = SecretStr("")
     # Upper bounds for one native-tools completion request from a sandbox.
     HERMES_MAX_TOOLS: int = Field(default=128, ge=1, le=512)
     HERMES_MAX_MESSAGES: int = Field(default=1000, ge=1, le=10000)

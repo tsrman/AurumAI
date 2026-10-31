@@ -14,8 +14,9 @@ _AUDITED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # Login/refresh precede an organization context; Keycloak already records
 # their relevant identity events. hermes-egress checks every sandbox
-# connection and keeps its own journal of them.
-_SKIPPED_PREFIXES = ("/v1/auth/", "/v1/internal/hermes/egress/")
+# connection, and the preview service every browser connection, and each
+# keeps its own journal of them.
+_SKIPPED_PREFIXES = ("/v1/auth/", "/v1/internal/hermes/egress/", "/v1/internal/hermes/previews/check")
 
 
 def _route_template(request: Request) -> str:

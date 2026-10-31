@@ -140,6 +140,11 @@ sandbox's `/workspace/inputs/`, and the turn's text names their paths. Hermes's 
 sees a picture through its `vision_analyze` tool only when it is marked as taking
 images in Admin UI → Models → Images.
 
+Previews of apps Hermes runs (docs/HERMES_AGENT.md) are off by default:
+`APP_HERMES_PREVIEW_ENABLED`, `APP_HERMES_PREVIEW_ORIGIN` (an origin template with
+`{preview}`, on a wildcard domain with TLS in production) and
+`APP_HERMES_PREVIEW_SERVICE_SECRET` (shared with the preview service) turn them on.
+
 The same switch also enables image attachments. In Admin UI → Models → Images an
 administrator marks the chat models that accept image input; the chat composer
 offers PNG, JPEG and WebP attachments only while such a model is selected, and the
