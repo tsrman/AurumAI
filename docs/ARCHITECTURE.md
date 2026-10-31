@@ -224,6 +224,22 @@ Source IDs remain conversation/execution-owned. Child web citations are validate
 and propagated through workflow synthesis and loop feedback. Real provider/search
 availability is independent from controlled policy/Temporal acceptance.
 
+## Hermes Agent
+
+Hermes Agent is an opt-in system agent with a runtime of its own (Docker only). A
+conversation's turn goes from the runner to a `HermesSessionWorkflow` on tool-worker's
+queue, and skill-executor starts one long-lived sandbox for the conversation, on its
+own internal network. The sandbox's only way out is `hermes-egress`: the platform path
+to the backend (model completions and the MCP bridge of platform tools), and CONNECT
+tunnels up to the network mode the organization chose. Its token holds identity only
+and has an audience of its own. Workspaces are snapshotted to object storage.
+
+`hermes-preview` is the one thing browsers reach at a preview's origin. It streams
+into the sandbox through skill-executor, and the sandbox gains no network for it.
+
+See [the design](HERMES_AGENT.md), [the guide](guides/hermes-agent.md) and
+[the settings](CONFIGURATION.md#hermes-agent).
+
 ## RAG, attachments and storage
 
 Uploads go through the backend into MinIO, with explicit file/knowledge-base metadata
@@ -301,7 +317,8 @@ the Temporal sandbox; importing settings into workflow code does not refresh the
 Business API exposes conversation/history/chat, user settings, documents and runtime
 control. Admin API owns authoring/grants/models/analytics. Internal service endpoints
 require session-aware authorization and scoped database dependencies. `/health` is
-liveness; `/ready` checks required application dependencies.
+liveness; `/ready` checks required application dependencies. The
+[API reference](reference/api.md) lists the routes of both planes.
 
 See [configuration](CONFIGURATION.md), [Helm](../charts/aurum-ai/README.md),
 [testing](TESTING.md), [service guides](../README.md#components) and current source

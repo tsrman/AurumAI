@@ -1,5 +1,11 @@
 # Changelog
 
+## Documentation
+
+The documentation gains an [index by audience](docs/README.md), user, administrator,
+Hermes Agent, deployment and operations guides, an API reference and a security
+model. Stale Hermes and archive statements in the existing documents are corrected.
+
 ## Initial public source preparation
 
 The first AurumAI source snapshot includes the existing chat/admin platform,

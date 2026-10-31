@@ -32,6 +32,11 @@ Detailed fresh verification belongs in the release report and CI.
   node agents create and edit images and receive attachments.
 - Guided workflow authoring with runnable examples, and starter tools
   (`install-platform.sh`, CSV statistics and JSON formatting code skills).
+- Hermes Agent as an opt-in system agent on the Docker runtime: an isolated
+  long-lived sandbox per conversation, organization-chosen network mode, platform
+  tools over an MCP bridge, per-user memory, reviewed skills, files in both
+  directions, vision, workflow nodes and previews of the apps it runs
+  ([guide](docs/guides/hermes-agent.md), [design](docs/HERMES_AGENT.md)).
 - Service lint/types/tests, frontend tests/builds, migration checks, image builds
   and offline acceptance-harness contracts.
 
@@ -52,9 +57,7 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 
 ## Remaining product and verification work
 
-- Integrate Hermes Agent as a universal system agent within the existing
-  conversation runtime, tools and workflow orchestration
-  ([design](docs/HERMES_AGENT.md)).
+- Hermes Agent on Kubernetes: the chart does not deploy it yet.
 - Loop wall-clock budgets; nested/overlapping loop bodies and confirmation nodes
   inside a loop remain outside the current graph contract.
 - Broader runtime/provider/load coverage, with fresh Kubernetes CNI/SSRF acceptance

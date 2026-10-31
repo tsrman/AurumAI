@@ -40,10 +40,16 @@ development Compose configuration suitable for an untrusted production network.
   session-token audience boundaries.
 - Keep code execution, MCP and public web opt-ins behind their deployment policies.
   Do not grant arbitrary outbound network access to make a failed test pass.
+- Hermes Agent runs model-chosen commands in its sandbox. Keep the sandbox's only
+  way out through `hermes-egress`, and pick the lowest network mode that does the job.
+- Serve Hermes previews from a registrable domain separate from the platform's.
+  They run agent-written code in the member's browser, and page script can set
+  cookies on any parent domain it shares with the platform.
 - Enable content capture/observability deliberately. Prompts and documents can
   contain sensitive data even when credentials are never logged.
 - Preserve exact ownership checks and recovery evidence when a workflow/resource
   cleanup cannot be proved. An ambiguous deletion is not a successful cleanup.
 
-See [deployment](charts/aurum-ai/README.md), [testing](docs/TESTING.md) and
-[configuration](docs/CONFIGURATION.md) for the concrete supported procedures.
+See the [security model](docs/reference/security.md), [deployment](docs/guides/deployment.md),
+[testing](docs/TESTING.md) and [configuration](docs/CONFIGURATION.md) for the concrete
+supported procedures.
