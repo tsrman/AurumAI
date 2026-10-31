@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:25-alpine AS builder
 
 # Apply base-image security patches: node:22-alpine is rebuilt less often
 # than Alpine publishes system-package security fixes.
@@ -14,7 +14,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS runner
+FROM node:25-alpine AS runner
 
 ARG AURUMAI_SOURCE_URL=""
 ARG AURUMAI_REVISION=""
