@@ -7,7 +7,8 @@ a restricted namespace, the `hermes-egress` guard, default-deny NetworkPolicies 
 which a sandbox reaches only the guard, and skill-executor RBAC. skill-executor runs
 the sandboxes as Pods there (`KubernetesHermesSandboxes`), sharing the lifecycle
 with the Docker runtime: files and previews through `pods/exec`, snapshots of the
-running Pod, adoption by labels.
+running Pod, adoption by labels. `hermes.preview` adds the preview service with a wildcard
+Ingress rule, and `./smoke-test-hermes-k8s.sh` accepts the whole on a disposable k3d cluster.
 
 ## Documentation
 

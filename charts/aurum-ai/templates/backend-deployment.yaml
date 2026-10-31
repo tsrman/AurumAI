@@ -28,6 +28,9 @@ spec:
         {{- if .Values.hermes.enabled }}
         checksum/hermes-secret: {{ include "aurum-ai.hermesSecretChecksum" . }}
         {{- end }}
+        {{- if .Values.hermes.preview.enabled }}
+        checksum/hermes-preview-secret: {{ include "aurum-ai.hermesPreviewSecretChecksum" . }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "aurum-ai.backendServiceAccountName" . }}
@@ -198,6 +201,17 @@ spec:
             {{- end }}
             - name: APP_HERMES_ENABLED
               value: {{ .Values.hermes.enabled | quote }}
+            - name: APP_HERMES_PREVIEW_ENABLED
+              value: {{ .Values.hermes.preview.enabled | quote }}
+            {{- if .Values.hermes.preview.enabled }}
+            - name: APP_HERMES_PREVIEW_ORIGIN
+              value: {{ .Values.hermes.preview.origin | quote }}
+            - name: APP_HERMES_PREVIEW_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.hermesPreviewSecretName" . }}
+                  key: HERMES_PREVIEW_SERVICE_SECRET
+            {{- end }}
             {{- if .Values.hermes.enabled }}
             - name: APP_HERMES_EGRESS_MAX_MODE
               value: {{ .Values.hermes.egress.maxMode | quote }}

@@ -15,6 +15,10 @@ spec:
     metadata:
       labels:
         {{- include "aurum-ai.selectorLabels" (dict "component" "skill-executor" "root" $) | nindent 8 }}
+      {{- if .Values.hermes.preview.enabled }}
+      annotations:
+        checksum/hermes-preview-secret: {{ include "aurum-ai.hermesPreviewSecretChecksum" . }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "aurum-ai.skillExecutorServiceAccountName" . }}
       automountServiceAccountToken: true
@@ -94,6 +98,13 @@ spec:
               value: {{ $sandbox.runtimeClassName | quote }}
             - name: SKILL_EXECUTOR_HERMES_POD_START_TIMEOUT_SECONDS
               value: {{ $sandbox.podStartTimeoutSeconds | quote }}
+            {{- if .Values.hermes.preview.enabled }}
+            - name: SKILL_EXECUTOR_HERMES_PREVIEW_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.hermesPreviewSecretName" . }}
+                  key: HERMES_PREVIEW_EXECUTOR_SECRET
+            {{- end }}
             {{- end }}
             - name: SKILL_EXECUTOR_S3_ENDPOINT
               value: {{ .Values.external.minio.endpoint | quote }}

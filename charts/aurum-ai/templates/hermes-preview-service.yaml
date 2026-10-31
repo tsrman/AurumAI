@@ -1,0 +1,18 @@
+{{- if .Values.hermes.preview.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-hermes-preview
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-preview" "root" $) | nindent 4 }}
+  ports:
+    - name: http
+      port: 8095
+      targetPort: http
+      protocol: TCP
+{{- end }}

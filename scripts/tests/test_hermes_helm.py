@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -495,3 +496,214 @@ def test_the_sandbox_image_and_limits_come_from_values() -> None:
 )
 def test_the_executor_settings_are_validated(values: tuple[str, ...], message: str) -> None:
     assert message in _error(*ENABLE, *values)
+
+
+# Previews ---------------------------------------------------------------------
+
+PREVIEW = (
+    *ENABLE,
+    "hermes.preview.enabled=true",
+    "hermes.preview.origin=https://{preview}.preview.example.org",
+    "hermes.preview.host=*.preview.example.org",
+)
+PREVIEW_NAME = f"{RELEASE}-hermes-preview"
+
+
+def test_previews_are_off_unless_asked_for() -> None:
+    for resources in (_render(), _enabled()):
+        assert not [key for key in resources if "hermes-preview" in key[2]]
+        backend = _pod(resources[("Deployment", NAMESPACE, f"{RELEASE}-backend")])["containers"][0]
+        assert _env(backend)["APP_HERMES_PREVIEW_ENABLED"]["value"] == "false"
+        assert "APP_HERMES_PREVIEW_ORIGIN" not in _env(backend)
+        executor = _pod(resources[("Deployment", NAMESPACE, f"{RELEASE}-skill-executor")])["containers"][0]
+        assert "SKILL_EXECUTOR_HERMES_PREVIEW_SECRET" not in _env(executor)
+    rule_hosts = [
+        rule["host"]
+        for rule in _enabled()[("Ingress", NAMESPACE, RELEASE)]["spec"]["rules"]
+    ]
+    assert not [host for host in rule_hosts if host.startswith("*")]
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (("hermes.preview.enabled=true",), "hermes.preview.enabled requires hermes.enabled=true"),
+        (
+            (*ENABLE, "hermes.preview.enabled=true"),
+            "hermes.preview.origin must be an http(s) URL with a {preview} label",
+        ),
+        (
+            (*ENABLE, "hermes.preview.enabled=true", "hermes.preview.origin=https://app.example.org"),
+            "hermes.preview.origin must be an http(s) URL with a {preview} label",
+        ),
+        (
+            (*ENABLE, "hermes.preview.enabled=true", "hermes.preview.origin=ftp://{preview}.example.org"),
+            "hermes.preview.origin must be an http(s) URL with a {preview} label",
+        ),
+        (
+            (*ENABLE, "hermes.preview.enabled=true", "hermes.preview.origin=https://{preview}.example.org"),
+            "hermes.preview.host is required",
+        ),
+        (
+            (*PREVIEW, "hermes.preview.serviceSecret=short"),
+            "hermes.preview.serviceSecret must contain at least 16 characters",
+        ),
+        (
+            (*PREVIEW, "hermes.preview.executorSecret="),
+            "hermes.preview.executorSecret or hermes.preview.existingSecret is required",
+        ),
+        (
+            (*PREVIEW, "hermes.preview.existingSecret=mine"),
+            "set only one of hermes.preview.serviceSecret/executorSecret or hermes.preview.existingSecret",
+        ),
+        (
+            (
+                *PREVIEW,
+                "hermes.preview.serviceSecret=",
+                "hermes.preview.executorSecret=",
+                "hermes.preview.existingSecret=mine",
+            ),
+            "hermes.preview.secretRotationToken is required",
+        ),
+        ((*PREVIEW, "hermes.preview.replicaCount=0"), "hermes.preview.replicaCount must be at least 1"),
+    ],
+)
+def test_previews_are_validated(values: tuple[str, ...], message: str) -> None:
+    assert message in _error(*values)
+
+
+def test_a_host_is_not_needed_without_an_ingress() -> None:
+    resources = _render(
+        *ENABLE,
+        "hermes.preview.enabled=true",
+        "hermes.preview.origin=https://{preview}.example.org",
+        "ingress.enabled=false",
+    )
+    assert ("Deployment", NAMESPACE, PREVIEW_NAME) in resources
+
+
+def test_the_preview_service_is_hardened_and_configured_from_the_chart() -> None:
+    resources = _render(*PREVIEW)
+    deployment = resources[("Deployment", NAMESPACE, PREVIEW_NAME)]
+    pod = _pod(deployment)
+    container = pod["containers"][0]
+    assert pod["automountServiceAccountToken"] is False
+    assert pod["securityContext"]["runAsNonRoot"] is True and pod["securityContext"]["runAsUser"] == 10001
+    assert container["securityContext"] == {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": True,
+        "capabilities": {"drop": ["ALL"]},
+    }
+    assert container["image"] == "aurum-ai-hermes-preview:latest"
+    assert container["ports"] == [{"name": "http", "containerPort": 8095, "protocol": "TCP"}]
+    assert container["readinessProbe"]["httpGet"] == {"path": "/health", "port": "http", "scheme": "HTTP"}
+    env = _env(container)
+    assert env["HERMES_PREVIEW_ORIGIN"]["value"] == "https://{preview}.preview.example.org"
+    assert env["HERMES_PREVIEW_BACKEND_URL"]["value"] == f"http://{RELEASE}-backend.{NAMESPACE}.svc:8000"
+    assert env["HERMES_PREVIEW_EXECUTOR_URL"]["value"] == f"ws://{RELEASE}-skill-executor.{NAMESPACE}.svc:8090"
+    assert env["HERMES_PREVIEW_MAX_CONNECTIONS"]["value"] == "32"
+    for name in ("HERMES_PREVIEW_SERVICE_SECRET", "HERMES_PREVIEW_EXECUTOR_SECRET"):
+        assert env[name]["valueFrom"]["secretKeyRef"] == {"name": f"{RELEASE}-hermes-preview-secrets", "key": name}
+    service = resources[("Service", NAMESPACE, PREVIEW_NAME)]
+    assert service["spec"]["selector"] == {
+        "app.kubernetes.io/name": "hermes-preview",
+        "app.kubernetes.io/instance": RELEASE,
+    }
+    assert [(p["port"], p["targetPort"]) for p in service["spec"]["ports"]] == [(8095, "http")]
+
+
+def test_the_preview_secret_is_one_secret_with_both_credentials() -> None:
+    secret = _render(*PREVIEW)[("Secret", NAMESPACE, f"{RELEASE}-hermes-preview-secrets")]
+    assert set(secret["stringData"]) == {"HERMES_PREVIEW_SERVICE_SECRET", "HERMES_PREVIEW_EXECUTOR_SECRET"}
+    assert secret["stringData"]["HERMES_PREVIEW_SERVICE_SECRET"] != secret["stringData"]["HERMES_PREVIEW_EXECUTOR_SECRET"]
+    external = _render(
+        *PREVIEW,
+        "hermes.preview.serviceSecret=",
+        "hermes.preview.executorSecret=",
+        "hermes.preview.existingSecret=mine",
+        "hermes.preview.secretRotationToken=r1",
+    )
+    assert not [key for key in external if key[0] == "Secret" and "preview" in key[2]]
+    env = _env(_pod(external[("Deployment", NAMESPACE, PREVIEW_NAME)])["containers"][0])
+    assert env["HERMES_PREVIEW_SERVICE_SECRET"]["valueFrom"]["secretKeyRef"]["name"] == "mine"
+
+
+def test_backend_and_executor_are_told_about_previews() -> None:
+    resources = _render(*PREVIEW)
+    backend = _env(_pod(resources[("Deployment", NAMESPACE, f"{RELEASE}-backend")])["containers"][0])
+    assert backend["APP_HERMES_PREVIEW_ENABLED"]["value"] == "true"
+    assert backend["APP_HERMES_PREVIEW_ORIGIN"]["value"] == "https://{preview}.preview.example.org"
+    assert backend["APP_HERMES_PREVIEW_SERVICE_SECRET"]["valueFrom"]["secretKeyRef"] == {
+        "name": f"{RELEASE}-hermes-preview-secrets",
+        "key": "HERMES_PREVIEW_SERVICE_SECRET",
+    }
+    executor = _env(_pod(resources[("Deployment", NAMESPACE, f"{RELEASE}-skill-executor")])["containers"][0])
+    assert executor["SKILL_EXECUTOR_HERMES_PREVIEW_SECRET"]["valueFrom"]["secretKeyRef"] == {
+        "name": f"{RELEASE}-hermes-preview-secrets",
+        "key": "HERMES_PREVIEW_EXECUTOR_SECRET",
+    }
+    admin = _env(_pod(resources[("Deployment", NAMESPACE, f"{RELEASE}-backend-admin")])["containers"][0])
+    assert "APP_HERMES_PREVIEW_SERVICE_SECRET" not in admin
+
+
+def test_the_ingress_routes_the_wildcard_host_to_the_preview_service_only() -> None:
+    rules = _render(*PREVIEW)[("Ingress", NAMESPACE, RELEASE)]["spec"]["rules"]
+    (rule,) = [rule for rule in rules if rule["host"] == "*.preview.example.org"]
+    assert rule["http"]["paths"] == [
+        {
+            "path": "/",
+            "pathType": "Prefix",
+            "backend": {"service": {"name": PREVIEW_NAME, "port": {"number": 8095}}},
+        }
+    ]
+
+
+def test_only_the_preview_service_and_the_tool_worker_reach_the_executor() -> None:
+    def sources(*values: str) -> list[str]:
+        policy = _render(*values)[("NetworkPolicy", NAMESPACE, f"{RELEASE}-skill-executor-ingress")]["spec"]
+        return [peer["podSelector"]["matchLabels"]["app.kubernetes.io/name"] for rule in policy["ingress"] for peer in rule["from"]]
+
+    assert sources() == ["tool-worker"]
+    assert sources(*PREVIEW) == ["tool-worker", "hermes-preview"]
+
+
+def test_preview_secret_rotation_rolls_every_consumer() -> None:
+    def checksums(*values: str) -> list[str]:
+        resources = _render(*PREVIEW, *values)
+        return [
+            resources[("Deployment", NAMESPACE, name)]["spec"]["template"]["metadata"]["annotations"][
+                "checksum/hermes-preview-secret"
+            ]
+            for name in (PREVIEW_NAME, f"{RELEASE}-backend", f"{RELEASE}-skill-executor")
+        ]
+
+    first = checksums()
+    assert len(set(first)) == 1 and checksums() == first
+    assert checksums("hermes.preview.serviceSecret=another-secret-value")[0] != first[0]
+
+
+# The k3d acceptance --------------------------------------------------------------
+
+SMOKE = ROOT / "smoke-test-hermes-k8s.sh"
+DRIVER = ROOT / "scripts" / "hermes-k8s-acceptance.py"
+
+
+def test_the_k8s_acceptance_is_disposable_and_applies_the_charts_own_templates() -> None:
+    script = SMOKE.read_text()
+    assert subprocess.run(["bash", "-n", str(SMOKE)], capture_output=True).returncode == 0
+    assert "trap teardown EXIT" in script and "k3d cluster delete" in script
+    assert 'if (( $# )); then' in script
+    rendered = set(re.findall(r"-s templates/(hermes-[a-z-]+\.yaml)", script))
+    assert rendered, "the script renders no Hermes templates"
+    for name in rendered:
+        assert (HELM_CHART / "templates" / name).exists(), name
+    # Every resource the chart makes for Hermes is applied, except the pure validation.
+    chart = {path.name for path in (HELM_CHART / "templates").glob("hermes-*.yaml")}
+    assert chart - rendered == {"hermes-preview-validation.yaml"}
+    assert DRIVER.exists() and "hermes-k8s-acceptance.py" in script
+
+
+def test_the_k8s_acceptance_driver_exits_nonzero_on_a_failed_check() -> None:
+    source = DRIVER.read_text()
+    assert "sys.exit(1 if FAILED else 0)" in source
+    compile(source, str(DRIVER), "exec")

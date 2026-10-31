@@ -20,6 +20,13 @@ spec:
             matchLabels:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: tool-worker
+        {{- if .Values.hermes.preview.enabled }}
+        # The preview service streams into sandboxes through the executor.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: hermes-preview
+        {{- end }}
       ports:
         - protocol: TCP
           port: 8090

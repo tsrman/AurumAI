@@ -196,7 +196,7 @@ see [the Hermes guide](guides/hermes-agent.md); for the reasoning, see
 answer 404. Users also need the `agents.hermes` capability (Admin UI → Groups), which
 provisioning never grants. Compose passes the switch only with the
 `docker-compose.hermes.yml` overlay, from `HERMES_ENABLED` in `.env`; the Helm chart
-does not pass it, because Hermes runs on the Docker runtime only.
+passes it with `hermes.enabled`.
 
 - `POST /v1/hermes/chat/completions` is an OpenAI-compatible completion route with
   native tools: `tools`, `tool_choice`, assistant `tool_calls`, `tool` messages and
@@ -325,12 +325,15 @@ arrives with the sandboxes themselves.
   log: session, turn, host, port, mode, outcome and bytes, never credentials or
   traffic. The backend's rate limit and audit journal skip the per-connection check.
 
-The Helm chart does not deploy hermes-egress yet.
+On Kubernetes the chart deploys hermes-egress as a Deployment and Service in its own
+namespace and runs the proxy without nftables: NetworkPolicies are the packet filter
+(see [Hermes on Kubernetes](#hermes-on-kubernetes)).
 
 ### Hermes sandboxes
 
-With the overlay, skill-executor runs Hermes sandboxes (Docker runtime only;
-Docker 28 or newer, for isolated-gateway internal networks). Each sandbox gets its
+With the overlay, skill-executor runs Hermes sandboxes on the Docker runtime (Docker 28
+or newer, for isolated-gateway internal networks; the Kubernetes runtime is described
+below). Each sandbox gets its
 own `/28` network from `HERMES_SANDBOX_POOL` (default `172.31.0.0/16`, the guard's
 sandbox CIDR), a workspace volume and the `aurum-ai-hermes-sandbox` image, built
 with `docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile
@@ -350,6 +353,33 @@ build build hermes-sandbox`. skill-executor settings (`SKILL_EXECUTOR_` prefix):
 | `HERMES_MAX_RUNNING`, `HERMES_MAX_RUNNING_PER_ORG` | 16, 4 |
 | `HERMES_WORKSPACE_MODE` | `volume` (or `tmpfs`) |
 | `HERMES_WORKSPACE_MAX_BYTES`, `HERMES_DISK_CHECK_INTERVAL_SECONDS` | 1 GiB, 60 |
+
+### Hermes on Kubernetes
+
+With `SKILL_EXECUTOR_RUNTIME=kubernetes` and `hermes.enabled=true` in the Helm values,
+a sandbox is one Pod in the Hermes namespace instead of a container, a network and a
+volume. The chart sets these skill-executor settings from `hermes.sandbox.*`; the
+Docker-only ones (`HERMES_SUBNET_POOL`, `HERMES_PIDS_LIMIT`, `HERMES_GUARD_CONTAINER`)
+do not apply.
+
+| Setting (`SKILL_EXECUTOR_` prefix) | Default |
+|---|---|
+| `HERMES_NAMESPACE`, `HERMES_GUARD_SERVICE` | `aurum-ai-hermes`, `hermes-egress` |
+| `HERMES_CPU_REQUEST`, `HERMES_MEMORY_REQUEST` | `250m`, `512Mi` (limits are `HERMES_CPUS` and `HERMES_MEMORY_BYTES`) |
+| `HERMES_RUNTIME_CLASS` | empty (a RuntimeClass whose nodes set a PID limit) |
+| `HERMES_POD_START_TIMEOUT_SECONDS` | 300 (scheduling and the image pull) |
+| `HERMES_EXEC_TIMEOUT_SECONDS` | 60 (a command run in a Pod) |
+| `HERMES_WORKSPACE_BACKSTOP_FACTOR` | 1.5 (the volume's hard limit, as a multiple of the soft one) |
+
+Differences from Docker: a Pod cannot be stopped and kept, so an idle sandbox is
+snapshotted from its running Pod and the Pod deleted; a sandbox whose snapshot fails
+stays running but takes no work until the snapshot is retried, and is never resumed
+with its old token. The workspace is an `emptyDir` (memory-backed with
+`HERMES_WORKSPACE_MODE=tmpfs`); its soft limit is measured with `du` in each Pod and
+the kubelet evicts a Pod that reaches the hard backstop. Run one skill-executor replica:
+it tracks sandboxes in memory and re-adopts live Pods from their labels after a restart.
+The Role the chart grants covers Pods, `pods/exec` and the guard Service in the Hermes
+namespace only.
 
 A restarted skill-executor re-adopts live and stopped sandboxes from their Docker
 labels and reconnects a recreated guard. A sandbox past its idle or absolute

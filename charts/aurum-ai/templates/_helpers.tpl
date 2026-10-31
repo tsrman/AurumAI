@@ -186,3 +186,17 @@ read it directly.
   port: 443
 {{- end -}}
 {{- end }}
+
+{{/* One Secret for both preview credentials, in the release namespace. */}}
+{{- define "aurum-ai.hermesPreviewSecretName" -}}
+{{- .Values.hermes.preview.existingSecret | default (printf "%s-hermes-preview-secrets" .Release.Name | trunc 63 | trimSuffix "-") -}}
+{{- end }}
+
+{{/* Roll the service, the backend and skill-executor when a preview credential rotates. */}}
+{{- define "aurum-ai.hermesPreviewSecretChecksum" -}}
+{{- if .Values.hermes.preview.existingSecret -}}
+{{- printf "external|%s|%s" .Values.hermes.preview.existingSecret .Values.hermes.preview.secretRotationToken | sha256sum -}}
+{{- else -}}
+{{- printf "managed|%s|%s" .Values.hermes.preview.serviceSecret .Values.hermes.preview.executorSecret | sha256sum -}}
+{{- end -}}
+{{- end }}

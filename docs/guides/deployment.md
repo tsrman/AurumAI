@@ -8,7 +8,8 @@ on. Two supported ways exist:
 | Docker Compose | Local evaluation, development, a trusted single host | The backend holds Docker-socket authority |
 | Helm (`charts/aurum-ai`) | Production on Kubernetes | Namespace-scoped RBAC and network policies |
 
-Hermes Agent runs on the Docker runtime only; the Helm chart does not deploy it yet.
+Hermes Agent runs on both: as containers with the Compose overlay, as Pods with the
+chart's `hermes` block (see [Hermes Agent on Kubernetes](#hermes-agent-on-kubernetes)).
 For every environment variable see the
 [configuration reference](../CONFIGURATION.md).
 
@@ -162,6 +163,48 @@ Migrations run through a dedicated hook and role, not on every API replica's sta
 Browser origins derive from the configured Ingress unless you override them. The
 [chart guide](https://github.com/tsrman/AurumAI/blob/main/charts/aurum-ai/README.md)
 covers secret ownership, workflow and feature rollout, and acceptance checks.
+
+### Hermes Agent on Kubernetes
+
+Hermes is off by default. To turn it on, give it its own namespace and secrets:
+
+```yaml
+hermes:
+  enabled: true
+  namespace: aurumai-hermes          # not the release, runner, sandbox or web namespace
+  egress:
+    maxMode: packages                # none | packages | public
+    existingSecret: hermes-egress    # HERMES_EGRESS_SERVICE_SECRET, in BOTH namespaces
+    serviceSecret: ""
+    secretRotationToken: "1"
+  sandbox:
+    runtimeClassName: ""             # a RuntimeClass whose nodes set a PID limit
+```
+
+The chart then deploys the namespace (Pod Security `restricted`), the `hermes-egress`
+guard and default-deny NetworkPolicies in which a sandbox reaches only the guard, plus
+the Role that lets skill-executor create sandbox Pods. Requirements beyond the base
+chart:
+
+- A CNI that enforces **egress** NetworkPolicy (k3s's built-in controller was checked).
+  Without enforcement the boundary does not exist.
+- The `aurum-ai-hermes-sandbox` image (about 2.5 GB) in your registry, and its pull
+  secret in the Hermes namespace (`skillSandbox.imagePullSecrets` names it).
+- One skill-executor replica, a `sandboxRuntime.type` of `kubernetes` and the
+  `web.networkPolicy` exclusion lists intact: Hermes reuses them as its list of private
+  ranges.
+- `internalPackageHosts` and `internalDestinations` together, if sandboxes should reach an
+  internal package mirror: NetworkPolicy knows addresses, not names.
+- Kubernetes has no per-Pod process limit. Point `hermes.sandbox.runtimeClassName` at a
+  RuntimeClass whose nodes set one, or accept the limit of the node.
+
+For previews set `hermes.preview.enabled`, `origin` (for example
+`https://{preview}.preview.example.org`) and `host` (`*.preview.example.org`); the chart
+adds the preview service, its secrets and a wildcard Ingress rule for it. Use a domain
+that is not the platform's and not under it (see the
+[security model](../reference/security.md#previews)), and terminate a wildcard certificate
+at the Ingress. The [Hermes guide](hermes-agent.md#set-it-up) covers the rest, and
+`./smoke-test-hermes-k8s.sh` is the acceptance run on a disposable k3d cluster.
 
 ## Air-gapped installation
 
