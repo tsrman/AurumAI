@@ -37,6 +37,16 @@
 {{- if and $existingSecret (not ($egress.secretRotationToken | default "")) -}}
 {{- fail "hermes.egress.secretRotationToken is required with hermes.egress.existingSecret" -}}
 {{- end -}}
+{{- if ne .Values.sandboxRuntime.type "kubernetes" -}}
+{{- fail "hermes.enabled requires sandboxRuntime.type=kubernetes" -}}
+{{- end -}}
+{{- /* The executor keeps its sandboxes in memory and re-adopts them from labels after a restart. */ -}}
+{{- if ne (int .Values.skillExecutor.replicaCount) 1 -}}
+{{- fail "hermes.enabled requires skillExecutor.replicaCount=1" -}}
+{{- end -}}
+{{- if not (has .Values.hermes.sandbox.workspaceMode (list "volume" "tmpfs")) -}}
+{{- fail "hermes.sandbox.workspaceMode must be volume or tmpfs" -}}
+{{- end -}}
 {{- if lt (int $egress.replicaCount) 1 -}}
 {{- fail "hermes.egress.replicaCount must be at least 1" -}}
 {{- end -}}

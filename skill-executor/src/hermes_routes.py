@@ -1,7 +1,7 @@
 """HTTP surface for Hermes sandboxes (see src/hermes_runtime.py).
 
-Off unless SKILL_EXECUTOR_HERMES_ENABLED; Docker only for now, so the
-Kubernetes runtime refuses explicitly. Run and event streams are NDJSON of the
+Off unless SKILL_EXECUTOR_HERMES_ENABLED. The sandboxes are Docker containers
+or Kubernetes Pods, by SKILL_EXECUTOR_RUNTIME. Run and event streams are NDJSON of the
 relay's lines, which callers treat as untrusted data. Snapshot metadata is
 returned to the caller, which phase 4 records in the session row.
 """
@@ -17,13 +17,29 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, WebSocke
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config import settings
+from src.config import Settings, settings
 from src.hermes_platform_skills import MAX_SKILLS, PlatformSkill
-from src.hermes_runtime import FILE_MAX_BYTES, DockerHermesSandboxes, HermesSandbox, HermesSandboxError
+from src.hermes_kubernetes import KubernetesHermesSandboxes
+from src.hermes_runtime import (
+    FILE_MAX_BYTES,
+    DockerHermesSandboxes,
+    HermesSandbox,
+    HermesSandboxError,
+    HermesSandboxes,
+)
 from src.hermes_snapshots import Snapshot
 
 router = APIRouter(prefix="/hermes")
-sandboxes = DockerHermesSandboxes(settings)
+
+
+def create_hermes_sandboxes(runtime_settings: Settings) -> HermesSandboxes:
+    """The sandboxes of the configured runtime."""
+    if runtime_settings.runtime == "kubernetes":
+        return KubernetesHermesSandboxes(runtime_settings)
+    return DockerHermesSandboxes(runtime_settings)
+
+
+sandboxes = create_hermes_sandboxes(settings)
 _SESSION = r"^[0-9a-f]{32}$"
 # Both become parts of snapshot object keys.
 _OWNER = r"^[A-Za-z0-9-]{1,64}$"
@@ -35,6 +51,12 @@ _STATUS = {
     "hermes_start_timeout": 504,
     "docker_too_old_for_isolated_networks": 503,
     "hermes_egress_guard_missing": 503,
+    "hermes_kubernetes_unavailable": 503,
+    "hermes_kubernetes_failed": 502,
+    "hermes_image_unavailable": 503,
+    "hermes_start_failed": 502,
+    "hermes_sandbox_exists": 409,
+    "hermes_upload_failed": 502,
     "hermes_sandbox_stopped": 409,
     "hermes_snapshot_unavailable": 409,
     "hermes_snapshot_not_found": 404,
@@ -119,8 +141,6 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 def _available() -> None:
     if not settings.hermes_enabled:
         raise HTTPException(status_code=404, detail="Not Found")
-    if settings.runtime != "docker":
-        raise HTTPException(status_code=501, detail="Hermes sandboxes need the Docker runtime")
 
 
 def _error(exc: HermesSandboxError) -> HTTPException:
@@ -262,7 +282,7 @@ async def read_skills(session_id: str) -> dict[str, Any]:
 async def connect_preview(websocket: WebSocket, session_id: str, port: int = Query(ge=1024, le=65535)) -> None:
     """Binary frames to and from 127.0.0.1:port in the sandbox, for the
     preview service; the stream ends when either side closes."""
-    if not settings.hermes_enabled or settings.runtime != "docker":
+    if not settings.hermes_enabled:
         await websocket.close(code=1008)
         return
     secret = settings.hermes_preview_secret

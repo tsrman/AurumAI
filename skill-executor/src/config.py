@@ -75,9 +75,10 @@ class Settings(BaseSettings):
     s3_bucket: str = "aurum-ai-business"
     s3_region: str = "us-east-1"
 
-    # Hermes Agent sandboxes (docs/HERMES_AGENT.md), Docker only for now. Each
-    # sandbox gets its own internal network from this pool (isolated gateway
-    # mode, Docker 28+), joined only by the hermes-egress guard.
+    # Hermes Agent sandboxes (docs/HERMES_AGENT.md). On Docker each sandbox gets
+    # its own internal network from this pool (isolated gateway mode, Docker
+    # 28+), joined only by the hermes-egress guard; on Kubernetes they are Pods
+    # in hermes_namespace behind the chart's NetworkPolicies.
     hermes_enabled: bool = False
     hermes_sandbox_image: str = "aurum-ai-hermes-sandbox:latest"
     hermes_guard_container: str = "aurum-ai-hermes-egress-guard"
@@ -107,6 +108,21 @@ class Settings(BaseSettings):
     # sandbox whose snapshot fails is paused instead and cannot be resumed.
     hermes_workspace_mode: Literal["volume", "tmpfs"] = "volume"
     hermes_workspace_max_bytes: int = 1024 * 1024 * 1024
+    # Kubernetes: the namespace the chart gives the guard and the sandboxes, the
+    # guard's Service, the Pod's requests (its limits are hermes_cpus and
+    # hermes_memory_bytes), an optional RuntimeClass (for a node PID limit, as
+    # Kubernetes has no per-Pod one) and the longest a Pod may take to start
+    # (scheduling and an image pull). The workspace's volume limit is a hard
+    # backstop at this multiple of the soft limit above: the kubelet evicts a
+    # Pod that goes over it.
+    hermes_namespace: str = "aurum-ai-hermes"
+    hermes_guard_service: str = "hermes-egress"
+    hermes_cpu_request: str = "250m"
+    hermes_memory_request: str = "512Mi"
+    hermes_runtime_class: str = ""
+    hermes_pod_start_timeout_seconds: float = 300.0
+    hermes_exec_timeout_seconds: float = 60.0
+    hermes_workspace_backstop_factor: float = 1.5
     # Shared with the preview service, the only caller of the preview stream;
     # without it no stream is opened.
     hermes_preview_secret: str = ""

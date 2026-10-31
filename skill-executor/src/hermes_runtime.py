@@ -45,7 +45,7 @@ import secrets
 import tarfile
 import tempfile
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -275,12 +275,18 @@ def bounded_json_lines(data: bytes, limit: int) -> tuple[list[dict[str, Any]], b
         rest = b""
     return parsed, rest
 
+class HermesSandboxes:
+    """The lifecycle of Hermes sandboxes on any backend (see the module notes)."""
 
-class DockerHermesSandboxes:
+    # What the backend's own client raises; the shared code treats these as a
+    # sandbox that does not answer.
+    _backend_errors: tuple[type[BaseException], ...] = ()
+    # Whether a stopped sandbox can be started again with a fresh token.
+    _resumable = False
+
     def __init__(self, settings: Settings, store: SnapshotStore | None = None) -> None:
         self._settings = settings
         self._store = store or SnapshotStore(settings)
-        self._docker: aiodocker.Docker | None = None
         self._sandboxes: dict[str, HermesSandbox] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._capacity_lock = asyncio.Lock()
@@ -291,6 +297,12 @@ class DockerHermesSandboxes:
         self._swept_at = 0.0
         self._disk_checked_at = 0.0
 
+    async def shutdown(self) -> None:
+        """Release the backend's client."""
+
+    async def reconcile(self) -> None:
+        """Re-establish what the backend needs after the guard changed."""
+
     @property
     def _tmpfs(self) -> bool:
         return self._settings.hermes_workspace_mode == "tmpfs"
@@ -298,45 +310,19 @@ class DockerHermesSandboxes:
     def _lock(self, session_id: str) -> asyncio.Lock:
         return self._locks.setdefault(session_id, asyncio.Lock())
 
-    @property
-    def docker(self) -> aiodocker.Docker:
-        if self._docker is None:
-            self._docker = aiodocker.Docker()
-        return self._docker
-
-    async def shutdown(self) -> None:
-        if self._docker is not None:
-            await self._docker.close()
-            self._docker = None
-
-    # Readiness and adoption -------------------------------------------------
-
     async def ready(self) -> None:
-        """Refuse to run on a daemon that could give a sandbox network a host
-        address, or without the guard; creation is refused until this passes."""
-        version = await self.docker.version()
-        api = tuple(int(part) for part in str(version.get("ApiVersion", "0.0")).split(".")[:2])
-        if api < MIN_DOCKER_API:
-            raise HermesSandboxError("docker_too_old_for_isolated_networks")
-        try:
-            await self.docker.containers.get(self._settings.hermes_guard_container)
-        except DockerError:
-            raise HermesSandboxError("hermes_egress_guard_missing") from None
+        """Refuse to create sandboxes until the backend can keep them isolated."""
+        await self._check_backend()
         self._ready = True
 
     async def adopt(self) -> int:
         """Rebuild the session map from labels after a restart."""
-        containers = await self.docker.containers.list(
-            all=True, filters=json.dumps({"label": [f"{LABEL}=1"]})
-        )
         adopted = 0
-        for container in containers:
-            labels = container._container.get("Labels") or {}
+        for handle, labels, running in await self._discover():
             session_id = labels.get(SESSION_LABEL, "")
             if not session_id or session_id in self._sandboxes:
                 continue
-            running = container._container.get("State") in ("running", "restarting")
-            self._sandboxes[session_id] = self._from_labels(container.id, labels, running)
+            self._sandboxes[session_id] = self._from_labels(handle, labels, running)
             adopted += 1
         return adopted
 
@@ -383,91 +369,6 @@ class DockerHermesSandboxes:
             CREATED_LABEL: str(int(created)),
         }
 
-    async def _used_subnets(self) -> set[ipaddress.IPv4Network]:
-        used: set[ipaddress.IPv4Network] = set()
-        for network in await self.docker.networks.list():
-            for config in (network.get("IPAM") or {}).get("Config") or []:
-                try:
-                    used.add(ipaddress.ip_network(config.get("Subnet", ""), strict=False))  # type: ignore[arg-type]
-                except ValueError:
-                    continue
-        return used
-
-    async def _create_network(self, name: str, labels: dict[str, str]) -> None:
-        pool = ipaddress.ip_network(self._settings.hermes_subnet_pool)
-        for _attempt in range(5):
-            used = await self._used_subnets()
-            candidate = next(
-                (subnet for subnet in pool.subnets(new_prefix=self._settings.hermes_subnet_prefix)
-                 if not any(subnet.overlaps(other) for other in used)),
-                None,
-            )
-            if candidate is None:
-                raise HermesSandboxError("hermes_subnet_pool_exhausted")
-            try:
-                await self.docker.networks.create(
-                    {
-                        "Name": name,
-                        "Driver": "bridge",
-                        "Internal": True,
-                        "IPAM": {"Config": [{"Subnet": str(candidate)}]},
-                        "Options": {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"},
-                        "Labels": labels,
-                    }
-                )
-                return
-            except DockerError as exc:
-                # Another create took the same subnet; look again.
-                if exc.status in (400, 403, 409) and "overlap" in str(exc).lower():
-                    continue
-                raise
-        raise HermesSandboxError("hermes_subnet_allocation_failed")
-
-    async def _connect_guard(self, network_name: str) -> None:
-        network = await self.docker.networks.get(network_name)
-        info = await network.show()
-        guard = await self.docker.containers.get(self._settings.hermes_guard_container)
-        if guard.id in (info.get("Containers") or {}):
-            return
-        await network.connect(
-            {"Container": guard.id, "EndpointConfig": {"Aliases": ["hermes-egress"]}}
-        )
-
-    def _volume_config(self, name: str, labels: dict[str, str]) -> dict[str, Any]:
-        config: dict[str, Any] = {"Name": name, "Labels": labels}
-        if self._tmpfs:
-            size = self._settings.hermes_workspace_max_bytes
-            config["DriverOpts"] = {
-                "type": "tmpfs",
-                "device": "tmpfs",
-                "o": f"size={size},uid={SANDBOX_UID},gid={SANDBOX_UID},mode=0700",
-            }
-        return config
-
-    def _container_config(self, name: str, labels: dict[str, str]) -> dict[str, Any]:
-        memory = self._settings.hermes_memory_bytes
-        if self._tmpfs:
-            # tmpfs pages are charged to the container that writes them.
-            memory += self._settings.hermes_workspace_max_bytes
-        return {
-            "Image": self._settings.hermes_sandbox_image,
-            "User": f"{SANDBOX_UID}:{SANDBOX_UID}",
-            "Labels": labels,
-            "HostConfig": {
-                "Init": True,
-                "NetworkMode": name,
-                "ReadonlyRootfs": True,
-                "Tmpfs": {"/tmp": f"rw,nosuid,nodev,size={self._settings.hermes_tmp_mb}m"},
-                "CapDrop": ["ALL"],
-                "SecurityOpt": ["no-new-privileges"],
-                "Memory": memory,
-                "NanoCpus": int(self._settings.hermes_cpus * 1_000_000_000),
-                "PidsLimit": self._settings.hermes_pids_limit,
-                "Mounts": [{"Type": "volume", "Source": name, "Target": "/workspace"}],
-                "RestartPolicy": {"Name": "unless-stopped"},
-            },
-        }
-
     async def create(
         self,
         *,
@@ -492,7 +393,7 @@ class DockerHermesSandboxes:
                     return existing, "existing"
                 # A paused tmpfs sandbox would keep its old token: never resumed.
                 fresh = time.time() - existing.created_at < self._settings.hermes_max_lifetime_seconds
-                if fresh and not self._tmpfs:
+                if fresh and self._resumable:
                     await self._admit(org_id, session_id)
                     try:
                         return await self._resume(existing, token=token, model=model), "resumed"
@@ -585,7 +486,7 @@ class DockerHermesSandboxes:
         lifetime. A relay that does not answer reports none."""
         try:
             _, output = await self._exec(sandbox, ["hermes-relay", "active"])
-        except DockerError:
+        except self._backend_errors:
             return []
         lines, _ = bounded_json_lines(output + b"\n", self._settings.hermes_event_line_max_bytes)
         for line in lines:
@@ -594,93 +495,17 @@ class DockerHermesSandboxes:
                 return [run_id for run_id in run_ids if isinstance(run_id, str) and len(run_id) <= 128]
         return []
 
-    async def _secrets(self, container: Any, *, token: str, model: str) -> None:
+    def _secrets_archive(self, *, token: str, model: str) -> bytes:
         api_key = secrets.token_urlsafe(32)
         config = hermes_config(self._settings, model=model, token=token, api_key=api_key)
         proxy = f"http://hermes:{token}@{self._settings.hermes_proxy_address}"
-        await container.put_archive(
-            "/workspace",
-            _tar(
-                {
-                    ".hermes/config.yaml": json.dumps(config, indent=1).encode(),
-                    ".aurum/proxy": proxy.encode(),
-                    ".aurum/platform-skills/.platform": b"",
-                }
-            ),
+        return _tar(
+            {
+                ".hermes/config.yaml": json.dumps(config, indent=1).encode(),
+                ".aurum/proxy": proxy.encode(),
+                ".aurum/platform-skills/.platform": b"",
+            }
         )
-
-    async def _provision(
-        self,
-        *,
-        session_id: str,
-        org_id: str,
-        conversation_id: str,
-        token: str,
-        model: str,
-        snapshot_sha256: str | None,
-    ) -> tuple[HermesSandbox, bool]:
-        name = resource_name(session_id)
-        created = time.time()
-        labels = self._labels(session_id, org_id, conversation_id, created)
-        restored = False
-        try:
-            await self._create_network(name, labels)
-            await self._connect_guard(name)
-            await self.docker.volumes.create(self._volume_config(name, labels))  # type: ignore[no-untyped-call]
-            container = await self.docker.containers.create(
-                config=self._container_config(name, labels), name=name
-            )
-            sha = snapshot_sha256
-            # A tmpfs volume is mounted only while the container runs, so its
-            # files are written after the start; start.sh waits for them.
-            if self._tmpfs:
-                await container.start()
-            if sha is not None:
-                await self._restore(container, org_id, conversation_id, sha)
-                restored = True
-            # After the restore, so the platform's files are always the current ones.
-            await self._secrets(container, token=token, model=model)
-            if not self._tmpfs:
-                await container.start()
-        except SnapshotError as exc:
-            await self._remove(name)
-            raise HermesSandboxError(exc.code) from None
-        except TimeoutError:
-            await self._remove(name)
-            raise HermesSandboxError("hermes_snapshot_timeout") from None
-        except Exception:
-            await self._remove(name)
-            raise
-        sandbox = HermesSandbox(
-            session_id=session_id,
-            org_id=org_id,
-            conversation_id=conversation_id,
-            container_id=container.id,
-            network=name,
-            volume=name,
-            created_at=created,
-        )
-        self._sandboxes[session_id] = sandbox
-        return sandbox, restored
-
-    async def _resume(self, sandbox: HermesSandbox, *, token: str, model: str) -> HermesSandbox:
-        """Start a stopped sandbox again with a fresh token and API key."""
-        try:
-            container = await self.docker.containers.get(sandbox.container_id)
-            await self._connect_guard(sandbox.network)
-            await self._secrets(container, token=token, model=model)
-            await container.start()
-        except DockerError:
-            raise HermesSandboxError("hermes_resume_failed") from None
-        resumed = replace(sandbox, state="running", stopped_at=None, last_active=time.time())
-        self._sandboxes[sandbox.session_id] = resumed
-        try:
-            await self._wait_healthy(resumed)
-        except Exception:
-            await self._stop_container(resumed)
-            self._sandboxes[sandbox.session_id] = sandbox
-            raise
-        return resumed
 
     async def _wait_healthy(self, sandbox: HermesSandbox) -> None:
         deadline = time.monotonic() + self._settings.hermes_start_timeout_seconds
@@ -691,43 +516,22 @@ class DockerHermesSandboxes:
             await asyncio.sleep(0.5)
         raise HermesSandboxError("hermes_start_timeout")
 
-    # Exec relay -------------------------------------------------------------
-
-    async def _exec(self, sandbox: HermesSandbox, cmd: list[str]) -> tuple[int | None, bytes]:
-        container = await self.docker.containers.get(sandbox.container_id)
-        exec_ = await container.exec(cmd=cmd, stdout=True, stderr=False, user=f"{SANDBOX_UID}")
-        stream = exec_.start(detach=False)
-        chunks: list[bytes] = []
-        try:
-            while (message := await stream.read_out()) is not None:
-                if message.stream == 1 and sum(map(len, chunks)) < self._settings.hermes_event_line_max_bytes:
-                    chunks.append(message.data)
-        finally:
-            await stream.close()
-        return (await exec_.inspect()).get("ExitCode"), b"".join(chunks)
-
     async def _stream(self, sandbox: HermesSandbox, cmd: list[str]) -> AsyncIterator[dict[str, Any]]:
-        container = await self.docker.containers.get(sandbox.container_id)
-        exec_ = await container.exec(cmd=cmd, stdout=True, stderr=False, user=f"{SANDBOX_UID}")
-        stream = exec_.start(detach=False)
+        chunks = self._open_stream(sandbox, cmd)
         pending = b""
         session_id = sandbox.session_id
         self._streams[session_id] = self._streams.get(session_id, 0) + 1
         try:
-            while (message := await stream.read_out()) is not None:
-                if message.stream != 1:
-                    continue
+            async for data in chunks:
                 self.touch(sandbox.session_id)
-                lines, pending = bounded_json_lines(
-                    pending + message.data, self._settings.hermes_event_line_max_bytes
-                )
+                lines, pending = bounded_json_lines(pending + data, self._settings.hermes_event_line_max_bytes)
                 for line in lines:
                     yield line
         finally:
             self._streams[session_id] -= 1
             if not self._streams[session_id]:
                 del self._streams[session_id]
-            await stream.close()
+            await chunks.aclose()
 
     async def run(self, session_id: str, request: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
         sandbox = self.get_running(session_id)
@@ -735,10 +539,7 @@ class DockerHermesSandboxes:
             raise HermesSandboxError("hermes_workspace_full")
         key = hashlib.sha256(str(request["key"]).encode()).hexdigest()
         request = {**request, "instructions": SANDBOX_INSTRUCTIONS}
-        container = await self.docker.containers.get(sandbox.container_id)
-        await container.put_archive(  # type: ignore[no-untyped-call]
-            "/workspace", _tar({f".aurum/requests/{key}.json": json.dumps(request).encode()})
-        )
+        await self._put_archive(sandbox, _tar({f".aurum/requests/{key}.json": json.dumps(request).encode()}))
         self.touch(session_id)
         async for line in self._stream(sandbox, ["hermes-relay", "run", f"/workspace/.aurum/requests/{key}.json"]):
             yield line
@@ -756,10 +557,7 @@ class DockerHermesSandboxes:
         """Write the user's memory files before a turn; through a file, as answers."""
         sandbox = self.get_running(session_id)
         name = secrets.token_hex(16)
-        container = await self.docker.containers.get(sandbox.container_id)
-        await container.put_archive(  # type: ignore[no-untyped-call]
-            "/workspace", _tar({f".aurum/memory/{name}.json": json.dumps(memory).encode()})
-        )
+        await self._put_archive(sandbox, _tar({f".aurum/memory/{name}.json": json.dumps(memory).encode()}))
         _, output = await self._exec(sandbox, ["hermes-relay", "memory-write", f"/workspace/.aurum/memory/{name}.json"])
         if b'"memory-written"' not in output:
             raise HermesSandboxError("hermes_memory_failed")
@@ -851,30 +649,12 @@ class DockerHermesSandboxes:
         if sandbox.workspace_full:
             raise HermesSandboxError("hermes_workspace_full")
         staging = f".aurum/inputs/{secrets.token_hex(16)}"
-        container = await self.docker.containers.get(sandbox.container_id)
         # The relay removes staging folders from .aurum/inputs, so it must own it.
         archive = _tar({f"{staging}/{name}": data}, parents=(".aurum/inputs",))
-        await container.put_archive("/workspace", archive)  # type: ignore[no-untyped-call]
+        await self._put_archive(sandbox, archive)
         _, output = await self._exec(sandbox, ["hermes-relay", "inputs-write", f"/workspace/{staging}"])
         if b'"inputs-written"' not in output:
             raise HermesSandboxError("hermes_inputs_failed")
-
-    async def connect(self, session_id: str, port: int) -> Any:
-        """A raw byte stream to 127.0.0.1:port in the sandbox, for a preview:
-        `hermes-relay connect` on stdin and stdout. Loopback only, port 1024
-        or above; preview traffic never counts as the sandbox being in use."""
-        if not 1024 <= port <= 65535:
-            raise HermesSandboxError("hermes_preview_port_invalid")
-        sandbox = self.get_running(session_id)
-        container = await self.docker.containers.get(sandbox.container_id)
-        exec_ = await container.exec(
-            cmd=["hermes-relay", "connect", str(port)], stdin=True, stdout=True, stderr=False, user=f"{SANDBOX_UID}"
-        )
-        stream = exec_.start(detach=False)
-        # The stream attaches on first use; attach it now, before a reader and
-        # a writer race to attach it twice.
-        await stream.write_in(b"")
-        return stream
 
     async def hydrate_skills(
         self, session_id: str, skills: list[PlatformSkill], fetch: Any = None
@@ -888,8 +668,7 @@ class DockerHermesSandboxes:
         sandbox = self.get_running(session_id)
         staging = f".aurum/hydrate/{secrets.token_hex(16)}"
         archive, hydrated, skipped = await staging_tar(skills, fetch, staging)
-        container = await self.docker.containers.get(sandbox.container_id)
-        await container.put_archive("/workspace", archive)  # type: ignore[no-untyped-call]
+        await self._put_archive(sandbox, archive)
         _, output = await self._exec(sandbox, ["hermes-relay", "skills-hydrate", f"/workspace/{staging}"])
         if b'"skills-hydrated"' not in output:
             raise HermesSandboxError("hermes_skills_failed")
@@ -900,10 +679,7 @@ class DockerHermesSandboxes:
         goes in a file, never on the command line."""
         sandbox = self.get_running(session_id)
         name = hashlib.sha256(f"{run_id}:{body['request_id']}".encode()).hexdigest()
-        container = await self.docker.containers.get(sandbox.container_id)
-        await container.put_archive(  # type: ignore[no-untyped-call]
-            "/workspace", _tar({f".aurum/clarify/{name}.json": json.dumps(body).encode()})
-        )
+        await self._put_archive(sandbox, _tar({f".aurum/clarify/{name}.json": json.dumps(body).encode()}))
         _, output = await self._exec(
             sandbox, ["hermes-relay", "clarify", run_id, f"/workspace/.aurum/clarify/{name}.json"]
         )
@@ -923,20 +699,6 @@ class DockerHermesSandboxes:
     def _tempdir(self) -> tempfile.TemporaryDirectory[str]:
         return tempfile.TemporaryDirectory(prefix="hermes-snapshot-", dir=self._settings.hermes_snapshot_dir)
 
-    async def _workspace_archive(self, container_id: str, path: Path) -> None:
-        """Docker's archive of /workspace, written to `path` within the bound."""
-        limit, size = self._archive_limit(), 0
-        async with self.docker._query(
-            f"containers/{container_id}/archive", method="GET", params={"path": "/workspace"}, timeout=None
-        ) as response:
-            with path.open("xb") as target:
-                path.chmod(0o600)
-                async for block in response.content.iter_chunked(_CHUNK):
-                    size += len(block)
-                    if size > limit:
-                        raise SnapshotError("hermes_snapshot_too_large")
-                    target.write(block)
-
     async def _snapshot(self, sandbox: HermesSandbox) -> Snapshot:
         try:
             async with asyncio.timeout(self._settings.hermes_snapshot_timeout_seconds):
@@ -953,19 +715,8 @@ class DockerHermesSandboxes:
             raise HermesSandboxError(exc.code) from None
         except TimeoutError:
             raise HermesSandboxError("hermes_snapshot_timeout") from None
-        except (DockerError, OSError):
+        except self._backend_errors + (OSError,):
             raise HermesSandboxError("hermes_snapshot_failed") from None
-
-    async def _restore(self, container: Any, org_id: str, conversation_id: str, sha256: str) -> None:
-        """Verify the snapshot, rebuild it as a clean archive and unpack that."""
-        async with asyncio.timeout(self._settings.hermes_snapshot_timeout_seconds):
-            with self._tempdir() as directory:
-                fetched, clean = Path(directory, "fetched.tar"), Path(directory, "restore.tar")
-                await self._store.fetch(org_id, conversation_id, sha256, fetched, self._archive_limit())
-                await to_thread_sanitize(fetched, clean, strip=None, settings=self._settings)
-                fetched.unlink()
-                with clean.open("rb") as archive:
-                    await container.put_archive("/workspace", archive)
 
     async def snapshot(self, session_id: str) -> Snapshot:
         """Snapshot a sandbox in place; it keeps running."""
@@ -973,17 +724,6 @@ class DockerHermesSandboxes:
             raise HermesSandboxError("hermes_snapshot_unavailable")
         async with self._lock(session_id):
             return await self._snapshot(self.get(session_id))
-
-    async def _stop_container(self, sandbox: HermesSandbox) -> None:
-        """Stop it, or pause it on tmpfs, where stopping would lose the workspace."""
-        try:
-            container = await self.docker.containers.get(sandbox.container_id)
-            if self._tmpfs:
-                await container.pause()
-            else:
-                await container.stop(t=self._settings.hermes_stop_timeout_seconds)
-        except DockerError:
-            pass
 
     async def _retire(self, sandbox: HermesSandbox) -> Snapshot | None:
         """Stop, snapshot and remove; on a failed snapshot the sandbox stays
@@ -1038,29 +778,6 @@ class DockerHermesSandboxes:
             await self._remove(resource_name(session_id))
             return None
 
-    async def _remove(self, name: str) -> None:
-        try:
-            container = await self.docker.containers.get(name)
-            await container.delete(force=True)
-        except DockerError:
-            pass
-        try:
-            network = await self.docker.networks.get(name)
-            try:
-                await network.disconnect(
-                    {"Container": self._settings.hermes_guard_container, "Force": True}
-                )
-            except DockerError:
-                pass
-            await network.delete()
-        except DockerError:
-            pass
-        try:
-            volume = await self.docker.volumes.get(name)  # type: ignore[no-untyped-call]
-            await volume.delete()
-        except DockerError:
-            pass
-
     async def purge_conversation(self, org_id: str, conversation_id: str) -> dict[str, int]:
         """Remove a conversation's sandboxes, without a snapshot, then all its
         snapshots. Closing waits for a snapshot in progress, so none is written
@@ -1083,14 +800,6 @@ class DockerHermesSandboxes:
             except SnapshotError as exc:
                 raise HermesSandboxError(exc.code) from None
         return {"sandboxes": len(owned), "snapshots": snapshots}
-
-    async def reconcile(self) -> None:
-        """Reconnect the guard (a recreated guard loses runtime connections)."""
-        for sandbox in list(self._sandboxes.values()):
-            try:
-                await self._connect_guard(sandbox.network)
-            except DockerError:
-                logger.warning("could not reconnect hermes-egress to %s", sandbox.network, exc_info=True)
 
     def _expired(self, sandbox: HermesSandbox, now: float) -> bool:
         return (
@@ -1132,14 +841,6 @@ class DockerHermesSandboxes:
         await self._check_disk()
         return reaped
 
-    async def _volume_usage(self) -> dict[str, int]:
-        """Docker's own size of each volume (dockerd walks it as root)."""
-        data = await self.docker._query_json("system/df", params={"type": "volume"})
-        return {
-            str(volume.get("Name")): int((volume.get("UsageData") or {}).get("Size", -1))
-            for volume in data.get("Volumes") or []
-        }
-
     async def _check_disk(self) -> None:
         """The soft workspace limit: over it, a sandbox's active runs are stopped
         and it gets no new ones until it is back under. A tmpfs workspace is
@@ -1150,7 +851,7 @@ class DockerHermesSandboxes:
         self._disk_checked_at = now
         try:
             usage = await self._volume_usage()
-        except DockerError:
+        except self._backend_errors:
             logger.warning("Could not read Docker volume usage", exc_info=True)
             return
         limit = self._settings.hermes_workspace_max_bytes
@@ -1179,6 +880,417 @@ class DockerHermesSandboxes:
         except Exception:
             logger.warning("Hermes snapshot sweep failed", exc_info=True)
 
+    async def run_reaper(self, interval: float) -> None:
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                # Adopt first: a sandbox missed at startup must never look
+                # like a leftover to the reap below.
+                await self.adopt()
+                await self.reconcile()
+                await self.reap()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Hermes sandbox reaper iteration failed", exc_info=True)
+
+    async def _check_backend(self) -> None:
+        """Refuse (HermesSandboxError) unless the backend can run isolated sandboxes."""
+        raise NotImplementedError
+
+    async def _discover(self) -> list[tuple[str, dict[str, str], bool]]:
+        """Every labelled sandbox as (handle, labels, running)."""
+        raise NotImplementedError
+
+    async def _provision(
+        self,
+        *,
+        session_id: str,
+        org_id: str,
+        conversation_id: str,
+        token: str,
+        model: str,
+        snapshot_sha256: str | None,
+    ) -> tuple[HermesSandbox, bool]:
+        """Create the sandbox, restore the snapshot if given and write the platform's files."""
+        raise NotImplementedError
+
+    async def _resume(self, sandbox: HermesSandbox, *, token: str, model: str) -> HermesSandbox:
+        """Start a stopped sandbox again with a fresh token and API key."""
+        raise NotImplementedError
+
+    async def _exec(self, sandbox: HermesSandbox, cmd: list[str]) -> tuple[int | None, bytes]:
+        """Run a command; its exit code and bounded standard output."""
+        raise NotImplementedError
+
+    def _open_stream(self, sandbox: HermesSandbox, cmd: list[str]) -> AsyncGenerator[bytes, None]:
+        """A command's standard output as it arrives."""
+        raise NotImplementedError
+
+    async def _put_archive(self, sandbox: HermesSandbox, data: bytes) -> None:
+        """Unpack a tar archive into /workspace."""
+        raise NotImplementedError
+
+    async def connect(self, session_id: str, port: int) -> Any:
+        """A raw byte stream to 127.0.0.1:port in the sandbox, for a preview."""
+        raise NotImplementedError
+
+    async def _workspace_archive(self, container_id: str, path: Path) -> None:
+        """Write the tar archive of /workspace to `path`, within the snapshot bound."""
+        raise NotImplementedError
+
+    async def _stop_container(self, sandbox: HermesSandbox) -> None:
+        """Stop (or pause) the workload before it is snapshotted."""
+        raise NotImplementedError
+
+    async def _remove(self, name: str) -> None:
+        """Remove the sandbox and every resource made for it."""
+        raise NotImplementedError
+
+    async def _volume_usage(self) -> dict[str, int]:
+        """The size in bytes of each workspace, by sandbox volume name."""
+        raise NotImplementedError
+
+    async def _reap_leftovers(self, now: float) -> None:
+        """Remove resources left without a sandbox."""
+        raise NotImplementedError
+
+
+class DockerHermesSandboxes(HermesSandboxes):
+    _backend_errors = (DockerError,)
+
+    def __init__(self, settings: Settings, store: SnapshotStore | None = None) -> None:
+        super().__init__(settings, store)
+        self._docker: aiodocker.Docker | None = None
+
+    @property
+    def _resumable(self) -> bool:  # type: ignore[override]
+        # A paused tmpfs sandbox would keep its old token: never resumed.
+        return not self._tmpfs
+
+    @property
+    def docker(self) -> aiodocker.Docker:
+        if self._docker is None:
+            self._docker = aiodocker.Docker()
+        return self._docker
+
+    async def shutdown(self) -> None:
+        if self._docker is not None:
+            await self._docker.close()
+            self._docker = None
+
+    # Readiness and adoption -------------------------------------------------
+
+    async def _check_backend(self) -> None:
+        """Refuse to run on a daemon that could give a sandbox network a host
+        address, or without the guard; creation is refused until this passes."""
+        version = await self.docker.version()
+        api = tuple(int(part) for part in str(version.get("ApiVersion", "0.0")).split(".")[:2])
+        if api < MIN_DOCKER_API:
+            raise HermesSandboxError("docker_too_old_for_isolated_networks")
+        try:
+            await self.docker.containers.get(self._settings.hermes_guard_container)
+        except DockerError:
+            raise HermesSandboxError("hermes_egress_guard_missing") from None
+
+    async def _discover(self) -> list[tuple[str, dict[str, str], bool]]:
+        containers = await self.docker.containers.list(
+            all=True, filters=json.dumps({"label": [f"{LABEL}=1"]})
+        )
+        return [
+            (
+                container.id,
+                container._container.get("Labels") or {},
+                container._container.get("State") in ("running", "restarting"),
+            )
+            for container in containers
+        ]
+
+    async def _used_subnets(self) -> set[ipaddress.IPv4Network]:
+        used: set[ipaddress.IPv4Network] = set()
+        for network in await self.docker.networks.list():
+            for config in (network.get("IPAM") or {}).get("Config") or []:
+                try:
+                    used.add(ipaddress.ip_network(config.get("Subnet", ""), strict=False))  # type: ignore[arg-type]
+                except ValueError:
+                    continue
+        return used
+
+    async def _create_network(self, name: str, labels: dict[str, str]) -> None:
+        pool = ipaddress.ip_network(self._settings.hermes_subnet_pool)
+        for _attempt in range(5):
+            used = await self._used_subnets()
+            candidate = next(
+                (subnet for subnet in pool.subnets(new_prefix=self._settings.hermes_subnet_prefix)
+                 if not any(subnet.overlaps(other) for other in used)),
+                None,
+            )
+            if candidate is None:
+                raise HermesSandboxError("hermes_subnet_pool_exhausted")
+            try:
+                await self.docker.networks.create(
+                    {
+                        "Name": name,
+                        "Driver": "bridge",
+                        "Internal": True,
+                        "IPAM": {"Config": [{"Subnet": str(candidate)}]},
+                        "Options": {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"},
+                        "Labels": labels,
+                    }
+                )
+                return
+            except DockerError as exc:
+                # Another create took the same subnet; look again.
+                if exc.status in (400, 403, 409) and "overlap" in str(exc).lower():
+                    continue
+                raise
+        raise HermesSandboxError("hermes_subnet_allocation_failed")
+
+    async def _connect_guard(self, network_name: str) -> None:
+        network = await self.docker.networks.get(network_name)
+        info = await network.show()
+        guard = await self.docker.containers.get(self._settings.hermes_guard_container)
+        if guard.id in (info.get("Containers") or {}):
+            return
+        await network.connect(
+            {"Container": guard.id, "EndpointConfig": {"Aliases": ["hermes-egress"]}}
+        )
+
+    def _volume_config(self, name: str, labels: dict[str, str]) -> dict[str, Any]:
+        config: dict[str, Any] = {"Name": name, "Labels": labels}
+        if self._tmpfs:
+            size = self._settings.hermes_workspace_max_bytes
+            config["DriverOpts"] = {
+                "type": "tmpfs",
+                "device": "tmpfs",
+                "o": f"size={size},uid={SANDBOX_UID},gid={SANDBOX_UID},mode=0700",
+            }
+        return config
+
+    def _container_config(self, name: str, labels: dict[str, str]) -> dict[str, Any]:
+        memory = self._settings.hermes_memory_bytes
+        if self._tmpfs:
+            # tmpfs pages are charged to the container that writes them.
+            memory += self._settings.hermes_workspace_max_bytes
+        return {
+            "Image": self._settings.hermes_sandbox_image,
+            "User": f"{SANDBOX_UID}:{SANDBOX_UID}",
+            "Labels": labels,
+            "HostConfig": {
+                "Init": True,
+                "NetworkMode": name,
+                "ReadonlyRootfs": True,
+                "Tmpfs": {"/tmp": f"rw,nosuid,nodev,size={self._settings.hermes_tmp_mb}m"},
+                "CapDrop": ["ALL"],
+                "SecurityOpt": ["no-new-privileges"],
+                "Memory": memory,
+                "NanoCpus": int(self._settings.hermes_cpus * 1_000_000_000),
+                "PidsLimit": self._settings.hermes_pids_limit,
+                "Mounts": [{"Type": "volume", "Source": name, "Target": "/workspace"}],
+                "RestartPolicy": {"Name": "unless-stopped"},
+            },
+        }
+
+    async def _secrets(self, container: Any, *, token: str, model: str) -> None:
+        await container.put_archive("/workspace", self._secrets_archive(token=token, model=model))
+
+    async def _provision(
+        self,
+        *,
+        session_id: str,
+        org_id: str,
+        conversation_id: str,
+        token: str,
+        model: str,
+        snapshot_sha256: str | None,
+    ) -> tuple[HermesSandbox, bool]:
+        name = resource_name(session_id)
+        created = time.time()
+        labels = self._labels(session_id, org_id, conversation_id, created)
+        restored = False
+        try:
+            await self._create_network(name, labels)
+            await self._connect_guard(name)
+            await self.docker.volumes.create(self._volume_config(name, labels))  # type: ignore[no-untyped-call]
+            container = await self.docker.containers.create(
+                config=self._container_config(name, labels), name=name
+            )
+            sha = snapshot_sha256
+            # A tmpfs volume is mounted only while the container runs, so its
+            # files are written after the start; start.sh waits for them.
+            if self._tmpfs:
+                await container.start()
+            if sha is not None:
+                await self._restore(container, org_id, conversation_id, sha)
+                restored = True
+            # After the restore, so the platform's files are always the current ones.
+            await self._secrets(container, token=token, model=model)
+            if not self._tmpfs:
+                await container.start()
+        except SnapshotError as exc:
+            await self._remove(name)
+            raise HermesSandboxError(exc.code) from None
+        except TimeoutError:
+            await self._remove(name)
+            raise HermesSandboxError("hermes_snapshot_timeout") from None
+        except Exception:
+            await self._remove(name)
+            raise
+        sandbox = HermesSandbox(
+            session_id=session_id,
+            org_id=org_id,
+            conversation_id=conversation_id,
+            container_id=container.id,
+            network=name,
+            volume=name,
+            created_at=created,
+        )
+        self._sandboxes[session_id] = sandbox
+        return sandbox, restored
+
+    async def _resume(self, sandbox: HermesSandbox, *, token: str, model: str) -> HermesSandbox:
+        """Start a stopped sandbox again with a fresh token and API key."""
+        try:
+            container = await self.docker.containers.get(sandbox.container_id)
+            await self._connect_guard(sandbox.network)
+            await self._secrets(container, token=token, model=model)
+            await container.start()
+        except DockerError:
+            raise HermesSandboxError("hermes_resume_failed") from None
+        resumed = replace(sandbox, state="running", stopped_at=None, last_active=time.time())
+        self._sandboxes[sandbox.session_id] = resumed
+        try:
+            await self._wait_healthy(resumed)
+        except Exception:
+            await self._stop_container(resumed)
+            self._sandboxes[sandbox.session_id] = sandbox
+            raise
+        return resumed
+
+    # Exec relay -------------------------------------------------------------
+
+    async def _exec(self, sandbox: HermesSandbox, cmd: list[str]) -> tuple[int | None, bytes]:
+        container = await self.docker.containers.get(sandbox.container_id)
+        exec_ = await container.exec(cmd=cmd, stdout=True, stderr=False, user=f"{SANDBOX_UID}")
+        stream = exec_.start(detach=False)
+        chunks: list[bytes] = []
+        try:
+            while (message := await stream.read_out()) is not None:
+                if message.stream == 1 and sum(map(len, chunks)) < self._settings.hermes_event_line_max_bytes:
+                    chunks.append(message.data)
+        finally:
+            await stream.close()
+        return (await exec_.inspect()).get("ExitCode"), b"".join(chunks)
+
+    async def _open_stream(self, sandbox: HermesSandbox, cmd: list[str]) -> AsyncGenerator[bytes, None]:
+        """The command's standard output as it arrives."""
+        container = await self.docker.containers.get(sandbox.container_id)
+        exec_ = await container.exec(cmd=cmd, stdout=True, stderr=False, user=f"{SANDBOX_UID}")
+        stream = exec_.start(detach=False)
+        try:
+            while (message := await stream.read_out()) is not None:
+                if message.stream == 1:
+                    yield message.data
+        finally:
+            await stream.close()
+
+    async def _put_archive(self, sandbox: HermesSandbox, data: bytes) -> None:
+        """Unpack a tar archive into /workspace."""
+        container = await self.docker.containers.get(sandbox.container_id)
+        await container.put_archive("/workspace", data)  # type: ignore[no-untyped-call]
+
+    async def connect(self, session_id: str, port: int) -> Any:
+        """A raw byte stream to 127.0.0.1:port in the sandbox, for a preview:
+        `hermes-relay connect` on stdin and stdout. Loopback only, port 1024
+        or above; preview traffic never counts as the sandbox being in use."""
+        if not 1024 <= port <= 65535:
+            raise HermesSandboxError("hermes_preview_port_invalid")
+        sandbox = self.get_running(session_id)
+        container = await self.docker.containers.get(sandbox.container_id)
+        exec_ = await container.exec(
+            cmd=["hermes-relay", "connect", str(port)], stdin=True, stdout=True, stderr=False, user=f"{SANDBOX_UID}"
+        )
+        stream = exec_.start(detach=False)
+        # The stream attaches on first use; attach it now, before a reader and
+        # a writer race to attach it twice.
+        await stream.write_in(b"")
+        return stream
+
+    async def _workspace_archive(self, container_id: str, path: Path) -> None:
+        """Docker's archive of /workspace, written to `path` within the bound."""
+        limit, size = self._archive_limit(), 0
+        async with self.docker._query(
+            f"containers/{container_id}/archive", method="GET", params={"path": "/workspace"}, timeout=None
+        ) as response:
+            with path.open("xb") as target:
+                path.chmod(0o600)
+                async for block in response.content.iter_chunked(_CHUNK):
+                    size += len(block)
+                    if size > limit:
+                        raise SnapshotError("hermes_snapshot_too_large")
+                    target.write(block)
+
+    async def _restore(self, container: Any, org_id: str, conversation_id: str, sha256: str) -> None:
+        """Verify the snapshot, rebuild it as a clean archive and unpack that."""
+        async with asyncio.timeout(self._settings.hermes_snapshot_timeout_seconds):
+            with self._tempdir() as directory:
+                fetched, clean = Path(directory, "fetched.tar"), Path(directory, "restore.tar")
+                await self._store.fetch(org_id, conversation_id, sha256, fetched, self._archive_limit())
+                await to_thread_sanitize(fetched, clean, strip=None, settings=self._settings)
+                fetched.unlink()
+                with clean.open("rb") as archive:
+                    await container.put_archive("/workspace", archive)
+
+    async def _stop_container(self, sandbox: HermesSandbox) -> None:
+        """Stop it, or pause it on tmpfs, where stopping would lose the workspace."""
+        try:
+            container = await self.docker.containers.get(sandbox.container_id)
+            if self._tmpfs:
+                await container.pause()
+            else:
+                await container.stop(t=self._settings.hermes_stop_timeout_seconds)
+        except DockerError:
+            pass
+
+    async def _remove(self, name: str) -> None:
+        try:
+            container = await self.docker.containers.get(name)
+            await container.delete(force=True)
+        except DockerError:
+            pass
+        try:
+            network = await self.docker.networks.get(name)
+            try:
+                await network.disconnect(
+                    {"Container": self._settings.hermes_guard_container, "Force": True}
+                )
+            except DockerError:
+                pass
+            await network.delete()
+        except DockerError:
+            pass
+        try:
+            volume = await self.docker.volumes.get(name)  # type: ignore[no-untyped-call]
+            await volume.delete()
+        except DockerError:
+            pass
+
+    async def reconcile(self) -> None:
+        """Reconnect the guard (a recreated guard loses runtime connections)."""
+        for sandbox in list(self._sandboxes.values()):
+            try:
+                await self._connect_guard(sandbox.network)
+            except DockerError:
+                logger.warning("could not reconnect hermes-egress to %s", sandbox.network, exc_info=True)
+
+    async def _volume_usage(self) -> dict[str, int]:
+        """Docker's own size of each volume (dockerd walks it as root)."""
+        data = await self.docker._query_json("system/df", params={"type": "volume"})
+        return {
+            str(volume.get("Name")): int((volume.get("UsageData") or {}).get("Size", -1))
+            for volume in data.get("Volumes") or []
+        }
+
     async def _reap_leftovers(self, now: float) -> None:
         # A labelled container still running is a sandbox, adopted or not: only
         # networks and volumes whose container is gone are leftovers.
@@ -1202,17 +1314,3 @@ class DockerHermesSandboxes:
             name = volume.get("Name", "")
             if name not in known and now - float(labels.get(CREATED_LABEL, "0") or 0) >= grace:
                 await self._remove(name)
-
-    async def run_reaper(self, interval: float) -> None:
-        while True:
-            try:
-                await asyncio.sleep(interval)
-                # Adopt first: a sandbox missed at startup must never look
-                # like a leftover to the reap below.
-                await self.adopt()
-                await self.reconcile()
-                await self.reap()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning("Hermes sandbox reaper iteration failed", exc_info=True)

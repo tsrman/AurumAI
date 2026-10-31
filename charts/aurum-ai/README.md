@@ -101,9 +101,10 @@ guard and Service, a default-deny policy in which a sandbox Pod reaches only the
 policies are the packet filter, and needs a CNI that enforces egress policies (k3s's
 built-in controller was checked). `hermes.egress.maxMode` bounds what organizations may
 choose; `internalDestinations` must accompany `internalPackageHosts`. The shared
-private-range exclusions are `web.networkPolicy.excluded*Cidrs`. The sandbox runtime on
-Kubernetes arrives in a following change: until then this block provides the boundary
-only. Previews (`hermes-preview`) are not in the chart yet.
+private-range exclusions are `web.networkPolicy.excluded*Cidrs`. skill-executor
+runs the sandboxes as Pods in that namespace (`hermes.sandbox.*`): one replica, and a
+`runtimeClassName` for a node PID limit, since Kubernetes has none per Pod. Previews
+(`hermes-preview`) are not in the chart yet.
 
 Identity synchronization starts with `identitySync.enabled=true` and admission false.
 Verify signed complete-groups mappers on both clients and worker readiness, then

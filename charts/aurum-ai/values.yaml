@@ -283,6 +283,28 @@ hermes:
   # Set false when the operator owns the namespace (including its quotas, Pod
   # Security labels and Secret lifecycle).
   createNamespace: true
+  # The sandbox Pods skill-executor creates in the Hermes namespace. Pull policy
+  # and pull secrets are skillSandbox's; the Secret must exist in that namespace.
+  sandbox:
+    image:
+      repository: aurum-ai-hermes-sandbox
+      tag: ""
+    cpus: 2
+    memoryBytes: 2147483648
+    cpuRequest: 250m
+    memoryRequest: 512Mi
+    # volume: a disk-backed emptyDir with a soft limit checked by the executor
+    # (and the kubelet's eviction as a backstop); tmpfs: memory-backed and
+    # charged to the Pod's memory limit.
+    workspaceMode: volume
+    workspaceMaxBytes: 1073741824
+    idleTtlSeconds: 1800
+    maxLifetimeSeconds: 86400
+    maxRunning: 16
+    maxRunningPerOrg: 4
+    # Kubernetes has no per-Pod PID limit: name a RuntimeClass whose nodes set one.
+    runtimeClassName: ""
+    podStartTimeoutSeconds: 300
   egress:
     # The most a sandbox can ever reach. Organizations choose a mode up to this
     # one: none (platform only), packages (HTTPS to package registries) or

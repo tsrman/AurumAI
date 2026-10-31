@@ -441,7 +441,7 @@ Each phase is a separate PR behind the flag:
    workflow correlation.
 
    Compose passes `APP_HERMES_ENABLED` with the `docker-compose.hermes.yml`
-   overlay; the Helm chart does not yet. Like the runner route, the Hermes route always streams
+   overlay and the Helm chart with `hermes.enabled`. Like the runner route, the Hermes route always streams
    and ignores `stream: false`.
 2. **Sandbox and network.** The `hermes-sandbox` image, its resources, durable
    sandbox ownership and re-adoption after an executor restart, snapshots, the
@@ -460,9 +460,15 @@ Each phase is a separate PR behind the flag:
      backend's per-connection check and organization setting, accepted at runtime
      by `./smoke-test-hermes-egress.sh`. The forward proxy accepts `CONNECT` only;
      its journal is structured log lines. Docker's embedded DNS answers no external
-     names on the internal sandbox network (checked by the acceptance). Still
-     open: Kubernetes (Helm, NetworkPolicies, and no kube-dns for sandbox pods so
-     CoreDNS cannot become a DNS channel) and the Admin UI control (phase 4);
+     names on the internal sandbox network (checked by the acceptance). The Admin
+     UI control belongs to phase 4. Kubernetes (2b-ii) is implemented in the Helm
+     chart: a restricted namespace, the guard running the proxy without nftables,
+     default-deny NetworkPolicies in which a sandbox Pod reaches only the guard,
+     and no DNS at all for sandbox Pods (`dnsPolicy: None` with an unanswered
+     resolver and a `hostAliases` entry for the guard), so CoreDNS cannot become a
+     DNS channel. Accepted on k3d, whose policy controller enforces it: from a
+     sandbox only the guard answers, and the guard reaches only DNS, the backend
+     and public addresses;
    - 2c-i, implemented for Docker: the `hermes-sandbox` image and long-lived
      sandboxes in `skill-executor` (create, re-adopt, run, events, stop, close,
      idle and absolute lifetimes, guard reconnection), each on its own internal
@@ -475,7 +481,7 @@ Each phase is a separate PR behind the flag:
        0.22, whose idempotency store would also do);
      - ownership is in Docker labels only; linking a sandbox to its
        `hermes_sessions` row is phase 4's, because skill-executor has no database;
-     - the Kubernetes runtime refuses Hermes sandboxes explicitly;
+     - Kubernetes sandboxes arrived with 2d (below);
      - known window: the relay records a run id only after Hermes accepts the
        run, so a relay that dies in between can make a retry start a second run;
      - attaching to a run was expected to replay its events from the start.
@@ -529,6 +535,35 @@ Each phase is a separate PR behind the flag:
          snapshot, so the last snapshot that fit stays the latest;
        - eviction snapshots the victim while the capacity lock is held, so
          creations wait for it.
+   - 2d, implemented: Hermes sandboxes on Kubernetes (`src/hermes_kubernetes.py`).
+     The lifecycle (capacity, adoption, the relay, snapshots, reaping) is shared
+     with Docker through a base class; Kubernetes supplies the primitives. Accepted
+     on k3d with the real image: create, upload and download files, the preview
+     byte pipe, the network from inside the Pod, a snapshot of the running Pod,
+     retire, restore into a new Pod, and re-adoption by a new executor. Deviations
+     from Docker:
+     - a sandbox is one Pod in the chart's Hermes namespace, labelled for the
+       NetworkPolicies and for adoption; skill-executor's Role covers Pods,
+       `pods/exec` and the guard Service (read for its address, which the Pod
+       names through `hostAliases`), and the Pod mounts no service-account token;
+     - every file goes in and out through `pods/exec`: tar over stdin for the
+       platform's files, uploads and a restore, tar over stdout for a snapshot,
+       and `hermes-relay connect` as the preview's byte pipe;
+     - the workspace is an emptyDir (memory-backed in tmpfs mode, charged to the
+       Pod's memory limit). The soft limit is checked with `du` in each Pod; the
+       volume's own limit is a hard backstop at 1.5 times it, and the kubelet
+       evicts a Pod that reaches it;
+     - a Pod cannot be stopped and kept, so a retired sandbox is snapshotted from
+       its running Pod and the Pod deleted, and removal waits until the Pod is
+       gone (a Terminating Pod still holds its name). A sandbox whose snapshot
+       fails stays running but refuses work, is retried, and is never resumed
+       with its old token: the next create retires it and starts a new Pod;
+     - Kubernetes has no per-Pod PID limit, so operators name a RuntimeClass whose
+       nodes set one (`hermes.sandbox.runtimeClassName`); orphaned processes are
+       reaped through a shared process namespace instead of Docker's init;
+     - a restart of skill-executor adopts live Pods from their labels; one
+       replica only, as sandboxes are tracked in memory.
+     Previews (`hermes-preview`) are not in the chart yet.
 3. **MCP bridge.** Split into two changes:
    - 3a, implemented: `POST /v1/hermes/mcp` with knowledge search, `web.search`,
      `web.read`, image generation and editing; hermes-egress forwards it, and the
