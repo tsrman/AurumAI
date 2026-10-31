@@ -6,6 +6,7 @@ import {
   BUSINESS_URL,
   TURN_FAILED,
   adminToken,
+  allowPackages,
   ask as askWithin,
   chooseHermes,
   chooseHermesModel,
@@ -21,7 +22,8 @@ import {
  * effect the model cannot produce without the tool. It hashes a random value
  * in its terminal (the test computes the same hash), attaches a chart and a
  * CSV it made with matplotlib, builds a pivot workbook and a deck from two
- * workbooks the member gives it (its answer is the pivot's total), asks
+ * workbooks the member gives it (its answer is the pivot's total), builds and
+ * checks a Flask prototype it hands over as a ZIP with a screenshot, asks
  * through a question card and uses the answer, saves a random value to the
  * member's memory, and
  * writes a skill that waits for review. Opt-in with E2E_USE_REAL_LLM=true; the
@@ -112,6 +114,20 @@ test.describe("Hermes Agent with a real model", () => {
       const made = member.getByRole("list", { name: "Attached files" }).last();
       await expect(made).toContainText(".xlsx");
       await expect(made).toContainText(".pptx");
+
+      // A web app prototype the model builds, checks in headless Chromium and hands over;
+      // Flask comes from the package index, which the default network mode allows.
+      await allowPackages(request);
+      await ask(
+        member,
+        "Build a small Flask web app with one page that shows a list of three tasks and a form to add one. " +
+          "Test it with pytest, then start it and check the page in headless Chromium with Playwright, adding " +
+          "a task. Give me a screenshot of the page with the added task and the project as one ZIP with a " +
+          "README.md on how to run it. Reply in one short sentence.",
+        /\S/u
+      );
+      await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
+      await expect(member.getByRole("list", { name: "Attached files" }).last()).toContainText(".zip");
 
       // A question card the model asks through clarify, and the answer it uses.
       await expect(member.getByLabel("Message")).toBeEnabled({ timeout: TURN_TIMEOUT });

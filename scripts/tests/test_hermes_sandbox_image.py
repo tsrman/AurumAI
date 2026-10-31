@@ -197,6 +197,16 @@ def test_relay_streams_events_and_the_final_status(relay) -> None:
     assert FakeHermes.runs == [{"input": "hi", "session_id": "conv"}]
 
 
+def test_relay_forwards_the_platforms_instructions(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    path = tmp_path / "request-notes.json"
+    path.write_text(json.dumps({"key": "notes", "input": "hi", "session_id": "conv", "instructions": "You work in a sandbox."}))
+
+    run("run", str(path))
+
+    assert FakeHermes.runs == [{"input": "hi", "session_id": "conv", "instructions": "You work in a sandbox."}]
+
+
 def test_a_retried_run_attaches_instead_of_starting_again(relay) -> None:
     run, tmp_path = relay
 

@@ -81,6 +81,27 @@ PLATFORM_TOOLS = (
     "attach_file",
 )
 _CHUNK = 64 * 1024
+# What Hermes is told about its sandbox on every turn, added to its system
+# prompt: what the image holds and how work reaches the user. A run carries it
+# as the runs API's instructions, which a turn Hermes runs itself uses; a turn
+# its session worker runs reads the config's agent.system_prompt instead, so
+# both hold it and neither path sees it twice. Neutral about the network mode, which the
+# organization chooses.
+SANDBOX_INSTRUCTIONS = """\
+You work in an isolated sandbox. Your working directory is /workspace, kept between turns.
+- Files the user gives you are in /workspace/inputs (read-only).
+- To give the user a file, save it under /workspace and call the attach_file tool with its \
+absolute path. Pictures (PNG, JPEG, WebP) show below your answer; other files are offered \
+for download. Give a project as one ZIP with a README.md on how to install and run it, \
+without node_modules, virtual environments or build output.
+- Installed: Python 3 (pandas, matplotlib, openpyxl, python-pptx, python-docx, pypdf, \
+Playwright) and Node.js 24 with npm. pip and npm may install packages; if an install \
+fails, the network does not allow it. Native modules that need a compiler cannot be built.
+- Nothing in the sandbox is reachable from outside: the user cannot open a server you start. \
+To check a web app, start it on 127.0.0.1 and test it with Playwright in headless Chromium: \
+chromium.launch(executable_path="/usr/bin/chromium-headless-shell", \
+args=["--no-sandbox", "--disable-dev-shm-usage"]). Attach screenshots that show it works.
+"""
 # A file an agent attaches (business-backend's conversation_files bound).
 FILE_MAX_BYTES = 20 * 1024 * 1024
 # What the relay may answer for a file it refuses; anything else is a failure.
@@ -148,7 +169,12 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
         # Questions to the user go through the platform's question cards, which
         # expire after an hour; the platform answers "skip" then, so Hermes's
         # own wait is longer.
-        "agent": {"disabled_toolsets": list(DISABLED_TOOLSETS), "clarify_timeout": 4200},
+        "agent": {
+            "disabled_toolsets": list(DISABLED_TOOLSETS),
+            "clarify_timeout": 4200,
+            # A turn Hermes runs through its session worker reads the notes here.
+            "system_prompt": SANDBOX_INSTRUCTIONS,
+        },
         # The API server's toolset leaves clarify out.
         "platform_toolsets": {"api_server": ["hermes-api-server", "clarify"]},
         # The platform tools stay listed by name instead of behind the
@@ -690,6 +716,7 @@ class DockerHermesSandboxes:
         if sandbox.workspace_full:
             raise HermesSandboxError("hermes_workspace_full")
         key = hashlib.sha256(str(request["key"]).encode()).hexdigest()
+        request = {**request, "instructions": SANDBOX_INSTRUCTIONS}
         container = await self.docker.containers.get(sandbox.container_id)
         await container.put_archive(  # type: ignore[no-untyped-call]
             "/workspace", _tar({f".aurum/requests/{key}.json": json.dumps(request).encode()})
