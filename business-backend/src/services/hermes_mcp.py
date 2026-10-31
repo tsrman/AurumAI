@@ -27,7 +27,8 @@ from src.models.knowledge_base import KnowledgeBase
 from src.repositories.knowledge_base_repository import knowledge_base_repository
 from src.schemas.image_tools import EditImageRequest, GenerateImageRequest
 from src.schemas.web_tools import WebReadRequest, WebSearchRequest
-from src.services import hermes_files, hermes_skills
+from src.services import hermes_files, hermes_previews, hermes_skills
+from src.services.hermes_previews import PreviewError, SharePreviewRequest
 from src.services.hermes_files import AttachFileRequest, FileToolError
 from src.services.hermes_skills import ListSkillsRequest, RunSkillRequest, SkillToolError
 from src.services.image_tools import IMAGE_ERROR_CODES, ImageToolExecutionError, image_tools_service
@@ -141,6 +142,16 @@ TOOLS = (
         AttachFileRequest,
     ),
     BridgeTool(
+        "share_preview",
+        "Let the user open a web app you started in your sandbox: start it in the "
+        "background on 127.0.0.1 with this port (1024 or above), then call this. The "
+        "user opens it from a card below your answer while the session stays open; "
+        "still give them the project as a ZIP.",
+        SharePreviewRequest,
+        hermes_previews.enabled,
+        "hermes_preview_disabled",
+    ),
+    BridgeTool(
         "list_skills",
         "List the platform skills you may run now: their skillId, description and "
         "input schema.",
@@ -212,6 +223,8 @@ async def call_tool(
                 generation=generation,
                 invocation=invocation,
             )
+        if isinstance(parsed, SharePreviewRequest):
+            return await hermes_previews.share_preview(session, subject, row, parsed)
         if isinstance(parsed, AttachFileRequest):
             return await hermes_files.attach_file(
                 session,
@@ -226,6 +239,8 @@ async def call_tool(
     except SkillToolError as exc:
         raise BridgeToolError(exc.code) from None
     except FileToolError as exc:
+        raise BridgeToolError(exc.code) from None
+    except PreviewError as exc:
         raise BridgeToolError(exc.code) from None
     except InteractionError as exc:
         await session.rollback()

@@ -201,6 +201,7 @@
         "web_read": "Reading a page",
         "image": "Working on an image",
         "attach": "Attaching a file",
+        "preview": "Sharing a preview",
         "other": "Using a tool",
         "question": "Asking you"
       }

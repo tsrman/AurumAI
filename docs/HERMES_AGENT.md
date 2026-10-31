@@ -1011,6 +1011,30 @@ only when the organization marked that model as taking images (Admin UI →
 Models → Images, with `APP_IMAGES_ENABLED`); otherwise the model is told it
 cannot see it and says so. The request is billed like any of its calls.
 
+### Previews of running apps
+
+The user can open an app Hermes runs in its sandbox, at an origin of its own,
+never the platform's. Off until the operator sets `APP_HERMES_PREVIEW_ENABLED`,
+an origin template `APP_HERMES_PREVIEW_ORIGIN` with `{preview}` (a wildcard
+domain with TLS in production; `http://{preview}.preview.localhost:<port>` in
+development, which browsers resolve to the machine itself) and the preview
+service's secret `APP_HERMES_PREVIEW_SERVICE_SECRET`:
+
+- Hermes starts the app in the background on 127.0.0.1 and calls the bridge's
+  `share_preview` with its port (1024 or above). The backend records a preview
+  of the session for its owner and the turn; its answer lists it;
+- opening it, the UI asks for a one-time ticket (60 s) that names the preview,
+  the owner and the conversation's generation, and opens the preview's origin
+  with it in a new tab. The preview service exchanges it (once) for a grant,
+  kept in a host-only cookie of that origin, and checks the grant with the
+  backend on every new connection. Tickets and grants are tokens of their own
+  type and audience, carrying identity only;
+- a check passes only for the preview the grant names, its owner, both Hermes
+  capabilities, the conversation's current generation and an open, unexpired
+  session; previews and tickets are runtime state that goes with the session.
+  The preview service and skill-executor's stream into the sandbox follow in
+  the next change.
+
 ### Idle sessions
 
 The session workflow retires an idle sandbox after its idle time (1800 s) and

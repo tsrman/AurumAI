@@ -15,6 +15,7 @@ from src.services.hermes_session_token import (
 from src.services.session_token import session_token_service
 
 HERMES_EGRESS_AUTHORIZE_PATH = "/v1/internal/hermes/egress/authorize"
+HERMES_PREVIEW_CHECK_PATH = "/v1/internal/hermes/previews/check"
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -61,9 +62,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if not request.url.path.startswith("/v1"):
             return await call_next(request)
-        # Called by hermes-egress once per sandbox connection; it applies its
-        # own per-session limits, and all of its calls share one address.
-        if request.url.path == HERMES_EGRESS_AUTHORIZE_PATH:
+        # Called by hermes-egress once per sandbox connection, and by the
+        # preview service once per browser connection; each applies its own
+        # limits, and all of its calls share one address.
+        if request.url.path in (HERMES_EGRESS_AUTHORIZE_PATH, HERMES_PREVIEW_CHECK_PATH):
             return await call_next(request)
 
         org_id, user_id = await _rate_limit_identity(request)
