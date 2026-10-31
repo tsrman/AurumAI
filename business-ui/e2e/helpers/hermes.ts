@@ -126,6 +126,23 @@ export async function allowPackages(request: APIRequestContext): Promise<void> {
   await adminApi(request, token, "PUT", "/v1/admin/settings/hermes", { model: current.model, egressMode: "packages" });
 }
 
+type ImageSettings = { generationModel: string | null; editModel: string | null; visionModels: string[] };
+
+/** Mark the model as taking images; the returned function restores the organization's list. */
+export async function markVision(request: APIRequestContext, model: string): Promise<() => Promise<void>> {
+  const token = await adminToken(request);
+  const current = await adminApi<ImageSettings>(request, token, "GET", "/v1/admin/settings/images");
+  const update = (visionModels: string[]) => ({
+    generationModel: current.generationModel,
+    editModel: current.editModel,
+    visionModels,
+  });
+  await adminApi(request, token, "PUT", "/v1/admin/settings/images", update([...new Set([...current.visionModels, model])]));
+  return async () => {
+    await adminApi(request, await adminToken(request), "PUT", "/v1/admin/settings/images", update(current.visionModels));
+  };
+}
+
 export async function ask(page: Page, text: string, expected: string | RegExp, timeout: number): Promise<void> {
   const replies = page.getByTestId("assistant-content");
   const before = await replies.count();

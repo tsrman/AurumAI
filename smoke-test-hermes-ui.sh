@@ -12,7 +12,8 @@
 # With HERMES_E2E_REAL_LLM=true it runs the real-model scenario instead
 # (e2e/hermes.real-llm.spec.ts) through the stack's own gateway
 # (LLM_GATEWAY_URL), on E2E_HERMES_MODEL (default deepseek-flash-free), which
-# needs native tool calling.
+# needs native tool calling; E2E_HERMES_VISION=true, for a model that takes
+# images, also has Hermes look at a picture.
 #
 # Prerequisites: a built Compose stack (`docker compose up -d`), the current
 # APP_SECRET_KEY exported, Docker 28+, and no other aurum-ai-hermes-egress-guard
@@ -45,7 +46,8 @@ else
   E2E=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml -f docker-compose.hermes.yml --profile hermes --profile skills-exec)
   GATEWAY=(test-gateway)
 fi
-export HERMES_ENABLED=true USER_QUESTIONS_ENABLED=true HERMES_EGRESS_MAX_MODE=packages
+# Images on: the member's pictures reach a model marked as taking them.
+export HERMES_ENABLED=true USER_QUESTIONS_ENABLED=true HERMES_EGRESS_MAX_MODE=packages IMAGES_ENABLED=true
 # Shared by the backend and hermes-egress for this run only.
 HERMES_EGRESS_SERVICE_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 export HERMES_EGRESS_SERVICE_SECRET
@@ -69,11 +71,13 @@ restore() {
   remove_sandboxes
   "${E2E[@]}" rm -sf "${GATEWAY[@]}" hermes-egress hermes-egress-guard >/dev/null 2>&1 || true
   HERMES_ENABLED=false USER_QUESTIONS_ENABLED="${ORIGINAL_USER_QUESTIONS_ENABLED:-false}" \
+    IMAGES_ENABLED="${ORIGINAL_IMAGES_ENABLED:-false}" \
     docker compose -f docker-compose.yml --profile skills-exec up -d --no-build --force-recreate \
     backend backend-admin tool-worker skill-executor >/dev/null 2>&1 || true
   exit "$status"
 }
 ORIGINAL_USER_QUESTIONS_ENABLED=$(grep -s '^USER_QUESTIONS_ENABLED=' .env | cut -d= -f2- || true)
+ORIGINAL_IMAGES_ENABLED=$(grep -s '^IMAGES_ENABLED=' .env | cut -d= -f2- || true)
 trap restore EXIT
 
 wait_for() {
@@ -112,6 +116,7 @@ log "running the browser acceptance"
   cd business-ui
   if [[ "$REAL_LLM" == true ]]; then
     E2E_USE_REAL_LLM=true E2E_HERMES_MODEL="${E2E_HERMES_MODEL:-deepseek-flash-free}" \
+      E2E_HERMES_VISION="${E2E_HERMES_VISION:-false}" \
       npx playwright test e2e/hermes.real-llm.spec.ts --workers=1 --trace=off
   else
     E2E_HERMES_UI=true npx playwright test e2e/hermes.real.spec.ts --workers=1 --trace=off

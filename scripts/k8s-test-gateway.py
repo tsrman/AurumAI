@@ -2,7 +2,7 @@
 
 Routing decisions are reconstructed from current messages, as a real gateway
 would see them. For Hermes Agent, which uses native function calling, a
-HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, HERMES_FILES makes it attach a chart and a CSV it made in its terminal, HERMES_INPUTS a pivot workbook and a deck made from the user's uploads, HERMES_WEBAPP a web app it checks in headless Chromium and packs as a ZIP, and HERMES_INSTRUCTIONS_SHOW whether the sandbox notes reach the model. A test-only metadata barrier synchronizes admitted web turns.
+HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, HERMES_FILES makes it attach a chart and a CSV it made in its terminal, HERMES_INPUTS a pivot workbook and a deck made from the user's uploads, HERMES_WEBAPP a web app it checks in headless Chromium and packs as a ZIP, HERMES_INSTRUCTIONS_SHOW whether the sandbox notes reach the model, and HERMES_VISION whether a picture reaches the model through vision_analyze. A test-only metadata barrier synchronizes admitted web turns.
 It never performs an outbound request and never stores prompts in barrier state.
 """
 
@@ -1065,6 +1065,31 @@ def _hermes_instructions_response(request: CompletionRequest) -> str | None:
     return f"HERMES_INSTRUCTIONS_UNSEEN system_tail={tail}"
 
 
+_VISION_PROBE = "VISION_PROBE"
+
+
+def _hermes_vision_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_VISION: Hermes's vision_analyze looks at the logo the member gave
+    it; its vision request says whether a picture arrived, and the answer
+    repeats that."""
+    last = _last_user_message(request.messages)
+    if _VISION_PROBE in last:
+        # The vision request: the platform route passes the picture only to a
+        # model the organization marked as taking images.
+        pictures = sum(message.image_parts for message in request.messages)
+        return f"VISION_SEEN:{pictures}" if pictures else "VISION_UNSEEN"
+    if "HERMES_VISION" not in last:
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
+    if results:
+        return "HERMES_VISION_DONE: " + " ".join(results[-1].split())[:1000]
+    if "vision_analyze" not in {str((item.get("function") or {}).get("name")) for item in request.tools}:
+        return "HERMES_VISION_NOT_OFFERED"
+    arguments = {"image_url": "/workspace/inputs/logo.png", "question": f"{_VISION_PROBE}: what does it show?"}
+    return {"name": "vision_analyze", "arguments": json.dumps(arguments)}
+
+
 def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """A native tool call to the marked platform tool, then its result as text."""
     match = _HERMES_MCP.search(_last_user_message(request.messages))
@@ -1210,6 +1235,7 @@ async def chat_completions(request: CompletionRequest) -> Response:
         or _hermes_inputs_response(request)
         or _hermes_webapp_response(request)
         or _hermes_instructions_response(request)
+        or _hermes_vision_response(request)
     )
     if isinstance(hermes, dict):
         return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")

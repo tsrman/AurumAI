@@ -943,8 +943,8 @@ its workspace:
 In a Hermes conversation the user attaches files to a message (spreadsheets,
 CSV, documents; the conversation file types; and PNG, JPEG or WebP pictures,
 which only uploads may be, recognised and bounded as image uploads) and Hermes
-works on them in its terminal: its code reads a picture, the model does not
-see it, for example to build a pivot table and a presentation from several
+works on them in its terminal: its code reads a picture, and the model sees it
+through Hermes's `vision_analyze` (below), for example to build a pivot table and a presentation from several
 workbooks. The image carries python-pptx, python-docx and pypdf for that:
 
 - the composer uploads each file (`POST /v1/conversations/<id>/files`) and the
@@ -999,6 +999,17 @@ over its code. The image carries what that takes, all verified:
   them), which a turn Hermes runs itself uses, and as the generated config's
   `agent.system_prompt`, which a turn its session worker runs reads instead.
   The notes are neutral about the network mode, which the organization picks.
+
+### Pictures for the model
+
+Hermes looks at a picture, one the user gave or one it made, with its own
+`vision_analyze` tool and the picture's path. The generated config routes that
+tool's vision request to the organization's Hermes model through the platform
+route (`auxiliary.vision`, with `agent.image_input_mode: text`, so pictures
+never travel inside tool results). The route checks the picture and passes it
+only when the organization marked that model as taking images (Admin UI →
+Models → Images, with `APP_IMAGES_ENABLED`); otherwise the model is told it
+cannot see it and says so. The request is billed like any of its calls.
 
 ### Idle sessions
 

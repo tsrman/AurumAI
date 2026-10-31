@@ -1,12 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { expect, test, type BrowserContext } from "@playwright/test";
-import { FEBRUARY_XLSX, JANUARY_XLSX } from "./fixtures/workbooks";
+import { FEBRUARY_XLSX, JANUARY_XLSX, LOGO_PNG } from "./fixtures/workbooks";
 import {
   ADMIN_UI_URL,
   BUSINESS_URL,
   TURN_FAILED,
   adminToken,
   allowPackages,
+  markVision,
   ask as askWithin,
   chooseHermes,
   chooseHermesModel,
@@ -32,6 +33,8 @@ import {
  */
 const ENABLED = process.env.E2E_USE_REAL_LLM === "true";
 const MODEL = process.env.E2E_HERMES_MODEL || "deepseek-flash-free";
+// With a model that takes images (E2E_HERMES_VISION=true), Hermes also looks at a picture.
+const VISION = process.env.E2E_HERMES_VISION === "true";
 const BUSINESS_API = process.env.E2E_BUSINESS_BACKEND_URL || "http://localhost:8000";
 // A real model reasons over Hermes's large prompt, on top of the sandbox's start.
 const TURN_TIMEOUT = 300_000;
@@ -52,6 +55,7 @@ test.describe("Hermes Agent with a real model", () => {
     const skillName = `e2e-${nonce.slice(0, 8)}`;
     const contexts: BrowserContext[] = [];
     let restoreWorkflow: (() => Promise<void>) | null = null;
+    let restoreVision: (() => Promise<void>) | null = null;
 
     try {
       const adminContext = await browser.newContext();
@@ -129,6 +133,21 @@ test.describe("Hermes Agent with a real model", () => {
       await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
       await expect(member.getByRole("list", { name: "Attached files" }).last()).toContainText(".zip");
 
+      // A picture the model looks at with vision_analyze, once its model is marked as taking images.
+      if (VISION) {
+        restoreVision = await markVision(request, MODEL);
+        await member.locator('input[type="file"]').setInputFiles([
+          { name: "logo.png", mimeType: "image/png", buffer: Buffer.from(LOGO_PNG, "base64") },
+        ]);
+        await expect(member.getByRole("button", { name: "Remove logo.png" })).toBeVisible({ timeout: 30_000 });
+        await ask(
+          member,
+          "Look at the picture I attached with your vision_analyze tool. What single colour fills it? " +
+            "Reply with one word.",
+          /yellow|gold|orange|amber|ochre|mustard/iu
+        );
+      }
+
       // A question card the model asks through clarify, and the answer it uses.
       await expect(member.getByLabel("Message")).toBeEnabled({ timeout: TURN_TIMEOUT });
       await member.getByLabel("Message").fill(
@@ -196,6 +215,7 @@ test.describe("Hermes Agent with a real model", () => {
     } finally {
       for (const context of contexts) await context.close();
       if (restoreWorkflow) await restoreWorkflow();
+      if (restoreVision) await restoreVision();
       await restore();
     }
   });

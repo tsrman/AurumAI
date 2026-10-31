@@ -136,7 +136,9 @@ the user can upload such files, and PNG, JPEG or WebP pictures, for Hermes's wor
 to ten per message, twenty and 200 MiB per conversation, under
 `conversation-images/<org>/<conversation>/files/uploads/`; one not yet sent can be
 removed. Before each turn tool-worker puts the conversation's sent uploads into the
-sandbox's `/workspace/inputs/`, and the turn's text names their paths.
+sandbox's `/workspace/inputs/`, and the turn's text names their paths. Hermes's model
+sees a picture through its `vision_analyze` tool only when it is marked as taking
+images in Admin UI → Models → Images.
 
 The same switch also enables image attachments. In Admin UI → Models → Images an
 administrator marks the chat models that accept image input; the chat composer
