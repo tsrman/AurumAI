@@ -100,9 +100,11 @@ guard and Service, a default-deny policy in which a sandbox Pod reaches only the
 `pods/exec` and the guard Service. The guard runs the proxy without nftables because the
 policies are the packet filter, and needs a CNI that enforces egress policies (k3s's
 built-in controller was checked). `hermes.egress.maxMode` bounds what organizations may
-choose; `internalDestinations` must accompany `internalPackageHosts`, and for a mirror
-inside the cluster it takes the address of the mirror's Pod, never of its Service (the
-policy sees the Pod after the Service's translation). The shared
+choose; `internalDestinations` must accompany `internalPackageHosts`: a `cidr` for a mirror
+outside the cluster, or a `namespaceSelector` with a `podSelector` for one inside it (never
+its Service's address: the policy sees the Pod after the Service's translation). Selectors
+take `matchLabels` only, may not be empty and may not select the Hermes or the release
+namespace. The shared
 private-range exclusions are `web.networkPolicy.excluded*Cidrs`. skill-executor
 runs the sandboxes as Pods in that namespace (`hermes.sandbox.*`): one replica, and a
 `runtimeClassName` for a node PID limit, since Kubernetes has none per Pod. Previews

@@ -65,8 +65,40 @@
 {{- end -}}
 {{- range $index, $destination := $egress.internalDestinations -}}
 {{- $cidr := $destination.cidr | default "" -}}
+{{- $hasNamespace := hasKey $destination "namespaceSelector" -}}
+{{- $hasPod := hasKey $destination "podSelector" -}}
+{{- if and $cidr (or $hasNamespace $hasPod) -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d].cidr cannot be combined with a selector" $index) -}}
+{{- end -}}
+{{- if and (not $cidr) (not $hasNamespace) (not $hasPod) -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d] must name a cidr, or a namespaceSelector with an optional podSelector" $index) -}}
+{{- end -}}
+{{- if $cidr -}}
 {{- if not (or (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$" $cidr) (regexMatch "^[0-9A-Fa-f:]+/[0-9]{1,3}$" $cidr)) -}}
 {{- fail (printf "hermes.egress.internalDestinations[%d].cidr must be a CIDR" $index) -}}
+{{- end -}}
+{{- end -}}
+{{- /* Alone, a podSelector means the Pods of the guard's own namespace: the sandboxes. */ -}}
+{{- if and $hasPod (not $hasNamespace) -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d].podSelector needs a namespaceSelector" $index) -}}
+{{- end -}}
+{{- /* Only matchLabels, never empty: an empty selector selects everything. */ -}}
+{{- range $name := list "namespaceSelector" "podSelector" -}}
+{{- if hasKey $destination $name -}}
+{{- $selector := get $destination $name -}}
+{{- if or (not (kindIs "map" $selector)) (not (kindIs "map" ($selector.matchLabels | default dict))) (eq (len ($selector.matchLabels | default dict)) 0) -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d].%s must have matchLabels" $index $name) -}}
+{{- end -}}
+{{- if ne (len $selector) 1 -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d].%s takes only matchLabels" $index $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $hasNamespace -}}
+{{- $named := index ($destination.namespaceSelector.matchLabels) "kubernetes.io/metadata.name" | default "" -}}
+{{- if or (eq $named $hermesNamespace) (eq $named $.Release.Namespace) -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d].namespaceSelector must not select the Hermes or the release namespace" $index) -}}
+{{- end -}}
 {{- end -}}
 {{- if not $destination.ports -}}
 {{- fail (printf "hermes.egress.internalDestinations[%d].ports must not be empty" $index) -}}

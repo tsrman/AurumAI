@@ -121,9 +121,19 @@ spec:
       ports:
         {{- include "aurum-ai.hermesPublicPorts" . | nindent 8 }}
     {{- range $egress.internalDestinations }}
+    {{- $peer := dict }}
+    {{- if .cidr }}
+    {{- $_ := set $peer "ipBlock" (dict "cidr" .cidr) }}
+    {{- else }}
+    {{- if .namespaceSelector }}
+    {{- $_ := set $peer "namespaceSelector" (dict "matchLabels" .namespaceSelector.matchLabels) }}
+    {{- end }}
+    {{- if .podSelector }}
+    {{- $_ := set $peer "podSelector" (dict "matchLabels" .podSelector.matchLabels) }}
+    {{- end }}
+    {{- end }}
     - to:
-        - ipBlock:
-            cidr: {{ .cidr | quote }}
+        - {{ toYaml $peer | nindent 10 | trim }}
       ports:
         {{- toYaml .ports | nindent 8 }}
     {{- end }}

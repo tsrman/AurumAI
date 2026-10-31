@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -727,3 +728,98 @@ def test_the_egress_acceptance_is_disposable_and_applies_the_charts_own_template
     assert "sys.exit(1 if FAILED else 0)" in driver
     # Machine-independent: no path of the machine it was written on.
     assert "/home/" not in driver and "/tmp/claude" not in driver
+
+
+# Internal destinations by selector -------------------------------------------------
+
+PORTS = [{"protocol": "TCP", "port": 8443}]
+MIRRORS = {"matchLabels": {"kubernetes.io/metadata.name": "mirrors"}}
+MIRROR_PODS = {"matchLabels": {"app": "mirror"}}
+
+
+def _with_destinations(destinations: list[dict[str, Any]]) -> subprocess.CompletedProcess[str]:
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml") as handle:
+        yaml.safe_dump({"hermes": {"egress": {"internalDestinations": destinations}}}, handle)
+        handle.flush()
+        command = ["helm", "template", RELEASE, str(HELM_CHART), "--namespace", NAMESPACE, "-f", handle.name]
+        for value in ENABLE:
+            command.extend(("--set", value))
+        return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+
+
+def _destination_rules(destinations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = _with_destinations(destinations)
+    assert result.returncode == 0, result.stderr
+    for document in yaml.safe_load_all(result.stdout):
+        if document and document["kind"] == "NetworkPolicy" and document["metadata"]["name"] == f"{RELEASE}-hermes-egress-egress":
+            # DNS, the backend and the two public blocks come first.
+            return document["spec"]["egress"][4:]
+    raise AssertionError("no guard egress policy")
+
+
+def test_an_internal_mirror_can_be_selected_by_namespace_and_pod_labels() -> None:
+    rules = _destination_rules([{"namespaceSelector": MIRRORS, "podSelector": MIRROR_PODS, "ports": PORTS}])
+    # One peer holding both selectors: the Pods with those labels in those namespaces.
+    assert rules == [{"to": [{"namespaceSelector": MIRRORS, "podSelector": MIRROR_PODS}], "ports": PORTS}]
+
+
+def test_a_whole_namespace_can_be_selected_and_cidrs_still_work_beside_selectors() -> None:
+    rules = _destination_rules(
+        [
+            {"namespaceSelector": MIRRORS, "ports": PORTS},
+            {"cidr": "10.20.0.0/24", "ports": PORTS},
+        ]
+    )
+    assert rules == [
+        {"to": [{"namespaceSelector": MIRRORS}], "ports": PORTS},
+        {"to": [{"ipBlock": {"cidr": "10.20.0.0/24"}}], "ports": PORTS},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("destination", "message"),
+    [
+        ({"ports": PORTS}, "must name a cidr, or a namespaceSelector with an optional podSelector"),
+        (
+            {"cidr": "10.0.0.0/24", "namespaceSelector": MIRRORS, "ports": PORTS},
+            "cidr cannot be combined with a selector",
+        ),
+        (
+            # Alone, a podSelector means the Pods of the guard's own namespace: the sandboxes.
+            {"podSelector": MIRROR_PODS, "ports": PORTS},
+            "podSelector needs a namespaceSelector",
+        ),
+        (
+            {"namespaceSelector": {}, "ports": PORTS},
+            "namespaceSelector must have matchLabels",
+        ),
+        (
+            {"namespaceSelector": {"matchLabels": {}}, "ports": PORTS},
+            "namespaceSelector must have matchLabels",
+        ),
+        (
+            {"namespaceSelector": MIRRORS, "podSelector": {"matchLabels": {}}, "ports": PORTS},
+            "podSelector must have matchLabels",
+        ),
+        (
+            {"namespaceSelector": {"matchExpressions": [{"key": "a", "operator": "Exists"}]}, "ports": PORTS},
+            "namespaceSelector must have matchLabels",
+        ),
+        (
+            {"namespaceSelector": {"matchLabels": {"a": "b"}, "matchExpressions": []}, "ports": PORTS},
+            "namespaceSelector takes only matchLabels",
+        ),
+        (
+            {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": HERMES_NAMESPACE}}, "ports": PORTS},
+            "must not select the Hermes or the release namespace",
+        ),
+        (
+            {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": NAMESPACE}}, "ports": PORTS},
+            "must not select the Hermes or the release namespace",
+        ),
+    ],
+)
+def test_internal_destinations_refuse_selectors_that_open_too_much(destination: dict[str, Any], message: str) -> None:
+    result = _with_destinations([destination])
+    assert result.returncode != 0
+    assert message in result.stderr
