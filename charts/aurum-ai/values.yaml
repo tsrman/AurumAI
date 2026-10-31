@@ -356,14 +356,25 @@ hermes:
       - files.pythonhosted.org
       - registry.npmjs.org
     # host:port entries the guard may reach in any mode but none. Each also
-    # needs a matching internalDestinations entry: NetworkPolicy knows CIDRs,
-    # not names. For a mirror inside the cluster give the address of its Pod, not
-    # of its Service: the policy sees the Pod after the Service's translation, so
-    # an entry for the Service address lets nothing through. A mirror outside the
-    # cluster is described by its own address.
+    # needs a matching internalDestinations entry: NetworkPolicy knows addresses
+    # and labels, not names.
     internalPackageHosts: []
+    # Where the guard may connect for them: a cidr, or Pods chosen by label. For
+    # a mirror inside the cluster use labels (a Service's address would let
+    # nothing through: the policy sees the Pod after the Service's translation).
+    # podSelector needs a namespaceSelector, selectors take only matchLabels and
+    # are never empty, and neither may select the Hermes or the release namespace.
     internalDestinations: []
-    # - cidr: 10.20.0.0/24
+    # - cidr: 10.20.0.0/24            # a mirror outside the cluster
+    #   ports:
+    #     - protocol: TCP
+    #       port: 8443
+    # - namespaceSelector:            # a mirror inside the cluster
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: mirrors
+    #   podSelector:
+    #     matchLabels:
+    #       app: package-mirror
     #   ports:
     #     - protocol: TCP
     #       port: 8443

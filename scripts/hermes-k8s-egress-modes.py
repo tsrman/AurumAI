@@ -106,7 +106,7 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 8443), H).serve_forever()
     kc("-n", PN, "create", "configmap", "standin", f"--from-file=backend.py={WORK/'backend.py'}")
     kc("-n", MN, "create", "configmap", "standin", f"--from-file=mirror.py={WORK/'mirror.py'}")
 
-    def pod(ns, name, labels, script, port):
+    def pod(ns, name, labels, script, port, service=None):
         return f"""
 apiVersion: v1
 kind: Pod
@@ -122,11 +122,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: {{name: {'rel-backend' if name == 'backend' else 'mirror'}}}
+metadata: {{name: {service or ('rel-backend' if name == 'backend' else 'mirror')}}}
 spec: {{selector: {labels}, ports: [{{port: {port}, targetPort: {port}}}]}}
 """
     kc("-n", PN, "apply", "-f", "-", inp=pod(PN, "backend", "{app.kubernetes.io/name: backend, app.kubernetes.io/instance: rel}", "backend.py", 8000))
     kc("-n", MN, "apply", "-f", "-", inp=pod(MN, "mirror", "{app: mirror}", "mirror.py", 8443))
+    # A second server in the same namespace on the same port, with other labels:
+    # a selector for the mirror must not open it.
+    kc("-n", MN, "apply", "-f", "-", inp=pod(MN, "decoy", "{app: decoy}", "mirror.py", 8443, service="decoy"))
     kc("-n", PN, "apply", "-f", "-", inp="""
 apiVersion: v1
 kind: Pod
@@ -139,17 +142,20 @@ spec:
     command: [python3, -m, http.server, "8080"]
 """)
     kc("-n", PN, "wait", "--for=condition=Ready", "pod/backend", "pod/outsider", "--timeout=120s")
-    kc("-n", MN, "wait", "--for=condition=Ready", "pod/mirror", "--timeout=120s")
+    kc("-n", MN, "wait", "--for=condition=Ready", "pod/mirror", "pod/decoy", "--timeout=120s")
 
 
-def apply_round(max_mode, internal_cidr):
-    args = ["helm", "template", "rel", str(ROOT / "charts/aurum-ai"), "-n", PN,
+def cidr_destination(cidr):
+    return {"cidr": cidr, "ports": [{"protocol": "TCP", "port": 8443}]}
+
+
+def apply_round(max_mode, destination):
+    values = WORK / "values.yaml"
+    values.write_text(json.dumps({"hermes": {"egress": {"internalDestinations": [destination]}}}))
+    args = ["helm", "template", "rel", str(ROOT / "charts/aurum-ai"), "-n", PN, "-f", str(values),
             "--set", "hermes.enabled=true", "--set", f"hermes.namespace={HN}",
             "--set", f"hermes.egress.maxMode={max_mode}", "--set", "hermes.egress.recheckSeconds=4",
-            "--set", f"hermes.egress.internalPackageHosts={{{MIRROR_HOST}:8443}}",
-            "--set", f"hermes.egress.internalDestinations[0].cidr={internal_cidr}",
-            "--set", "hermes.egress.internalDestinations[0].ports[0].protocol=TCP",
-            "--set", "hermes.egress.internalDestinations[0].ports[0].port=8443"]
+            "--set", f"hermes.egress.internalPackageHosts={{{MIRROR_HOST}:8443}}"]
     for t in ["hermes-namespace", "hermes-secret", "hermes-egress-deployment", "hermes-egress-service",
               "hermes-network-policies", "hermes-rbac"]:
         args += ["-s", f"templates/{t}.yaml"]
@@ -268,7 +274,7 @@ def main():
 
     # ---- round 1: the in-cluster mirror allowed by its Service address -------------
     print("--- round 1: packages, mirror allowed by ClusterIP/32", flush=True)
-    guard = apply_round("packages", f"{mirror_cluster_ip}/32")
+    guard = apply_round("packages", cidr_destination(f"{mirror_cluster_ip}/32"))
     probe_pod("sb", "aurum-ai-web-egress:latest", "[sleep, '7200']")
     kc("-n", HN, "wait", "--for=condition=Ready", "pod/sb", "--timeout=120s")
     got = run_cases([{"host": MIRROR_HOST, "port": 8443, "token": "m-packages-a"}])[0]
@@ -277,7 +283,7 @@ def main():
 
     # ---- round 2: packages -----------------------------------------------------------
     print("--- round 2: max mode packages, mirror allowed by Pod IP/32", flush=True)
-    guard = apply_round("packages", f"{mirror_pod_ip}/32")
+    guard = apply_round("packages", cidr_destination(f"{mirror_pod_ip}/32"))
     kc("-n", HN, "wait", "--for=condition=Ready", "pod/sb", "--timeout=120s")
     expect("packages: pypi.org:443 through the tunnel (real TLS)", {"host": "pypi.org", "port": 443, "token": "m-packages-a", "tls": True}, {"status": 200, "http": "HTTP/1.1 200"})
     expect("packages: files.pythonhosted.org:443", {"host": "files.pythonhosted.org", "port": 443, "token": "m-packages-a", "tls": True}, {"status": 200, "http": "HTTP/1.1"})
@@ -300,6 +306,23 @@ def main():
     direct("policy layer: the guard cannot reach a private Pod", guard, neighbour, 8080, False)
     direct("policy layer: the guard cannot reach the cluster API", guard, kc("-n", "default", "get", "svc", "kubernetes", "-o", "jsonpath={.spec.clusterIP}").stdout, 443, False)
 
+    # the same mirror described by selectors: no address to look up
+    print("--- round 2b: packages, mirror allowed by namespace and Pod selectors", flush=True)
+    decoy_ip = kc("-n", MN, "get", "pod", "decoy", "-o", "jsonpath={.status.podIP}").stdout
+    guard = apply_round("packages", {
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": MN}},
+        "podSelector": {"matchLabels": {"app": "mirror"}},
+        "ports": [{"protocol": "TCP", "port": 8443}],
+    })
+    kc("-n", HN, "wait", "--for=condition=Ready", "pod/sb", "--timeout=120s")
+    expect("selectors: the mirror is reachable by its host:port through the Service", {"host": MIRROR_HOST, "port": 8443, "token": "m-packages-a"}, {"status": 200, "body": "mirror-ok"})
+    direct("selectors: the guard reaches the selected mirror Pod", guard, mirror_pod_ip, 8443, True)
+    direct("selectors: the guard cannot reach another Pod of the same namespace and port", guard, decoy_ip, 8443, False)
+    direct("selectors: the guard cannot reach the mirror on another port", guard, mirror_pod_ip, 8080, False)
+    direct("selectors: the guard cannot reach a Pod of another namespace", guard, neighbour, 8080, False)
+    guard = apply_round("packages", cidr_destination(f"{mirror_pod_ip}/32"))
+    kc("-n", HN, "wait", "--for=condition=Ready", "pod/sb", "--timeout=120s")
+
     # real package managers with the real sandbox image
     probe_pod("sbx", "aurum-ai-hermes-sandbox:latest", "[sleep, '7200']")
     kc("-n", HN, "wait", "--for=condition=Ready", "pod/sbx", "--timeout=180s")
@@ -317,7 +340,7 @@ def main():
 
     # ---- round 3: public ------------------------------------------------------------------
     print("--- round 3: max mode public", flush=True)
-    guard = apply_round("public", f"{mirror_pod_ip}/32")
+    guard = apply_round("public", cidr_destination(f"{mirror_pod_ip}/32"))
     for p in ("sb",):
         kc("-n", HN, "wait", "--for=condition=Ready", f"pod/{p}", "--timeout=120s")
     expect("public: github.com:443 through the tunnel", {"host": "github.com", "port": 443, "token": "m-public-a", "tls": True}, {"status": 200, "http": "HTTP/1.1"})
@@ -374,7 +397,7 @@ def main():
 
     # ---- round 4: none --------------------------------------------------------------------------------
     print("--- round 4: max mode none", flush=True)
-    guard = apply_round("none", f"{mirror_pod_ip}/32")
+    guard = apply_round("none", cidr_destination(f"{mirror_pod_ip}/32"))
     kc("-n", HN, "wait", "--for=condition=Ready", "pod/sb", "--timeout=120s")
     expect("none: even a public organization gets nothing (egress_disabled)", {"host": "pypi.org", "port": 443, "token": "m-public-a"}, {"status": 403, "reason": "egress_disabled"})
     expect("none: the internal mirror is refused too", {"host": MIRROR_HOST, "port": 8443, "token": "m-public-a"}, {"status": 403, "reason": "egress_disabled"})
