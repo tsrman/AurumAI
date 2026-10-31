@@ -1031,9 +1031,23 @@ service's secret `APP_HERMES_PREVIEW_SERVICE_SECRET`:
   type and audience, carrying identity only;
 - a check passes only for the preview the grant names, its owner, both Hermes
   capabilities, the conversation's current generation and an open, unexpired
-  session; previews and tickets are runtime state that goes with the session.
-  The preview service and skill-executor's stream into the sandbox follow in
-  the next change.
+  session; previews and tickets are runtime state that goes with the session;
+- the preview service (`hermes-preview`, Compose profile `hermes-preview`) is
+  the one thing browsers reach at a preview's origin. It sets the grant as a
+  `__Host-` cookie (HttpOnly, Secure, SameSite=Lax) and redirects so the ticket
+  leaves the address bar, then forwards each request to the app: `Host` becomes
+  `localhost:<port>` (dev servers check it), its own cookie is removed,
+  redirects to localhost are rewritten to the preview's origin, and the app
+  cannot set that cookie or a cookie for another domain. An upgraded
+  connection (WebSocket, a dev server's reload) is spliced as bytes and
+  rechecked every `HERMES_PREVIEW_RECHECK_SECONDS`, so closing the session cuts
+  it. It bounds connections per preview, request bodies and idle time, and
+  journals each request (preview, method, path, status, bytes);
+- it reaches the app through skill-executor's `/hermes/sandboxes/<id>/connect`
+  WebSocket, which takes only the preview service's secret and runs
+  `hermes-relay connect <port>` in the sandbox: a byte stream to 127.0.0.1 on
+  port 1024 or above, nothing else. The sandbox gains no network; preview
+  traffic does not keep it from idling.
 
 ### Idle sessions
 

@@ -32,6 +32,9 @@ the agent can stop the server and answer in its place.
   inputs-write DIR moves the uploads in DIR (placed by skill-executor under
                    .aurum/inputs, then removed) into the inputs folder,
                    read-only, replacing files of the same name
+  connect PORT     a byte stream to 127.0.0.1:PORT (1024 or above) on stdin
+                   and stdout, for a preview of an app the agent runs; it
+                   ends when either side closes
   file-read PATH   a file the agent attaches to its answer, in base64 chunks
                    and a closing line with its size and SHA-256: a regular
                    file in the workspace, reached through no link, outside
@@ -592,6 +595,43 @@ def file_read(path: str) -> int:
     return 0
 
 
+def connect(port: str) -> int:
+    """Pipe stdin to the app and the app to stdout, raw. Only loopback, and
+    only an unprivileged port: the stream never leaves the sandbox."""
+    import socket
+    import threading
+
+    if not port.isdigit() or not 1024 <= int(port) <= 65535:
+        return 2
+    try:
+        app = socket.create_connection(("127.0.0.1", int(port)), timeout=5)
+    except OSError:
+        return 3
+    app.settimeout(None)
+
+    def upstream() -> None:
+        try:
+            while data := sys.stdin.buffer.read1(65536):
+                app.sendall(data)
+        except OSError:
+            pass
+        try:
+            app.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+    threading.Thread(target=upstream, daemon=True).start()
+    out = sys.stdout.buffer
+    try:
+        while data := app.recv(65536):
+            out.write(data)
+            out.flush()
+    except OSError:
+        pass
+    app.close()
+    return 0
+
+
 def main(argv: list[str]) -> int:
     command = argv[0] if argv else ""
     if command == "health":
@@ -620,13 +660,15 @@ def main(argv: list[str]) -> int:
         return inputs_list()
     if command == "inputs-write" and len(argv) == 2:
         return inputs_write(argv[1])
+    if command == "connect" and len(argv) == 2:
+        return connect(argv[1])
     if command == "file-read" and len(argv) == 2:
         return file_read(argv[1])
     if command == "stop" and len(argv) == 2:
         with request("POST", f"/v1/runs/{argv[1]}/stop", {}) as response:
             emit("stopping", status=json.load(response).get("status"))
         return 0
-    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|skills-hydrate DIR|inputs-list|inputs-write DIR|file-read PATH|active", file=sys.stderr)
+    print("usage: hermes-relay health|run FILE|events RUN|stop RUN|clarify RUN FILE|memory-write FILE|memory-read|skills-read|skills-hydrate DIR|inputs-list|inputs-write DIR|connect PORT|file-read PATH|active", file=sys.stderr)
     return 2
 
 

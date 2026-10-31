@@ -38,7 +38,7 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          python_services='business-backend conversation-runner tool-worker skill-executor rag-api rag-worker web-tools'
+          python_services='business-backend conversation-runner tool-worker skill-executor rag-api rag-worker web-tools hermes-preview'
           node_apps='business-ui admin-ui'
           images="$python_services $node_apps skill-sandbox hermes-sandbox mcp/fetch infra/web-egress infra/postgres infra/maintenance-egress"
           # The E2E/smoke harness under scripts/ has no uv project of its own,

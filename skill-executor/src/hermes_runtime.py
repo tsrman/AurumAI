@@ -856,6 +856,19 @@ class DockerHermesSandboxes:
         if b'"inputs-written"' not in output:
             raise HermesSandboxError("hermes_inputs_failed")
 
+    async def connect(self, session_id: str, port: int) -> Any:
+        """A raw byte stream to 127.0.0.1:port in the sandbox, for a preview:
+        `hermes-relay connect` on stdin and stdout. Loopback only, port 1024
+        or above; preview traffic never counts as the sandbox being in use."""
+        if not 1024 <= port <= 65535:
+            raise HermesSandboxError("hermes_preview_port_invalid")
+        sandbox = self.get_running(session_id)
+        container = await self.docker.containers.get(sandbox.container_id)
+        exec_ = await container.exec(
+            cmd=["hermes-relay", "connect", str(port)], stdin=True, stdout=True, stderr=False, user=f"{SANDBOX_UID}"
+        )
+        return exec_.start(detach=False)
+
     async def hydrate_skills(
         self, session_id: str, skills: list[PlatformSkill], fetch: Any = None
     ) -> dict[str, int]:

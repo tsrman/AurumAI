@@ -144,3 +144,47 @@ def test_enabled_hermes_loads_in_both_api_planes(service: str) -> None:
     )
 
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+def _render_previews(**env: str) -> dict[str, Any]:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "APP_SECRET_KEY": "deployment-contract-secret-not-for-runtime",
+            "KEYCLOAK_ADMIN_PASSWORD": "deployment-contract-keycloak-not-for-runtime",
+            "HERMES_EGRESS_SERVICE_SECRET": "hermes-egress-contract-secret",
+            **env,
+        }
+    )
+    result = subprocess.run(
+        ["docker", "compose", "-f", "docker-compose.yml", "-f", str(OVERLAY), "--profile", "hermes",
+         "--profile", "hermes-preview", "--profile", "skills-exec", "config", "--format", "json"],
+        cwd=ROOT, env=environment, text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_previews_are_off_by_default_and_their_service_holds_nothing() -> None:
+    services = _render_previews(
+        HERMES_PREVIEW_ORIGIN="http://{preview}.preview.localhost:8095",
+        HERMES_PREVIEW_SERVICE_SECRET="preview-contract-secret",
+        HERMES_PREVIEW_EXECUTOR_SECRET="executor-contract-secret",
+    )["services"]
+    preview = services["hermes-preview"]
+
+    assert services["backend"]["environment"]["APP_HERMES_PREVIEW_ENABLED"] == "false"
+    assert services["skill-executor"]["environment"]["SKILL_EXECUTOR_HERMES_PREVIEW_SECRET"] == "executor-contract-secret"
+    assert preview["user"] == "10001:10001" and preview["read_only"] is True
+    assert preview["cap_drop"] == ["ALL"] and "no-new-privileges:true" in preview["security_opt"]
+    assert preview["environment"]["HERMES_PREVIEW_BACKEND_URL"] == "http://hermes-backend:8000"
+    assert preview["environment"]["HERMES_PREVIEW_EXECUTOR_URL"] == "ws://skill-executor:8090"
+    # It never joins a sandbox network: sandboxes are reached only through skill-executor.
+    assert set(preview["networks"]) == {"hermes-backend", "skills-net", "hermes-public"}
+    assert "volumes" not in preview
+
+
+def test_the_overlay_without_previews_needs_none_of_their_settings() -> None:
+    services = _render()["services"]
+
+    assert "hermes-preview" not in services

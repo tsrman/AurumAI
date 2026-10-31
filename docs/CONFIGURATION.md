@@ -144,6 +144,14 @@ Previews of apps Hermes runs (docs/HERMES_AGENT.md) are off by default:
 `APP_HERMES_PREVIEW_ENABLED`, `APP_HERMES_PREVIEW_ORIGIN` (an origin template with
 `{preview}`, on a wildcard domain with TLS in production) and
 `APP_HERMES_PREVIEW_SERVICE_SECRET` (shared with the preview service) turn them on.
+In Compose, set `HERMES_PREVIEW_ENABLED=true`, `HERMES_PREVIEW_ORIGIN` (for example
+`http://{preview}.preview.localhost:8095` in development, which browsers resolve to
+the machine itself), `HERMES_PREVIEW_SERVICE_SECRET` and
+`HERMES_PREVIEW_EXECUTOR_SECRET` (shared by the preview service and
+skill-executor's preview stream), and start the `hermes-preview` profile; it listens
+on `HERMES_PREVIEW_PORT` (8095). Limits: `HERMES_PREVIEW_MAX_CONNECTIONS` (32 per
+preview), `HERMES_PREVIEW_IDLE_SECONDS` (300), `HERMES_PREVIEW_RECHECK_SECONDS` (30)
+for open WebSocket connections.
 
 The same switch also enables image attachments. In Admin UI → Models → Images an
 administrator marks the chat models that accept image input; the chat composer

@@ -14,6 +14,10 @@ services:
       # One variable for the backend's clamp and the guard's public ports.
       APP_HERMES_EGRESS_MAX_MODE: "${HERMES_EGRESS_MAX_MODE:-packages}"
       APP_HERMES_EGRESS_SERVICE_SECRET: "${HERMES_EGRESS_SERVICE_SECRET:?HERMES_EGRESS_SERVICE_SECRET must be set}"
+      # Previews of apps Hermes runs, at origins of their own (profile hermes-preview).
+      APP_HERMES_PREVIEW_ENABLED: "${HERMES_PREVIEW_ENABLED:-false}"
+      APP_HERMES_PREVIEW_ORIGIN: "${HERMES_PREVIEW_ORIGIN:-}"
+      APP_HERMES_PREVIEW_SERVICE_SECRET: "${HERMES_PREVIEW_SERVICE_SECRET:-}"
     networks:
       hermes-backend:
         aliases: ["hermes-backend"]
@@ -28,6 +32,7 @@ services:
       SKILL_EXECUTOR_HERMES_ENABLED: "${HERMES_ENABLED:-false}"
       SKILL_EXECUTOR_HERMES_SANDBOX_IMAGE: "aurum-ai-hermes-sandbox:latest"
       SKILL_EXECUTOR_HERMES_GUARD_CONTAINER: "aurum-ai-hermes-egress-guard"
+      SKILL_EXECUTOR_HERMES_PREVIEW_SECRET: "${HERMES_PREVIEW_EXECUTOR_SECRET:-}"
       SKILL_EXECUTOR_HERMES_SUBNET_POOL: "${HERMES_SANDBOX_POOL:-172.31.0.0/16}"
 
   # Build-only, like skill-sandbox: skill-executor starts these containers.
@@ -123,6 +128,38 @@ services:
       hermes-egress-guard:
         condition: service_healthy
         restart: true
+    restart: unless-stopped
+
+  # Previews (docs/HERMES_AGENT.md): the one service browsers reach at a
+  # preview's origin. It asks the backend over `hermes-backend` and streams into
+  # sandboxes through skill-executor, whose preview route takes its secret.
+  # Without the origin and both secrets it refuses to start; the backend and
+  # skill-executor refuse previews without them.
+  hermes-preview:
+    build:
+      context: ./hermes-preview
+    image: aurum-ai-hermes-preview:latest
+    profiles: ["hermes-preview"]
+    user: "10001:10001"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    environment:
+      HERMES_PREVIEW_ORIGIN: "${HERMES_PREVIEW_ORIGIN:-}"
+      HERMES_PREVIEW_BACKEND_URL: "http://hermes-backend:8000"
+      HERMES_PREVIEW_SERVICE_SECRET: "${HERMES_PREVIEW_SERVICE_SECRET:-}"
+      HERMES_PREVIEW_EXECUTOR_URL: "ws://skill-executor:8090"
+      HERMES_PREVIEW_EXECUTOR_SECRET: "${HERMES_PREVIEW_EXECUTOR_SECRET:-}"
+      HERMES_PREVIEW_MAX_CONNECTIONS: "${HERMES_PREVIEW_MAX_CONNECTIONS:-32}"
+      HERMES_PREVIEW_IDLE_SECONDS: "${HERMES_PREVIEW_IDLE_SECONDS:-300}"
+      HERMES_PREVIEW_RECHECK_SECONDS: "${HERMES_PREVIEW_RECHECK_SECONDS:-30}"
+    ports:
+      - "${HERMES_PREVIEW_PORT:-8095}:8095"
+    networks:
+      hermes-backend: {}
+      skills-net: {}
+      hermes-public: {}
     restart: unless-stopped
 
 networks:
