@@ -392,3 +392,77 @@ async def test_nonzero_status_skips_malformed_exit_code_cause() -> None:
     )
 
     assert result.exit_code == 7
+
+
+def frame(channel: int, data: bytes) -> bytes:
+    return bytes([channel]) + data
+
+
+@pytest.mark.asyncio
+async def test_open_streams_stdout_as_it_arrives_and_reports_the_exit_code() -> None:
+    socket = FakeSocket([frame(1, b"one"), frame(2, b"noise"), frame(1, b"two"), success()])
+    client = client_for(socket)
+
+    stream = await client.open(
+        namespace="hermes", pod="aurum-ai-hermes-a", container="sandbox", command=["hermes-relay", "events", "r1"]
+    )
+    chunks = []
+    while (chunk := await stream.read()) is not None:
+        chunks.append(chunk)
+
+    assert chunks == [b"one", b"two"]
+    assert stream.exit_code == 0
+    assert client_for  # the factory saw an exec without stdin
+    await stream.close()
+    await stream.close()
+    assert socket.closed is True
+
+
+@pytest.mark.asyncio
+async def test_open_with_stdin_writes_channel_zero_and_half_closes() -> None:
+    socket = FakeSocket([success()])
+    seen: dict[str, Any] = {}
+
+    async def connect(**kwargs: Any) -> FakeSocket:
+        seen.update(kwargs)
+        return socket
+
+    stream = await KubernetesExecClient(socket_factory=connect).open(
+        namespace="hermes", pod="p", container="sandbox", command=["tar", "-x"], stdin=True
+    )
+    await stream.write(b"\x00bytes")
+    await stream.close_stdin()
+
+    assert seen["stdin"] is True and seen["command"] == ["tar", "-x"] and seen["_preload_content"] is False
+    assert socket.sent == [bytes([0]) + b"\x00bytes", bytes([255, 0])]
+    await stream.close()
+
+
+@pytest.mark.asyncio
+async def test_open_reports_a_failing_command_and_a_broken_socket() -> None:
+    failing = FakeSocket(
+        [status_frame({"status": "Failure", "reason": "NonZeroExitCode", "details": {"causes": [{"reason": "ExitCode", "message": "3"}]}})]
+    )
+    stream = await client_for(failing).open(namespace="n", pod="p", container="c", command=["false"])
+    assert await stream.read() is None
+    assert stream.exit_code == 3
+
+    class Broken(FakeSocket):
+        async def receive(self) -> Message:
+            return Message(WSMsgType.ERROR, b"")
+
+    stream = await client_for(Broken([])).open(namespace="n", pod="p", container="c", command=["x"])
+    with pytest.raises(SandboxExecError):
+        await stream.read()
+
+
+@pytest.mark.asyncio
+async def test_exit_code_is_unknown_until_the_stream_ends() -> None:
+    stream = await client_for(FakeSocket([frame(1, b"x"), success()])).open(
+        namespace="n", pod="p", container="c", command=["x"]
+    )
+    assert stream.exit_code is None
+    await stream.read()
+    assert stream.exit_code is None
+    assert await stream.read() is None
+    assert stream.exit_code == 0

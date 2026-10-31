@@ -162,9 +162,88 @@ async def _production_socket_factory(**kwargs: Any) -> _Socket:
         raise
 
 
+class ExecStream:
+    """One running command: stdout as it arrives, stdin as it is written."""
+
+    def __init__(self, socket: _Socket) -> None:
+        self._socket = socket
+        self._status: dict[str, Any] | None = None
+        self._ended = False
+        self._closed = False
+
+    @property
+    def exit_code(self) -> int | None:
+        """The command's exit code once the stream has ended; None before."""
+        if not self._ended or self._status is None:
+            return None
+        return KubernetesExecClient._exit_code(self._status)
+
+    async def read(self) -> bytes | None:
+        """The next piece of standard output, or None when the command is done."""
+        while not self._ended:
+            message = await self._socket.receive()
+            if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING}:
+                self._ended = True
+                break
+            if message.type == WSMsgType.ERROR:
+                raise SandboxExecError("Kubernetes exec WebSocket failed")
+            if message.type not in {WSMsgType.BINARY, WSMsgType.TEXT}:
+                continue
+            raw = message.data.encode() if isinstance(message.data, str) else bytes(message.data)
+            if not raw:
+                continue
+            channel, payload = raw[0], raw[1:]
+            if channel == 1 and payload:
+                return payload
+            if channel == 3:
+                self._status = KubernetesExecClient._decode_status(payload)
+        return None
+
+    async def write(self, data: bytes) -> None:
+        await self._socket.send_bytes(bytes([0]) + data)
+
+    async def close_stdin(self) -> None:
+        """Half-close: the command sees end of input and may still answer."""
+        await self._socket.send_bytes(bytes([255, 0]))
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self._socket.close()
+        except Exception:
+            logger.warning("Kubernetes exec socket cleanup failed", exc_info=True)
+
+
 class KubernetesExecClient:
     def __init__(self, socket_factory: SocketFactory | None = None) -> None:
         self._socket_factory = socket_factory or _production_socket_factory
+
+    async def open(
+        self,
+        *,
+        namespace: str,
+        pod: str,
+        container: str,
+        command: list[str],
+        stdin: bool = False,
+        connect_timeout_seconds: float = 30.0,
+    ) -> ExecStream:
+        """Start a command and return its stream; the caller closes it."""
+        async with asyncio.timeout(connect_timeout_seconds):
+            socket = await self._socket_factory(
+                namespace=namespace,
+                pod=pod,
+                container=container,
+                command=command,
+                stdin=stdin,
+                stdout=True,
+                stderr=True,
+                tty=False,
+                _preload_content=False,
+            )
+        return ExecStream(socket)
 
     async def exec(
         self,

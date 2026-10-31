@@ -444,3 +444,54 @@ def test_every_hermes_pod_is_in_the_hermes_namespace_and_unprivileged() -> None:
         for container in pod["containers"]:
             assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
             assert "add" not in container["securityContext"]["capabilities"]
+
+
+def _executor_env(*values: str) -> dict[str, dict[str, Any]]:
+    resources = _render(*values)
+    deployment = resources[("Deployment", NAMESPACE, f"{RELEASE}-skill-executor")]
+    return _env(_pod(deployment)["containers"][0])
+
+
+def test_the_executor_runs_hermes_sandboxes_only_when_the_block_is_enabled() -> None:
+    assert _executor_env()["SKILL_EXECUTOR_HERMES_ENABLED"]["value"] == "false"
+    assert "SKILL_EXECUTOR_HERMES_NAMESPACE" not in _executor_env()
+    env = _executor_env(*ENABLE)
+    assert env["SKILL_EXECUTOR_HERMES_ENABLED"]["value"] == "true"
+    assert env["SKILL_EXECUTOR_HERMES_NAMESPACE"]["value"] == HERMES_NAMESPACE
+    assert env["SKILL_EXECUTOR_HERMES_SANDBOX_IMAGE"]["value"] == "aurum-ai-hermes-sandbox:latest"
+    # The labels the NetworkPolicies select come from the release name.
+    assert env["SKILL_EXECUTOR_KUBERNETES_RELEASE_NAME"]["value"] == RELEASE
+    assert env["SKILL_EXECUTOR_HERMES_WORKSPACE_MODE"]["value"] == "volume"
+    assert env["SKILL_EXECUTOR_HERMES_MAX_RUNNING_PER_ORG"]["value"] == "4"
+    assert env["SKILL_EXECUTOR_HERMES_RUNTIME_CLASS"]["value"] == ""
+
+
+def test_the_sandbox_image_and_limits_come_from_values() -> None:
+    env = _executor_env(
+        *ENABLE,
+        "image.registry=registry.example.test/team",
+        "hermes.sandbox.image.tag=v7",
+        "hermes.sandbox.cpus=1.5",
+        "hermes.sandbox.memoryBytes=1073741824",
+        "hermes.sandbox.workspaceMode=tmpfs",
+        "hermes.sandbox.runtimeClassName=gvisor",
+        "hermes.sandbox.maxRunning=3",
+    )
+    assert env["SKILL_EXECUTOR_HERMES_SANDBOX_IMAGE"]["value"] == "registry.example.test/team/aurum-ai-hermes-sandbox:v7"
+    assert env["SKILL_EXECUTOR_HERMES_CPUS"]["value"] == "1.5"
+    assert env["SKILL_EXECUTOR_HERMES_MEMORY_BYTES"]["value"] == "1073741824"
+    assert env["SKILL_EXECUTOR_HERMES_WORKSPACE_MODE"]["value"] == "tmpfs"
+    assert env["SKILL_EXECUTOR_HERMES_RUNTIME_CLASS"]["value"] == "gvisor"
+    assert env["SKILL_EXECUTOR_HERMES_MAX_RUNNING"]["value"] == "3"
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (("sandboxRuntime.type=docker",), "hermes.enabled requires sandboxRuntime.type=kubernetes"),
+        (("hermes.sandbox.workspaceMode=disk",), "hermes.sandbox.workspaceMode must be volume or tmpfs"),
+        (("skillExecutor.replicaCount=2",), "hermes.enabled requires skillExecutor.replicaCount=1"),
+    ],
+)
+def test_the_executor_settings_are_validated(values: tuple[str, ...], message: str) -> None:
+    assert message in _error(*ENABLE, *values)

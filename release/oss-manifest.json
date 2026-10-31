@@ -172,6 +172,8 @@
     "scripts/tests/test_oss_release_provider_config.py",
     "scripts/tests/test_oss_release_secret_scanner.py",
     "skill-executor/LICENSE",
+    "skill-executor/src/hermes_kubernetes.py",
+    "skill-executor/tests/test_hermes_kubernetes.py",
     "skill-sandbox/LICENSE",
     "skill-sandbox/README.md",
     "temporal/LICENSE-MIT-samples-server",

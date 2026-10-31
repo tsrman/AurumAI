@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("sandbox runtime readiness failed", exc_info=True)
     reaper_task = asyncio.create_task(sandbox_runtime.run_reaper())
     hermes_task: asyncio.Task[None] | None = None
-    if settings.hermes_enabled and settings.runtime == "docker":
+    if settings.hermes_enabled:
         # Re-adopt live Hermes sandboxes instead of reaping them: their
         # sessions outlive this process.
         try:
@@ -139,7 +139,7 @@ async def ready(response: Response) -> dict[str, object]:
             "errors": {"sandbox_runtime": type(exc).__name__},
         }
     checks = {"sandbox_runtime": "ok"}
-    if settings.hermes_enabled and settings.runtime == "docker":
+    if settings.hermes_enabled:
         try:
             await asyncio.wait_for(hermes_sandboxes.ready(), timeout=_READY_TIMEOUT_SECONDS)
             checks["hermes_sandboxes"] = "ok"

@@ -423,14 +423,22 @@ def test_relay_lines_are_bounded_json_objects() -> None:
     assert bounded_json_lines(b"x" * 100, 64) == ([], b"")
 
 
-def test_routes_are_absent_while_hermes_is_off_and_refused_on_kubernetes(monkeypatch) -> None:
+def test_routes_are_absent_while_hermes_is_off_and_served_on_kubernetes(monkeypatch) -> None:
     from src.main import app
 
     client = TestClient(app)
     monkeypatch.setattr(hermes_routes, "settings", Settings(hermes_enabled=False))
     assert client.get(f"/hermes/sandboxes/{SESSION}").status_code == 404
     monkeypatch.setattr(hermes_routes, "settings", Settings(hermes_enabled=True, runtime="kubernetes"))
-    assert client.get(f"/hermes/sandboxes/{SESSION}").status_code == 501
+    # No longer refused: the runtime answers (the sandbox does not exist).
+    assert client.get(f"/hermes/sandboxes/{SESSION}").status_code == 404
+
+
+def test_the_sandboxes_follow_the_configured_runtime() -> None:
+    from src.hermes_kubernetes import KubernetesHermesSandboxes
+
+    assert isinstance(hermes_routes.create_hermes_sandboxes(Settings(runtime="docker")), DockerHermesSandboxes)
+    assert isinstance(hermes_routes.create_hermes_sandboxes(Settings(runtime="kubernetes")), KubernetesHermesSandboxes)
 
 
 def test_create_request_validates_the_session_id() -> None:
