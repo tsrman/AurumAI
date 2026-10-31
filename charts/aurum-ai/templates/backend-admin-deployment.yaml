@@ -98,6 +98,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "aurum-ai.secretName" . }}
                   key: APP_SECRET_KEY
+            - name: APP_HERMES_ENABLED
+              value: {{ .Values.hermes.enabled | quote }}
+            - name: APP_HERMES_EGRESS_MAX_MODE
+              value: {{ .Values.hermes.egress.maxMode | quote }}
             # Write side of code-skill bundle upload (skill_bundles.py) lives
             # only on this plane.
             - name: APP_S3_ENDPOINT

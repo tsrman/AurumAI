@@ -1,0 +1,131 @@
+{{- if .Values.hermes.enabled }}
+{{- $egress := .Values.hermes.egress -}}
+{{- $guard := include "aurum-ai.selectorLabels" (dict "component" "hermes-egress" "root" $) -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-hermes-default-deny
+  namespace: {{ .Values.hermes.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
+---
+# A sandbox reaches the guard and nothing else: no DNS, no other sandbox, no
+# platform service, no node. The guard is addressed by a hostAliases entry for
+# its Service address, so the sandbox never resolves a name.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-hermes-sandbox-egress
+  namespace: {{ .Values.hermes.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      aurum-ai.component: hermes-sandbox
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- $guard | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 3128
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-hermes-egress-ingress
+  namespace: {{ .Values.hermes.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $guard | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              aurum-ai.component: hermes-sandbox
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 3128
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-hermes-egress-egress
+  namespace: {{ .Values.hermes.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $guard | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "aurum-ai.dnsNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.dnsPodLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "aurum-ai.selectorLabels" (dict "component" "backend" "root" $) | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8000
+    {{- if ne $egress.maxMode "none" }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.web.networkPolicy.publicIpv4Cidr }}
+            except:
+              {{- toYaml .Values.web.networkPolicy.excludedIpv4Cidrs | nindent 14 }}
+      ports:
+        {{- include "aurum-ai.hermesPublicPorts" . | nindent 8 }}
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.web.networkPolicy.publicIpv6Cidr | quote }}
+            except:
+              {{- toYaml .Values.web.networkPolicy.excludedIpv6Cidrs | nindent 14 }}
+      ports:
+        {{- include "aurum-ai.hermesPublicPorts" . | nindent 8 }}
+    {{- range $egress.internalDestinations }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr | quote }}
+      ports:
+        {{- toYaml .ports | nindent 8 }}
+    {{- end }}
+    {{- end }}
+{{- end }}

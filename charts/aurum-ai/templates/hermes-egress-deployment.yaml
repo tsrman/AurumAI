@@ -1,0 +1,107 @@
+{{- if .Values.hermes.enabled }}
+{{- $egress := .Values.hermes.egress -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-hermes-egress
+  namespace: {{ .Values.hermes.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-egress" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ $egress.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-egress" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-egress" "root" $) | nindent 8 }}
+      annotations:
+        checksum/hermes-secret: {{ include "aurum-ai.hermesSecretChecksum" . }}
+    spec:
+      automountServiceAccountToken: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: hermes-egress
+          image: {{ include "aurum-ai.image" (dict "service" $egress "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" $egress "root" $) }}
+          # No nftables here: NetworkPolicy is the packet filter on Kubernetes,
+          # so the image runs the proxy directly with no capabilities.
+          command:
+            - python3
+            - /usr/local/bin/hermes-egress-proxy
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: platform
+              containerPort: 8080
+              protocol: TCP
+            - name: proxy
+              containerPort: 3128
+              protocol: TCP
+          env:
+            - name: HERMES_EGRESS_PLATFORM_PORT
+              value: "8080"
+            - name: HERMES_EGRESS_PROXY_PORT
+              value: "3128"
+            - name: HERMES_EGRESS_BACKEND_HOST
+              value: {{ printf "%s-backend.%s.svc" .Release.Name .Release.Namespace | quote }}
+            - name: HERMES_EGRESS_BACKEND_PORT
+              value: "8000"
+            - name: HERMES_EGRESS_MAX_MODE
+              value: {{ $egress.maxMode | quote }}
+            - name: HERMES_EGRESS_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aurum-ai.hermesSecretName" . }}
+                  key: HERMES_EGRESS_SERVICE_SECRET
+            - name: HERMES_EGRESS_PACKAGE_HOSTS
+              value: {{ join "," $egress.packageHosts | quote }}
+            - name: HERMES_EGRESS_INTERNAL_PACKAGE_HOSTS
+              value: {{ join "," $egress.internalPackageHosts | quote }}
+            - name: HERMES_EGRESS_IDLE_TIMEOUT_SECONDS
+              value: {{ $egress.idleTimeoutSeconds | quote }}
+            - name: HERMES_EGRESS_RECHECK_SECONDS
+              value: {{ $egress.recheckSeconds | quote }}
+            - name: HERMES_EGRESS_MAX_CONNECTIONS
+              value: {{ $egress.maxConnections | quote }}
+            - name: HERMES_EGRESS_MAX_BYTES_PER_TURN
+              value: {{ $egress.maxBytesPerTurn | int64 | quote }}
+            # The proxy refuses private destinations by address; this is the
+            # NetworkPolicy's own exclusion list, so the two cannot drift.
+            - name: WEB_EGRESS_FORBIDDEN_CIDRS
+              value: {{ concat .Values.web.networkPolicy.excludedIpv4Cidrs .Values.web.networkPolicy.excludedIpv6Cidrs | join "," | quote }}
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $egress.resources | nindent 12 }}
+{{- end }}

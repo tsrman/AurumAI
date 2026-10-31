@@ -1,0 +1,83 @@
+{{- if .Values.hermes.enabled }}
+{{- $hermesNamespace := required "hermes.namespace is required when hermes.enabled=true" .Values.hermes.namespace -}}
+{{- $egress := .Values.hermes.egress -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $hermesNamespace) -}}
+{{- fail "hermes.namespace must be a valid DNS label" -}}
+{{- end -}}
+{{- if gt (len $hermesNamespace) 63 -}}
+{{- fail "hermes.namespace must not exceed 63 characters" -}}
+{{- end -}}
+{{- $others := list .Release.Namespace (include "aurum-ai.runnerNamespace" .) (include "aurum-ai.sandboxNamespace" .) -}}
+{{- if .Values.web.enabled -}}
+{{- $others = append $others .Values.web.namespace -}}
+{{- end -}}
+{{- if has $hermesNamespace $others -}}
+{{- fail "hermes.namespace must differ from the release, runner, sandbox and web namespaces" -}}
+{{- end -}}
+{{- if not .Values.networkPolicies.enabled -}}
+{{- fail "hermes.enabled requires networkPolicies.enabled=true and a CNI with verified enforcement" -}}
+{{- end -}}
+{{- if not (has $egress.maxMode (list "none" "packages" "public")) -}}
+{{- fail "hermes.egress.maxMode must be none, packages or public" -}}
+{{- end -}}
+{{- $serviceSecret := $egress.serviceSecret | default "" -}}
+{{- $existingSecret := $egress.existingSecret | default "" -}}
+{{- if and $serviceSecret $existingSecret -}}
+{{- fail "set only one of hermes.egress.serviceSecret or hermes.egress.existingSecret" -}}
+{{- end -}}
+{{- if and (not $serviceSecret) (not $existingSecret) -}}
+{{- fail "hermes.egress.serviceSecret or hermes.egress.existingSecret is required when hermes.enabled=true" -}}
+{{- end -}}
+{{- if and $serviceSecret (lt (len $serviceSecret) 16) -}}
+{{- fail "hermes.egress.serviceSecret must contain at least 16 characters" -}}
+{{- end -}}
+{{- if and $existingSecret (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $existingSecret)) -}}
+{{- fail "hermes.egress.existingSecret must be a valid Kubernetes Secret name" -}}
+{{- end -}}
+{{- if and $existingSecret (not ($egress.secretRotationToken | default "")) -}}
+{{- fail "hermes.egress.secretRotationToken is required with hermes.egress.existingSecret" -}}
+{{- end -}}
+{{- if lt (int $egress.replicaCount) 1 -}}
+{{- fail "hermes.egress.replicaCount must be at least 1" -}}
+{{- end -}}
+{{- /* The exclusions are shared with web egress: one list of private ranges. */ -}}
+{{- $requiredV4 := list "0.0.0.0/8" "10.0.0.0/8" "100.64.0.0/10" "127.0.0.0/8" "169.254.0.0/16" "172.16.0.0/12" "192.0.0.0/24" "192.0.2.0/24" "192.88.99.0/24" "192.168.0.0/16" "198.18.0.0/15" "198.51.100.0/24" "203.0.113.0/24" "224.0.0.0/4" "240.0.0.0/4" -}}
+{{- range $cidr := $requiredV4 -}}
+{{- if not (has $cidr $.Values.web.networkPolicy.excludedIpv4Cidrs) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv4Cidrs must retain required exclusion %s" $cidr) -}}
+{{- end -}}
+{{- end -}}
+{{- $requiredV6 := list "2001::/23" "2001:db8::/32" "2002::/16" "3fff::/20" -}}
+{{- range $cidr := $requiredV6 -}}
+{{- if not (has $cidr $.Values.web.networkPolicy.excludedIpv6Cidrs) -}}
+{{- fail (printf "web.networkPolicy.excludedIpv6Cidrs must retain required exclusion %s" $cidr) -}}
+{{- end -}}
+{{- end -}}
+{{- range $index, $destination := $egress.internalDestinations -}}
+{{- $cidr := $destination.cidr | default "" -}}
+{{- if not (or (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$" $cidr) (regexMatch "^[0-9A-Fa-f:]+/[0-9]{1,3}$" $cidr)) -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d].cidr must be a CIDR" $index) -}}
+{{- end -}}
+{{- if not $destination.ports -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d].ports must not be empty" $index) -}}
+{{- end -}}
+{{- range $port := $destination.ports -}}
+{{- if or (ne ($port.protocol | default "") "TCP") (lt (int $port.port) 1) (gt (int $port.port) 65535) -}}
+{{- fail (printf "hermes.egress.internalDestinations[%d] ports must be TCP with a valid port" $index) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.hermes.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $hermesNamespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    aurum-ai.runtime: hermes
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+{{- end }}
+{{- end }}

@@ -159,3 +159,30 @@ read it directly.
 {{- define "aurum-ai.skillExecutorServiceAccountName" -}}
 {{- printf "%s-skill-executor" .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end }}
+
+{{/* Secret holding HERMES_EGRESS_SERVICE_SECRET, in the release and Hermes namespaces. */}}
+{{- define "aurum-ai.hermesSecretName" -}}
+{{- .Values.hermes.egress.existingSecret | default (printf "%s-hermes-secrets" .Release.Name | trunc 63 | trimSuffix "-") -}}
+{{- end }}
+
+{{/* Roll the guard and the backend when the shared credential rotates. */}}
+{{- define "aurum-ai.hermesSecretChecksum" -}}
+{{- if .Values.hermes.egress.existingSecret -}}
+{{- printf "external|%s|%s" .Values.hermes.egress.existingSecret .Values.hermes.egress.secretRotationToken | sha256sum -}}
+{{- else -}}
+{{- printf "managed|%s" .Values.hermes.egress.serviceSecret | sha256sum -}}
+{{- end -}}
+{{- end }}
+
+{{/* Public ports the guard may open per mode: packages is HTTPS only, as the proxy enforces. */}}
+{{- define "aurum-ai.hermesPublicPorts" -}}
+{{- if eq .Values.hermes.egress.maxMode "public" -}}
+- protocol: TCP
+  port: 80
+- protocol: TCP
+  port: 443
+{{- else -}}
+- protocol: TCP
+  port: 443
+{{- end -}}
+{{- end }}
