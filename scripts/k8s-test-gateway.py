@@ -2,7 +2,7 @@
 
 Routing decisions are reconstructed from current messages, as a real gateway
 would see them. For Hermes Agent, which uses native function calling, a
-HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, HERMES_FILES makes it attach a chart and a CSV it made in its terminal, HERMES_INPUTS a pivot workbook and a deck made from the user's uploads, HERMES_WEBAPP a web app it checks in headless Chromium and packs as a ZIP, HERMES_INSTRUCTIONS_SHOW whether the sandbox notes reach the model, and HERMES_VISION whether a picture reaches the model through vision_analyze. A test-only metadata barrier synchronizes admitted web turns.
+HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, HERMES_FILES makes it attach a chart and a CSV it made in its terminal, HERMES_INPUTS a pivot workbook and a deck made from the user's uploads, HERMES_WEBAPP a web app it checks in headless Chromium and packs as a ZIP, HERMES_INSTRUCTIONS_SHOW whether the sandbox notes reach the model, HERMES_VISION whether a picture reaches the model through vision_analyze, and HERMES_PREVIEW shares the web app running in the background. A test-only metadata barrier synchronizes admitted web turns.
 It never performs an outbound request and never stores prompts in barrier state.
 """
 
@@ -1090,6 +1090,32 @@ def _hermes_vision_response(request: CompletionRequest) -> str | dict[str, Any] 
     return {"name": "vision_analyze", "arguments": json.dumps(arguments)}
 
 
+# The web app HERMES_WEBAPP built, started in the background and shared.
+_HERMES_PREVIEW_STEPS = (
+    {
+        "name": "terminal",
+        "arguments": {"command": "cd /workspace/webapp && python3 -c 'import app; app.serve(8898)'", "background": True},
+    },
+    {"name": "mcp__aurum__share_preview", "arguments": {"port": 8898}},
+)
+
+
+def _hermes_preview_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_PREVIEW: the web app started in the background and shared, then
+    the share's result as text."""
+    if "HERMES_PREVIEW" not in _last_user_message(request.messages):
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
+    if len(results) >= len(_HERMES_PREVIEW_STEPS):
+        return "HERMES_PREVIEW_DONE: " + " ".join(results[-1].split())[:800]
+    offered = {str((item.get("function") or {}).get("name")) for item in request.tools}
+    step = _HERMES_PREVIEW_STEPS[len(results)]
+    if step["name"] not in offered:
+        return f"HERMES_PREVIEW_NOT_OFFERED:{step['name']}"
+    return {"name": step["name"], "arguments": json.dumps(step["arguments"])}
+
+
 def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """A native tool call to the marked platform tool, then its result as text."""
     match = _HERMES_MCP.search(_last_user_message(request.messages))
@@ -1236,6 +1262,7 @@ async def chat_completions(request: CompletionRequest) -> Response:
         or _hermes_webapp_response(request)
         or _hermes_instructions_response(request)
         or _hermes_vision_response(request)
+        or _hermes_preview_response(request)
     )
     if isinstance(hermes, dict):
         return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")

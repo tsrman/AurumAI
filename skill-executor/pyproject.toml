@@ -7,6 +7,8 @@ requires-python = ">=3.12,<4.0.0"
 dependencies = [
     "fastapi>=0.141.0,<0.144.0",
     "uvicorn>=0.34.0,<0.55.0",
+    # The preview stream is a WebSocket route; uvicorn serves it only with this.
+    "websockets>=15.0,<17.0",
     "pydantic>=2.10.0,<3.0.0",
     "pydantic-settings>=2.7.0,<3.0.0",
     "aiodocker>=0.23.0,<0.28.0",

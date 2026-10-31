@@ -52,6 +52,8 @@ export interface MessageResponse {
   imageIds?: string[];
   // Files the answer's agent attached (see lib/files-api).
   files?: unknown[];
+  // Apps the answer's Hermes Agent shared (see lib/previews-api).
+  previews?: unknown[];
   // The reason a failed turn ended with, kept by the history.
   failed?: boolean;
 }

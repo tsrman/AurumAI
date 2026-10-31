@@ -24,7 +24,8 @@ import {
  * in its terminal (the test computes the same hash), attaches a chart and a
  * CSV it made with matplotlib, builds a pivot workbook and a deck from two
  * workbooks the member gives it (its answer is the pivot's total), builds and
- * checks a Flask prototype it hands over as a ZIP with a screenshot, asks
+ * checks a Flask prototype it hands over as a ZIP with a screenshot and opens
+ * for the member as a preview, asks
  * through a question card and uses the answer, saves a random value to the
  * member's memory, and
  * writes a skill that waits for review. Opt-in with E2E_USE_REAL_LLM=true; the
@@ -126,12 +127,28 @@ test.describe("Hermes Agent with a real model", () => {
         member,
         "Build a small Flask web app with one page that shows a list of three tasks and a form to add one. " +
           "Test it with pytest, then start it and check the page in headless Chromium with Playwright, adding " +
-          "a task. Give me a screenshot of the page with the added task and the project as one ZIP with a " +
-          "README.md on how to run it. Reply in one short sentence.",
+          "a task. Attach, with your attach_file tool, a screenshot of the page with the added task and the " +
+          "project as one ZIP with a README.md on how to run it. Reply in one short sentence.",
         /\S/u
       );
       await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
       await expect(member.getByRole("list", { name: "Attached files" }).last()).toContainText(".zip");
+
+      // The member opens the prototype the model keeps running, at its own origin.
+      await ask(
+        member,
+        "Start that Flask app in the background on 127.0.0.1 port 5050 so it keeps running, then let me open " +
+          "it with your share_preview tool. Reply in one short sentence.",
+        /\S/u
+      );
+      const running = member.getByRole("group", { name: "Running apps" }).last();
+      await expect(running).toBeVisible({ timeout: 30_000 });
+      const opening = memberContext.waitForEvent("page");
+      await running.getByRole("button", { name: "Open prototype" }).click();
+      const prototype = await opening;
+      await prototype.waitForURL(/^http:\/\/[0-9a-f]{32}\.preview\.localhost:8095\//u, { timeout: 30_000 });
+      await expect(prototype.locator("form").first()).toBeVisible({ timeout: 30_000 });
+      await prototype.close();
 
       // A picture the model looks at with vision_analyze, once its model is marked as taking images.
       if (VISION) {

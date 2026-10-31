@@ -264,9 +264,25 @@ class Connection:
             self.upstream = None
             self.target = None
 
+    async def _drain(self) -> None:
+        """Read the rest of a request the service answers itself, so the
+        connection can carry the next one."""
+        received = 0
+        while self.http.their_state is h11.SEND_BODY:
+            event = await self._next_event()
+            if isinstance(event, h11.Data):
+                received += len(event.data)
+                if received > self.settings.max_body_bytes:
+                    raise h11.RemoteProtocolError("request body too large")
+
     async def _handle(self, request: h11.Request) -> bool:
         headers = {name.lower(): value for name, value in request.headers}
-        match = self.settings.host_pattern().match(headers.get(b"host", b"").decode("latin-1").lower())
+        target = urlsplit(request.target.decode("latin-1"))
+        grant = _cookie(headers.get(b"cookie", b""))
+        host = self.settings.host_pattern().match(headers.get(b"host", b"").decode("latin-1").lower())
+        if host is None or target.path == ENTER_PATH or not grant:
+            await self._drain()
+        match = host
         if match is None and request.target == b"/health":
             await self._respond(200, [(b"content-type", b"text/plain")], b"ok")
             return False
@@ -274,12 +290,11 @@ class Connection:
             await self._respond(*_page(404, "Not found", "There is no preview here."))
             return False
         self.label = match.group(1)
-        target = urlsplit(request.target.decode("latin-1"))
         if target.path == ENTER_PATH:
             return await self._enter(target.query)
-        grant = _cookie(headers.get(b"cookie", b""))
         decision = await self.previews.check(self.label, grant) if grant else Decision(False, "hermes_preview_denied")
         if not decision.allow:
+            await self._drain()
             await self._respond(*_denied(decision.reason))
             return False
         return await self._proxy(request, decision, grant)

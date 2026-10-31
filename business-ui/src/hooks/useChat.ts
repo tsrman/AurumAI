@@ -15,6 +15,7 @@ import {
 import { cancelWorkflowRun } from "@/lib/workflows-api";
 import { loadSourcesForMessage } from "@/lib/web-sources-api";
 import { filesFrom, type AttachedFile } from "@/lib/files-api";
+import { previewsFrom } from "@/lib/previews-api";
 import { imageIdsFrom } from "@/lib/images-api";
 import { questionKeys, useQuestions } from "@/hooks/useQuestions";
 import {
@@ -150,6 +151,7 @@ function backendMessageToUIMessage(
     sources,
     images: imageIdsFrom(msg.imageIds),
     files: filesFrom(msg.files),
+    previews: previewsFrom(msg.previews),
     phase: "done",
     thinkingOpen: false,
     thinkingSeconds: 0,
@@ -429,9 +431,10 @@ export function useChat(): UseChatReturn {
         // collected from the live stream.
         const images = imageIdsFrom(persisted.imageIds);
         const files = filesFrom(persisted.files);
+        const previews = previewsFrom(persisted.previews);
         updateAssistantMessage(conversationId, assistantId, (message) =>
           generationRef.current === generation
-            ? { ...message, sources, images, files }
+            ? { ...message, sources, images, files, previews }
             : message
         );
       } catch {

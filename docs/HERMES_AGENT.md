@@ -1047,7 +1047,11 @@ service's secret `APP_HERMES_PREVIEW_SERVICE_SECRET`:
   WebSocket, which takes only the preview service's secret and runs
   `hermes-relay connect <port>` in the sandbox: a byte stream to 127.0.0.1 on
   port 1024 or above, nothing else. The sandbox gains no network; preview
-  traffic does not keep it from idling.
+  traffic does not keep it from idling;
+- the answer shows an "Open prototype" card; the tab opens at once, while the
+  click counts for popup blockers, without a handle on the chat page, and then
+  goes to the ticket's URL. Hermes's sandbox notes tell it to start the app in
+  the background and call `share_preview`, and still to hand over the ZIP.
 
 ### Idle sessions
 

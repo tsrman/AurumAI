@@ -298,9 +298,11 @@ async def connect_preview(websocket: WebSocket, session_id: str, port: int = Que
         for task in tasks:
             task.cancel()
         await stream.close()
+        # A side that went away ends its task with an error; that is the end of the stream.
+        await asyncio.gather(*tasks, return_exceptions=True)
         try:
             await websocket.close()
-        except RuntimeError:
+        except Exception:  # noqa: BLE001 - the preview service may already be gone
             pass
 
 

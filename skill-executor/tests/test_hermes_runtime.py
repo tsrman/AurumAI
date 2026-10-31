@@ -244,7 +244,7 @@ def test_generated_config_tells_hermes_about_its_sandbox() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 
     assert config["agent"]["system_prompt"] == SANDBOX_INSTRUCTIONS
-    for fact in ("/workspace/inputs", "attach_file", "README.md", "/usr/bin/chromium-headless-shell", "127.0.0.1"):
+    for fact in ("/workspace/inputs", "attach_file", "README.md", "/usr/bin/chromium-headless-shell", "127.0.0.1", "share_preview"):
         assert fact in SANDBOX_INSTRUCTIONS
     # The token never reaches the model's prompt.
     assert TOKEN not in SANDBOX_INSTRUCTIONS
