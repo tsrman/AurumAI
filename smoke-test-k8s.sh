@@ -4,6 +4,21 @@ set -euo pipefail
 # Repeatable local Kubernetes acceptance for the stateless platform plus its
 # dynamic runner and sandbox Pods. The stateful data plane stays in Compose;
 # k3d joins that exact Docker network so Pods can resolve the container names.
+#
+# K8S_TEST_ACCEPTANCE=hermes runs Hermes Agent on the whole platform instead: the
+# chart with hermes.enabled, its guard and sandbox Pods, and the Hermes turns of
+# scripts/hermes-k8s-platform-acceptance.py through the backend, tool-worker and
+# skill-executor (files in the answer, the MCP bridge, memory across conversations,
+# skill drafts, an idle sandbox snapshotted and restored). It first uses the release's
+# deterministic test gateway; with K8S_TEST_REAL_GATEWAY_URL and
+# K8S_TEST_REAL_GATEWAY_API_KEY (and K8S_TEST_REAL_MODEL, default deepseek-v4-flash) it
+# then switches the release to that gateway for one billed turn that computes, installs
+# a package through the guard and attaches a file. The user is K8S_TEST_USER (an
+# organization administrator whose organization may use Hermes; its Hermes settings are
+# changed for the run and restored). A Compose data plane started with generated
+# secrets needs K8S_TEST_DATABASE_ROLE_PASSWORD, K8S_TEST_REDIS_PASSWORD and
+# K8S_TEST_S3_SECRET_KEY (and the same APP_SECRET_KEY); the chart's defaults match a
+# fresh one.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART="$REPO_ROOT/charts/aurum-ai"
@@ -14,6 +29,8 @@ RELEASE_NAME="${K8S_TEST_RELEASE:-aurum-ai-k8s-smoke}"
 RELEASE_NAMESPACE="${K8S_TEST_NAMESPACE:-aurum-ai-k8s-smoke}"
 RUNNER_NAMESPACE="${K8S_TEST_RUNNER_NAMESPACE:-${RELEASE_NAME}-runners}"
 SANDBOX_NAMESPACE="${K8S_TEST_SANDBOX_NAMESPACE:-${RELEASE_NAME}-sandboxes}"
+HERMES_NAMESPACE="${K8S_TEST_HERMES_NAMESPACE:-${RELEASE_NAME}-hermes}"
+HERMES_IDLE_SECONDS="${K8S_TEST_HERMES_IDLE_SECONDS:-45}"
 KEEP_RESOURCES="${KEEP_K8S_TEST_RESOURCES:-0}"
 ACCEPTANCE_PROFILE="${K8S_TEST_ACCEPTANCE:-full}"
 # Compose interpolates the complete file even when `up` names only data-plane
@@ -317,7 +334,7 @@ ensure_temporal_namespace() {
 ensure_cluster() {
   local browser_ports=()
   local browser_k3s_args=()
-  if [[ "$ACCEPTANCE_PROFILE" == "user-questions" ]]; then
+  if [[ "$ACCEPTANCE_PROFILE" == "user-questions" || "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
     browser_ports=(-p "127.0.0.1:$FRONTEND_PORT:$INGRESS_NODE_PORT@loadbalancer")
     browser_k3s_args=(--k3s-arg '--disable=servicelb@server:*')
   fi
@@ -348,7 +365,7 @@ raise SystemExit(0 if network in json.load(sys.stdin) else 1)
 
 configure_ingress_node_port() {
   local i ready=0
-  [[ "$ACCEPTANCE_PROFILE" == "user-questions" ]] || return 0
+  [[ "$ACCEPTANCE_PROFILE" == "user-questions" || "$ACCEPTANCE_PROFILE" == "hermes" ]] || return 0
   for i in $(seq 1 120); do
     if kubectl -n kube-system get service traefik >/dev/null 2>&1; then
       ready=1
@@ -412,6 +429,16 @@ build_and_import_images() {
   docker build -t "${images[4]}" "$REPO_ROOT/skill-executor"
   docker build -t "${images[5]}" "$REPO_ROOT/conversation-runner"
   docker build -t "${images[6]}" "$REPO_ROOT/skill-sandbox"
+  if [[ "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
+    local extra image context
+    for extra in aurum-ai-web-egress:latest:infra/web-egress \
+      aurum-ai-hermes-sandbox:latest:hermes-sandbox aurum-ai-hermes-preview:latest:hermes-preview; do
+      image=${extra%:*}
+      context=${extra##*:}
+      docker build -t "$image" "$REPO_ROOT/$context"
+      images+=("$image")
+    done
+  fi
   log "Importing application/runtime images into k3d"
   k3d image import -c "$CLUSTER_NAME" "${images[@]}"
 }
@@ -587,7 +614,7 @@ EOF
 write_helm_values() {
   local docker_subnet="$1"
   local browser_api="http://127.0.0.1:$BACKEND_PORT/v1" browser_ingress=false
-  if [[ "$ACCEPTANCE_PROFILE" == "user-questions" ]]; then
+  if [[ "$ACCEPTANCE_PROFILE" == "user-questions" || "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
     browser_api="http://backend.127.0.0.1.nip.io:$FRONTEND_PORT/v1"
     browser_ingress=true
   fi
@@ -598,6 +625,12 @@ image:
 secrets:
   appSecretKey: $APP_SECRET_KEY
   gatewayApiKey: k8s-smoke-test-key
+  # The chart's own defaults match a fresh Compose data plane; a stack started with
+  # generated secrets (bootstrap-dev-env.sh) needs its own values here.
+  databaseRolePassword: "${K8S_TEST_DATABASE_ROLE_PASSWORD:-aurum_ai_app}"
+  migrationDatabasePassword: "${K8S_TEST_MIGRATION_DATABASE_PASSWORD:-postgres}"
+  redisPassword: "${K8S_TEST_REDIS_PASSWORD:-redis_dev_password}"
+  s3SecretKey: "${K8S_TEST_S3_SECRET_KEY:-miniosecret}"
 ingress:
   enabled: $browser_ingress
   externalPort: $FRONTEND_PORT
@@ -678,6 +711,22 @@ networkPolicies:
           - protocol: TCP
             port: 7233
 EOF
+  if [[ "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
+    # Hermes on the real chart: its own namespace and guard, short lifetimes so
+    # an idle sandbox is snapshotted within the run.
+    cat >>"$WORK_DIR/k8s-smoke-values.yaml" <<EOF
+hermes:
+  enabled: true
+  namespace: $HERMES_NAMESPACE
+  egress:
+    maxMode: packages
+    recheckSeconds: 5
+  sandbox:
+    idleTtlSeconds: $HERMES_IDLE_SECONDS
+    cpuRequest: 100m
+    memoryRequest: 256Mi
+EOF
+  fi
 }
 
 render_and_install() {
@@ -1053,6 +1102,36 @@ run_multi_agent_acceptance() {
   log "Kubernetes multi-agent acceptance passed"
 }
 
+run_hermes_acceptance() {
+  local mode
+  export K8S_HERMES_BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
+  export K8S_HERMES_ADMIN_URL="http://127.0.0.1:$ADMIN_PORT"
+  export K8S_HERMES_KEYCLOAK_URL="$KEYCLOAK_PUBLIC_URL"
+  export K8S_HERMES_USER="$TEST_USERNAME" K8S_HERMES_PASSWORD="$TEST_PASSWORD"
+  export K8S_HERMES_NAMESPACE="$HERMES_NAMESPACE" K8S_HERMES_RELEASE="$RELEASE_NAME"
+  export K8S_HERMES_PLATFORM_NAMESPACE="$RELEASE_NAMESPACE"
+  export K8S_HERMES_IDLE_SECONDS="$HERMES_IDLE_SECONDS"
+  export K8S_HERMES_WORK_DIR="$WORK_DIR"
+  python3 "$REPO_ROOT/scripts/hermes-k8s-platform-acceptance.py" deterministic \
+    || fail "the deterministic Hermes acceptance failed"
+  if [[ -n "${K8S_TEST_REAL_GATEWAY_URL:-}" && -n "${K8S_TEST_REAL_GATEWAY_API_KEY:-}" ]]; then
+    log "Switching the release to the real model gateway"
+    helm upgrade "$RELEASE_NAME" "$CHART" -n "$RELEASE_NAMESPACE" --reuse-values --wait \
+      --timeout 8m \
+      --set "external.llmGateway.url=$K8S_TEST_REAL_GATEWAY_URL" \
+      --set external.llmGateway.verifySsl=true \
+      --set-string "secrets.gatewayApiKey=$K8S_TEST_REAL_GATEWAY_API_KEY" >/dev/null
+    wait_for_rollouts
+    restart_backend_port_forward
+    wait_for_url "http://127.0.0.1:$BACKEND_PORT/ready" "backend readiness"
+    export K8S_HERMES_REAL_MODEL="${K8S_TEST_REAL_MODEL:-deepseek-v4-flash}"
+    python3 "$REPO_ROOT/scripts/hermes-k8s-platform-acceptance.py" real \
+      || fail "the real-model Hermes acceptance failed"
+  else
+    log "No real gateway given (K8S_TEST_REAL_GATEWAY_URL and K8S_TEST_REAL_GATEWAY_API_KEY): skipping the real-model turn"
+  fi
+}
+
 main() {
   local command docker_subnet
   for command in docker k3d kubectl helm kubeconform curl flock npm python3 rg uv; do
@@ -1062,8 +1141,9 @@ main() {
   docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
   [[ "$KEEP_RESOURCES" == "0" || "$KEEP_RESOURCES" == "1" ]] \
     || fail "KEEP_K8S_TEST_RESOURCES must be 0 or 1"
-  [[ "$ACCEPTANCE_PROFILE" == "full" || "$ACCEPTANCE_PROFILE" == "user-questions" ]] \
-    || fail "K8S_TEST_ACCEPTANCE must be full or user-questions"
+  [[ "$ACCEPTANCE_PROFILE" == "full" || "$ACCEPTANCE_PROFILE" == "user-questions" \
+    || "$ACCEPTANCE_PROFILE" == "hermes" ]] \
+    || fail "K8S_TEST_ACCEPTANCE must be full, user-questions or hermes"
   if [[ "$ACCEPTANCE_PROFILE" == "user-questions" ]]; then
     [[ "${QUESTION_ACCEPTANCE_KIND:-short}" == "short" ]] \
       || fail "Kubernetes user-question acceptance supports only short mode"
@@ -1131,6 +1211,13 @@ main() {
     wait_for_url "http://chat.127.0.0.1.nip.io:$FRONTEND_PORT/login" "business UI"
     run_user_questions_acceptance
     log "Kubernetes user-question acceptance passed"
+    return
+  fi
+
+  if [[ "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
+    wait_for_url "http://backend.127.0.0.1.nip.io:$FRONTEND_PORT/ready" "business API ingress"
+    run_hermes_acceptance
+    log "Kubernetes Hermes acceptance passed"
     return
   fi
 

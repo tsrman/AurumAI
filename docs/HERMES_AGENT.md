@@ -588,7 +588,15 @@ Each phase is a separate PR behind the flag:
      the runtime end to end with the real image. `./smoke-test-hermes-k8s-egress.sh`
      checks the egress modes against the real internet, and
      `./smoke-test-hermes-k8s-nodes.sh` the behaviour on three nodes: a cold pull,
-     capacity and workspace eviction, a PID limit and a lost node.
+     capacity and workspace eviction, a PID limit and a lost node. On the whole
+     platform (`K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh`: the chart's backend,
+     tool-worker and skill-executor over the Compose data plane) Hermes turns run
+     end to end: a chart and a CSV made in the sandbox and attached (and a platform
+     secret refused), the MCP bridge, memory carried to a new conversation, a skill
+     written by Hermes arriving as a draft for an administrator, an idle sandbox
+     snapshotted to MinIO and restored into a new Pod; and, on a real model, a turn
+     that installs a package through the guard, authorized per connection by the real
+     backend, and attaches the result.
 3. **MCP bridge.** Split into two changes:
    - 3a, implemented: `POST /v1/hermes/mcp` with knowledge search, `web.search`,
      `web.read`, image generation and editing; hermes-egress forwards it, and the

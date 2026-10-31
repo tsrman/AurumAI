@@ -63,14 +63,17 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
   internet traffic (registries by TLS, refusals by host, port, SNI, address and mode, real
   pip and npm, the re-check of open tunnels) and its behaviour on three nodes by
   `smoke-test-hermes-k8s-nodes.sh` (a cold pull, capacity and workspace eviction, a PID
-  limit, a lost node). Still to verify:
+  limit, a lost node), and Hermes turns on the whole platform by `smoke-test-k8s.sh` with
+  `K8S_TEST_ACCEPTANCE=hermes`. Still to verify:
   - Other policy controllers (Cilium, cloud CNIs and the like): that a sandbox Pod reaches
     only the guard through its Service address and nothing else, that no DNS escapes, and
     that the guard's address exclusions hold. k3s's built-in controller and Calico were
     checked (`HERMES_K8S_CNI=calico`, boundary, runtime and egress modes, 0 failures).
-  - The whole platform on Kubernetes with a real model: a Hermes chat turn through the
-    guard to the real backend (session tokens, quota, the MCP bridge, skill drafts, files
-    in both directions), not the stand-in.
+  - More of Hermes on the whole platform on Kubernetes: files the user uploads, pictures
+    (vision), workflow nodes run by Hermes, usage and quota accounting of its turns, and a
+    long dialogue on a real model. One real-model turn, the MCP bridge, memory across
+    conversations, skill drafts and an idle snapshot with its restore were accepted
+    (`K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh`).
   - A previewed app opened from a browser through a real wildcard Ingress with a
     wildcard certificate and a domain outside the platform's: the `__Host-` cookie, the
     WebSocket upgrade through the Ingress controller, and the periodic re-check that ends

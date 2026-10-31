@@ -177,7 +177,7 @@ spec:
             - name: APP_IMAGES_TIMEOUT_SECONDS
               value: {{ .Values.backend.images.timeoutSeconds | quote }}
             - name: APP_IMAGES_UPLOAD_MAX_BYTES
-              value: {{ .Values.backend.images.uploadMaxBytes | quote }}
+              value: {{ .Values.backend.images.uploadMaxBytes | int64 | quote }}
             {{- if .Values.backend.images.apiKeySecret }}
             - name: APP_IMAGES_API_KEY
               valueFrom:

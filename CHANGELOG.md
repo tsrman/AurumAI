@@ -16,7 +16,11 @@ A sandbox on a lost node is started anew from its last snapshot by the next `cre
 that stays Terminating is deleted by force, and `create` waits for a terminating Pod of the
 same name; `./smoke-test-hermes-k8s-nodes.sh` accepts the multi-node behaviour.
 `HERMES_K8S_CNI=calico` runs the acceptance scripts on Calico, which passes them like k3s's own
-networking.
+networking. `K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh` runs Hermes turns on the whole
+platform, with a real model if given a gateway.
+
+Fixed: the chart rendered the image upload limit as `1.048576e+07`, which the backend could not
+parse, so a release with the default values did not start on Kubernetes.
 
 ## Documentation
 

@@ -169,7 +169,8 @@ MCP/code need profiles `mcp` and `skills-exec` and a built `runner`/`skill-sandb
 | `./smoke-test-authorization-ui.sh` | Five resource types, live revoke and both audiences |
 | `./smoke-test-images-ui.sh` | Admin image and vision models, chat generation, editing and image attachments, reload; deterministic gateway |
 | `./smoke-test-auth-lifecycle.sh` | UI logout/refresh/recovery and natural access expiry (up to15minutes) |
-| `./smoke-test-k8s.sh` | Fresh owned k3d/Helm install/upgrade, runner/sandbox/RBAC |
+| `./smoke-test-k8s.sh` | Fresh owned k3d/Helm install/upgrade, runner/sandbox/RBAC; with `K8S_TEST_ACCEPTANCE=hermes`, Hermes Agent on the whole platform (files, MCP bridge, memory, skill drafts, snapshot and restore; optionally one real-model turn) |
+| `./smoke-test-hermes-k8s.sh`, `./smoke-test-hermes-k8s-egress.sh`, `./smoke-test-hermes-k8s-nodes.sh` | Hermes on a disposable k3d cluster: the guard boundary and runtime (optionally on Calico), the egress modes with real internet traffic, and three nodes with eviction, a PID limit and a lost node |
 | `./smoke-test-user-questions-k8s.sh` | Fresh owned questions Ingress/Pod UID lifecycle |
 | `./smoke-test-web-tools-k8s.sh` | Fresh dual-stack CNI/SSRF controls; required web secrets/exclusive flag |
 
