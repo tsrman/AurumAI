@@ -250,6 +250,19 @@ def test_generated_config_tells_hermes_about_its_sandbox() -> None:
     assert TOKEN not in SANDBOX_INSTRUCTIONS
 
 
+def test_pictures_reach_the_organizations_model_through_the_platform_route() -> None:
+    settings = Settings()
+    config = hermes_config(settings, model="m", token=TOKEN, api_key="k")
+
+    assert config["agent"]["image_input_mode"] == "text"
+    assert config["auxiliary"]["vision"] == {
+        "provider": "custom",
+        "base_url": settings.hermes_platform_url,
+        "model": "m",
+        "api_key": TOKEN,
+    }
+
+
 def test_generated_config_lists_the_platform_tools_directly_and_reaches_nothing_else() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 

@@ -94,6 +94,8 @@ You work in an isolated sandbox. Your working directory is /workspace, kept betw
 absolute path. Pictures (PNG, JPEG, WebP) show below your answer; other files are offered \
 for download. Give a project as one ZIP with a README.md on how to install and run it, \
 without node_modules, virtual environments or build output.
+- To look at a picture (one the user gave or one you made), call vision_analyze with its \
+path; whether you can see it depends on the organization's model.
 - Installed: Python 3 (pandas, matplotlib, openpyxl, python-pptx, python-docx, pypdf, \
 Playwright) and Node.js 24 with npm. pip and npm may install packages; if an install \
 fails, the network does not allow it. Native modules that need a compiler cannot be built.
@@ -174,6 +176,19 @@ def hermes_config(settings: Settings, *, model: str, token: str, api_key: str) -
             "clarify_timeout": 4200,
             # A turn Hermes runs through its session worker reads the notes here.
             "system_prompt": SANDBOX_INSTRUCTIONS,
+            # Pictures go to the model as a vision request, never inside tool results.
+            "image_input_mode": "text",
+        },
+        # vision_analyze asks the organization's Hermes model through the
+        # platform route, which passes the picture only to a model marked as
+        # taking images and otherwise says the model cannot see it.
+        "auxiliary": {
+            "vision": {
+                "provider": "custom",
+                "base_url": settings.hermes_platform_url,
+                "model": model,
+                "api_key": token,
+            }
         },
         # The API server's toolset leaves clarify out.
         "platform_toolsets": {"api_server": ["hermes-api-server", "clarify"]},

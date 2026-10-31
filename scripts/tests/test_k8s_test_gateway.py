@@ -1401,3 +1401,39 @@ def test_hermes_instructions_marker_says_whether_the_sandbox_notes_arrived() -> 
 
     assert "HERMES_INSTRUCTIONS_SEEN" in client.post("/v1/chat/completions", json={"messages": [system, user]}).text
     assert "HERMES_INSTRUCTIONS_UNSEEN" in client.post("/v1/chat/completions", json={"messages": [user]}).text
+
+
+def test_hermes_vision_marker_looks_at_the_logo_and_reports_what_arrived() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": "vision_analyze"}}]
+    user = {"role": "user", "content": "HERMES_VISION"}
+
+    called = client.post("/v1/chat/completions", json={"messages": [user], "tools": tools})
+    [call] = json.loads(called.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+    assert call["function"]["name"] == "vision_analyze"
+    assert json.loads(call["function"]["arguments"])["image_url"] == "/workspace/inputs/logo.png"
+
+    picture = {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+    question = {"type": "text", "text": "VISION_PROBE: what does it show?"}
+    seen = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": [question, picture]}]})
+    unseen = client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": [question, {"type": "text", "text": "[not available]"}]}]},
+    )
+    assert "VISION_SEEN:1" in seen.text and "VISION_UNSEEN" in unseen.text
+
+    answered = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [
+                user,
+                {"role": "assistant", "content": None, "tool_calls": [{"id": call["id"]}]},
+                {"role": "tool", "tool_call_id": call["id"], "content": "VISION_SEEN:1"},
+            ],
+            "tools": tools,
+        },
+    )
+    assert "HERMES_VISION_DONE: VISION_SEEN:1" in answered.text

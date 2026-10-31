@@ -7,6 +7,7 @@ import {
   adminApi,
   adminToken,
   allowPackages,
+  markVision,
   ask as askWithin,
   chooseHermes,
   chooseHermesModel,
@@ -53,6 +54,7 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
     const skillName = `e2e-${Date.now().toString(36)}`;
     const contexts: BrowserContext[] = [];
     let restoreWorkflow: (() => Promise<void>) | null = null;
+    let restoreVision: (() => Promise<void>) | null = null;
 
     try {
       const adminContext = await browser.newContext();
@@ -161,6 +163,14 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       await ask(member, "HERMES_INPUTS: build a pivot and a deck", "PIVOT_TOTALS:North=22;South=16");
       // A picture reaches the workspace as a file, which Hermes's code reads.
       await expect(member.getByTestId("assistant-content").last()).toContainText("INPUT_IMAGES:logo.png=64x32");
+
+      // Hermes looks at the logo with vision_analyze: the platform passes the
+      // picture only once the organization marks its model as taking images.
+      await ask(member, "HERMES_VISION", "HERMES_VISION_DONE");
+      await expect(member.getByTestId("assistant-content").last()).toContainText("VISION_UNSEEN");
+      restoreVision = await markVision(request, MODEL);
+      await ask(member, "HERMES_VISION", "HERMES_VISION_DONE");
+      await expect(member.getByTestId("assistant-content").last()).toContainText("VISION_SEEN:1");
       const given = member.getByRole("list", { name: "Your files" }).last();
       await expect(given).toContainText("january.xlsx");
       await expect(given).toContainText("february.xlsx");
@@ -247,6 +257,7 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
     } finally {
       for (const context of contexts) await context.close();
       if (restoreWorkflow) await restoreWorkflow();
+      if (restoreVision) await restoreVision();
       const fresh = await adminToken(request);
       const skills = await adminApi<{ id: string; name: string }[]>(request, fresh, "GET", "/v1/skills/");
       for (const skill of skills.filter((item) => item.name === skillName)) {
