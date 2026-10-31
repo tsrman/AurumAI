@@ -8,7 +8,8 @@ the agent can stop the server and answer in its place.
 
   health           exit 0 once the API server answers
   run FILE         FILE (placed by skill-executor, then removed) holds
-                   {"input", "session_id", "key", "conversation_history"?};
+                   {"input", "session_id", "key", "conversation_history"?,
+                   "instructions"?};
                    starts the run once per key, then streams it
   events RUN_ID    replays and follows a run's events
   stop RUN_ID      asks Hermes to stop a run
@@ -158,6 +159,9 @@ def run(path: str) -> int:
         payload = {"input": body["input"], "session_id": body["session_id"]}
         if body.get("conversation_history"):
             payload["conversation_history"] = body["conversation_history"]
+        # The platform's notes on the sandbox, added to the system prompt for the run.
+        if isinstance(body.get("instructions"), str) and body["instructions"]:
+            payload["instructions"] = body["instructions"]
         with request("POST", "/v1/runs", payload) as response:
             run_id = str(json.load(response)["run_id"])
         # Hermes 0.19 does not replay Idempotency-Key; a retried activity

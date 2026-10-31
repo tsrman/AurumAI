@@ -300,6 +300,30 @@ async def test_an_oversized_workspace_is_removed_keeping_the_last_snapshot_that_
 
 
 @pytest.mark.asyncio
+async def test_every_run_carries_the_sandbox_instructions(make, monkeypatch) -> None:
+    import io as _io
+    import tarfile as _tarfile
+
+    from src.hermes_runtime import SANDBOX_INSTRUCTIONS
+
+    sandboxes, daemon, _, _ = make()
+    await _create(sandboxes, 1)
+
+    async def stream(sandbox: Any, cmd: list[str]):  # noqa: ANN202
+        yield {"type": "result"}
+
+    monkeypatch.setattr(sandboxes, "_stream", stream)
+
+    [line async for line in sandboxes.run(_session(1), {"key": "k", "input": "i", "session_id": "c"})]
+
+    [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
+    with _tarfile.open(fileobj=_io.BytesIO(archive)) as unpacked:
+        [member] = [item for item in unpacked.getmembers() if item.isfile()]
+        request = json.loads(unpacked.extractfile(member).read())
+    assert request["instructions"] == SANDBOX_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
 async def test_a_clarify_answer_reaches_the_relay_through_a_file(make, monkeypatch) -> None:
     sandboxes, daemon, _, _ = make()
     await _create(sandboxes, 1)

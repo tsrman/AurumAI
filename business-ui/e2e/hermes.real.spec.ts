@@ -6,6 +6,7 @@ import {
   BUSINESS_URL,
   adminApi,
   adminToken,
+  allowPackages,
   ask as askWithin,
   chooseHermes,
   chooseHermesModel,
@@ -25,9 +26,10 @@ import {
  * clears it; and finds a skill it wrote waiting for review. The administrator
  * reads the draft's files and approves it, and the member's next turn has the
  * skill in the sandbox; Hermes attaches a chart and a CSV it made in its
- * terminal, which the member sees and downloads, and builds a pivot workbook
- * and a deck from two workbooks the member gives it; a provider out of quota ends
- * a turn with a reason the member can act on. The organization's capabilities, model grant and
+ * terminal, which the member sees and downloads, builds a pivot workbook and a
+ * deck from two workbooks the member gives it, and builds a web app it checks
+ * in headless Chromium and hands over as a ZIP; a provider out of quota ends a
+ * turn with a reason the member can act on. The organization's capabilities, model grant and
  * Hermes settings are restored and the approved skill is removed.
  */
 const ENABLED = process.env.E2E_HERMES_UI === "true";
@@ -182,6 +184,31 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
         timeout: 30_000,
       });
       await expect(member.getByRole("list", { name: "Attached files" }).last()).toContainText("report.pptx");
+
+      // A web app: Hermes is told about its sandbox, builds the app, installs
+      // an npm package through hermes-egress, checks the page in headless
+      // Chromium, and hands over a screenshot and the project as a ZIP.
+      // After the reload the composer takes Hermes from the conversation once it has loaded.
+      await expect(member.getByRole("button", { name: "Choose workflow" })).toHaveText(/Hermes Agent/, {
+        timeout: 30_000,
+      });
+      await ask(member, "HERMES_INSTRUCTIONS_SHOW", "HERMES_INSTRUCTIONS_SEEN");
+      // Package installs need the organization's default network mode; the test began with none.
+      await allowPackages(request);
+      await ask(member, "HERMES_WEBAPP", "HERMES_WEBAPP_DONE");
+      const report = member.getByTestId("assistant-content").last();
+      await expect(report).toContainText("WEBAPP_TEXT:Hello from the API");
+      await expect(report).toContainText("NPM_LEFT_PAD:1.3.0");
+      await expect(report).toContainText("NODE:v24.");
+      await expect(member.getByRole("img", { name: "Generated image 1" }).last()).toBeVisible({ timeout: 30_000 });
+      const project = member.getByRole("list", { name: "Attached files" }).last();
+      await expect(project).toContainText("webapp.zip");
+      const downloadingProject = member.waitForEvent("download");
+      await project.getByRole("button", { name: "Download webapp.zip" }).click();
+      const zipped = await readFile((await (await downloadingProject).path())!);
+      for (const entry of ["webapp/app.py", "webapp/README.md"]) {
+        expect(zipped.includes(Buffer.from(entry)), entry).toBe(true);
+      }
 
       // An agent definition can be a Hermes Agent, for workflow nodes, on the
       // organization's Hermes model and without tools of its own.

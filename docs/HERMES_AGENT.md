@@ -994,6 +994,11 @@ over its code. The image carries what that takes, all verified:
   them the last snapshot that fit stays the latest;
 - nothing in the sandbox is reachable from outside: the user runs the app from
   the ZIP Hermes attaches, whose README says how. Code files keep their names.
+- Hermes is told all this on every turn: skill-executor's `SANDBOX_INSTRUCTIONS`
+  reach its system prompt as the runs API's `instructions` (the relay forwards
+  them), which a turn Hermes runs itself uses, and as the generated config's
+  `agent.system_prompt`, which a turn its session worker runs reads instead.
+  The notes are neutral about the network mode, which the organization picks.
 
 ### Idle sessions
 

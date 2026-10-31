@@ -1364,3 +1364,40 @@ def test_hermes_inputs_marker_pivots_the_uploads_then_attaches_and_reports() -> 
     assert [arguments.get("path") for _, arguments in calls[1:]] == ["/workspace/out/pivot.xlsx", "/workspace/out/report.pptx"]
     done = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
     assert "HERMES_INPUTS_DONE: result 0 | result 1 | result 2" in done.text
+
+
+def test_hermes_webapp_marker_builds_checks_and_packs_then_reports() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": name}} for name in ("terminal", "mcp__aurum__attach_file")]
+    messages: list[dict] = [{"role": "user", "content": "HERMES_WEBAPP"}]
+    calls = []
+    for step in range(3):
+        response = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+        [call] = json.loads(response.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+        calls.append((call["function"]["name"], json.loads(call["function"]["arguments"])))
+        messages += [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": call["id"]}]},
+            {"role": "tool", "tool_call_id": call["id"], "content": f"result {step}"},
+        ]
+
+    command = calls[0][1]["command"]
+    assert "npm install --no-audit --no-fund left-pad@1.3.0" in command
+    assert 'executable_path="/usr/bin/chromium-headless-shell"' in command
+    assert [arguments.get("path") for _, arguments in calls[1:]] == ["/workspace/out/webapp.png", "/workspace/out/webapp.zip"]
+    done = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+    assert "HERMES_WEBAPP_DONE: result 0 | result 1 | result 2" in done.text
+
+
+def test_hermes_instructions_marker_says_whether_the_sandbox_notes_arrived() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    user = {"role": "user", "content": "HERMES_INSTRUCTIONS_SHOW"}
+    system = {"role": "system", "content": "You are Hermes.\n\nYou work in an isolated sandbox. Your working directory..."}
+
+    assert "HERMES_INSTRUCTIONS_SEEN" in client.post("/v1/chat/completions", json={"messages": [system, user]}).text
+    assert "HERMES_INSTRUCTIONS_UNSEEN" in client.post("/v1/chat/completions", json={"messages": [user]}).text

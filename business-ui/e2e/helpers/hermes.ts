@@ -119,6 +119,13 @@ export async function chooseHermes(member: Page): Promise<void> {
 }
 
 /** Sends a message and waits for the answer that follows it. */
+/** The organization's default Hermes network mode, for package installs; enableHermes's restore undoes it. */
+export async function allowPackages(request: APIRequestContext): Promise<void> {
+  const token = await adminToken(request);
+  const current = await adminApi<HermesSettings>(request, token, "GET", "/v1/admin/settings/hermes");
+  await adminApi(request, token, "PUT", "/v1/admin/settings/hermes", { model: current.model, egressMode: "packages" });
+}
+
 export async function ask(page: Page, text: string, expected: string | RegExp, timeout: number): Promise<void> {
   const replies = page.getByTestId("assistant-content");
   const before = await replies.count();

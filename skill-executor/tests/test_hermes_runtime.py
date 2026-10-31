@@ -238,6 +238,18 @@ def test_generated_config_disables_unneeded_toolsets() -> None:
     assert config["terminal"] == {"backend": "local"}
 
 
+def test_generated_config_tells_hermes_about_its_sandbox() -> None:
+    from src.hermes_runtime import SANDBOX_INSTRUCTIONS
+
+    config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
+
+    assert config["agent"]["system_prompt"] == SANDBOX_INSTRUCTIONS
+    for fact in ("/workspace/inputs", "attach_file", "README.md", "/usr/bin/chromium-headless-shell", "127.0.0.1"):
+        assert fact in SANDBOX_INSTRUCTIONS
+    # The token never reaches the model's prompt.
+    assert TOKEN not in SANDBOX_INSTRUCTIONS
+
+
 def test_generated_config_lists_the_platform_tools_directly_and_reaches_nothing_else() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 

@@ -2,7 +2,7 @@
 
 Routing decisions are reconstructed from current messages, as a real gateway
 would see them. For Hermes Agent, which uses native function calling, a
-HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, HERMES_FILES makes it attach a chart and a CSV it made in its terminal, and HERMES_INPUTS a pivot workbook and a deck made from the user's uploads. A test-only metadata barrier synchronizes admitted web turns.
+HERMES_MCP:<tool> marker makes it call that platform tool over the MCP bridge, HERMES_FILES makes it attach a chart and a CSV it made in its terminal, HERMES_INPUTS a pivot workbook and a deck made from the user's uploads, HERMES_WEBAPP a web app it checks in headless Chromium and packs as a ZIP, and HERMES_INSTRUCTIONS_SHOW whether the sandbox notes reach the model. A test-only metadata barrier synchronizes admitted web turns.
 It never performs an outbound request and never stores prompts in barrier state.
 """
 
@@ -972,6 +972,99 @@ def _hermes_inputs_response(request: CompletionRequest) -> str | dict[str, Any] 
     return {"name": step["name"], "arguments": json.dumps(step["arguments"])}
 
 
+# A small web app made, checked in headless Chromium and packed in the
+# terminal: npm installs a package through hermes-egress, Playwright clicks the
+# page, whose button fetches the app's API, and the project goes into a ZIP.
+_HERMES_WEBAPP_SCRIPT = """mkdir -p /workspace/webapp /workspace/npm-check /workspace/out && cd /workspace/webapp \\
+&& printf '%s\\n' '# Hello app' '' 'Run it with: python3 app.py, then open http://127.0.0.1:8899' > README.md \\
+&& cat > app.py <<'PY'
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+PAGE = b'<!doctype html><meta charset=utf-8><button id=b>Say hello</button><p id=out></p>' \\
+    b'<script>b.onclick=async()=>{out.textContent=(await (await fetch("/api/hello")).json()).message}</script>'
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"message": "Hello from the API"}).encode() if self.path == "/api/hello" else PAGE
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json" if self.path == "/api/hello" else "text/html")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def serve(port=8899):
+    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    serve()
+PY
+cd /workspace/npm-check && if npm install --no-audit --no-fund left-pad@1.3.0 >/tmp/npm.log 2>&1; \\
+then echo "NPM_LEFT_PAD:$(node -p "require('left-pad/package.json').version")"; \\
+else echo NPM_FAILED; grep -i "err" /tmp/npm.log | tail -4; fi
+echo "NODE:$(node --version)"
+cd /workspace/webapp && python3 - <<'PY'
+import threading, zipfile
+import app
+from playwright.sync_api import sync_playwright
+threading.Thread(target=app.serve, daemon=True).start()
+with sync_playwright() as playwright:
+    browser = playwright.chromium.launch(
+        executable_path="/usr/bin/chromium-headless-shell", args=["--no-sandbox", "--disable-dev-shm-usage"]
+    )
+    page = browser.new_page()
+    page.goto("http://127.0.0.1:8899/")
+    page.click("#b")
+    page.wait_for_function("document.getElementById('out').textContent.length > 0")
+    print("WEBAPP_TEXT:" + page.text_content("#out"))
+    page.screenshot(path="/workspace/out/webapp.png")
+    browser.close()
+with zipfile.ZipFile("/workspace/out/webapp.zip", "w") as archive:
+    for name in ("app.py", "README.md"):
+        archive.write(name, "webapp/" + name)
+PY"""
+_HERMES_WEBAPP_STEPS = (
+    {"name": "terminal", "arguments": {"command": _HERMES_WEBAPP_SCRIPT, "timeout": 300}},
+    {"name": "mcp__aurum__attach_file", "arguments": {"path": "/workspace/out/webapp.png"}},
+    {"name": "mcp__aurum__attach_file", "arguments": {"path": "/workspace/out/webapp.zip"}},
+)
+
+
+def _hermes_webapp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
+    """HERMES_WEBAPP: a web app built, checked and packed in the terminal, its
+    screenshot and ZIP attached, then the terminal's output as text."""
+    if "HERMES_WEBAPP" not in _last_user_message(request.messages):
+        return None
+    last_user = max((i for i, message in enumerate(request.messages) if message.role == "user"), default=-1)
+    results = [message.content for message in request.messages[last_user + 1 :] if message.role == "tool"]
+    if len(results) >= len(_HERMES_WEBAPP_STEPS):
+        return "HERMES_WEBAPP_DONE: " + " | ".join(" ".join(str(result).split())[:800] for result in results)
+    offered = {str((item.get("function") or {}).get("name")) for item in request.tools}
+    step = _HERMES_WEBAPP_STEPS[len(results)]
+    if step["name"] not in offered:
+        return f"HERMES_WEBAPP_NOT_OFFERED:{step['name']}"
+    return {"name": step["name"], "arguments": json.dumps(step["arguments"])}
+
+
+# The opening of the sandbox notes skill-executor gives Hermes on every run.
+_SANDBOX_NOTES = "You work in an isolated sandbox."
+
+
+def _hermes_instructions_response(request: CompletionRequest) -> str | None:
+    """HERMES_INSTRUCTIONS_SHOW: whether the run's system prompt holds the sandbox notes."""
+    if "HERMES_INSTRUCTIONS_SHOW" not in _last_user_message(request.messages):
+        return None
+    seen = any(message.role == "system" and _SANDBOX_NOTES in message.content for message in request.messages)
+    if seen:
+        return "HERMES_INSTRUCTIONS_SEEN"
+    # The end of the system prompt shows whose turn it was, should the notes be missing.
+    systems = [message.content for message in request.messages if message.role == "system"]
+    tail = " ".join(systems[-1].split())[-200:] if systems else ""
+    return f"HERMES_INSTRUCTIONS_UNSEEN system_tail={tail}"
+
+
 def _hermes_mcp_response(request: CompletionRequest) -> str | dict[str, Any] | None:
     """A native tool call to the marked platform tool, then its result as text."""
     match = _HERMES_MCP.search(_last_user_message(request.messages))
@@ -1115,6 +1208,8 @@ async def chat_completions(request: CompletionRequest) -> Response:
         or _hermes_mcp_response(request)
         or _hermes_files_response(request)
         or _hermes_inputs_response(request)
+        or _hermes_webapp_response(request)
+        or _hermes_instructions_response(request)
     )
     if isinstance(hermes, dict):
         return StreamingResponse(_tool_call_sse(request.model, hermes), media_type="text/event-stream")
