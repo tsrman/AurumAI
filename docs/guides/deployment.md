@@ -194,7 +194,10 @@ chart:
   `web.networkPolicy` exclusion lists intact: Hermes reuses them as its list of private
   ranges.
 - `internalPackageHosts` and `internalDestinations` together, if sandboxes should reach an
-  internal package mirror: NetworkPolicy knows addresses, not names.
+  internal package mirror: NetworkPolicy knows addresses, not names. A mirror inside the
+  cluster is described by the address of its Pod, **not of its Service**: the policy sees
+  the Pod after the Service's translation, so an entry for the Service address lets nothing
+  through. A mirror outside the cluster is described by its own address.
 - Kubernetes has no per-Pod process limit. Point `hermes.sandbox.runtimeClassName` at a
   RuntimeClass whose nodes set one, or accept the limit of the node.
 

@@ -59,16 +59,15 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 
 - Hermes Agent on Kubernetes is deployed by the chart (the boundary, the sandbox runtime
   and the preview service) and accepted on k3d by `smoke-test-hermes-k8s.sh`, against a
-  stand-in backend. Still to verify:
+  stand-in backend, and its egress modes by `smoke-test-hermes-k8s-egress.sh` with real
+  internet traffic (registries by TLS, refusals by host, port, SNI, address and mode, real
+  pip and npm, the re-check of open tunnels). Still to verify:
   - Other policy controllers (Calico, Cilium and the like): that a sandbox Pod reaches
     only the guard through its Service address and nothing else, that no DNS escapes, and
     that the guard's address exclusions hold. Only k3s's built-in controller was checked.
   - The whole platform on Kubernetes with a real model: a Hermes chat turn through the
     guard to the real backend (session tokens, quota, the MCP bridge, skill drafts, files
     in both directions), not the stand-in.
-  - The egress modes with real traffic: `packages` and `public` tunnels to the internet,
-    refusal of private and metadata addresses, and `internalDestinations` with an internal
-    package mirror.
   - A previewed app opened from a browser through a real wildcard Ingress with a
     wildcard certificate and a domain outside the platform's: the `__Host-` cookie, the
     WebSocket upgrade through the Ingress controller, and the periodic re-check that ends
