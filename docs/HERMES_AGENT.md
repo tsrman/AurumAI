@@ -466,9 +466,10 @@ Each phase is a separate PR behind the flag:
      default-deny NetworkPolicies in which a sandbox Pod reaches only the guard,
      and no DNS at all for sandbox Pods (`dnsPolicy: None` with an unanswered
      resolver and a `hostAliases` entry for the guard), so CoreDNS cannot become a
-     DNS channel. Accepted on k3d, whose policy controller enforces it: from a
-     sandbox only the guard answers, and the guard reaches only DNS, the backend
-     and public addresses;
+     DNS channel. Accepted on k3d with k3s's own policy controller and with Calico
+     (`HERMES_K8S_CNI=calico`): from a sandbox only the guard answers, and the
+     guard reaches only DNS, the backend and public addresses. Both treat a
+     Service address alike: the policy sees the Pod after the translation;
    - 2c-i, implemented for Docker: the `hermes-sandbox` image and long-lived
      sandboxes in `skill-executor` (create, re-adopt, run, events, stop, close,
      idle and absolute lifetimes, guard reconnection), each on its own internal

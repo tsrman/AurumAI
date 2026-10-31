@@ -19,7 +19,8 @@
 # Prerequisites: Docker, k3d, kubectl, helm, python3 and the internet. The images
 # aurum-ai-web-egress and aurum-ai-hermes-sandbox (about 2.5 GB) are built here when
 # missing. A run takes about ten minutes; run it in the background with a timeout.
-# Set KEEP_HERMES_K8S_CLUSTER=1 to keep the cluster for inspection.
+# Set KEEP_HERMES_K8S_CLUSTER=1 to keep the cluster for inspection, and HERMES_K8S_CNI=calico
+# to run on Calico instead of k3s's own networking.
 set -euo pipefail
 if (( $# )); then echo "This launcher takes no arguments" >&2; exit 2; fi
 cd "$(dirname "${BASH_SOURCE[0]}")"

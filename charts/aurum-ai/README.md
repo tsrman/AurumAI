@@ -99,7 +99,8 @@ guard and Service, a default-deny policy in which a sandbox Pod reaches only the
 (no DNS, no peer, no platform service), and a Role for skill-executor over Pods,
 `pods/exec` and the guard Service. The guard runs the proxy without nftables because the
 policies are the packet filter, and needs a CNI that enforces egress policies (k3s's
-built-in controller was checked). `hermes.egress.maxMode` bounds what organizations may
+built-in controller and Calico were checked; `HERMES_K8S_CNI=calico` runs the acceptance
+scripts on Calico). `hermes.egress.maxMode` bounds what organizations may
 choose; `internalDestinations` must accompany `internalPackageHosts`: a `cidr` for a mirror
 outside the cluster, or a `namespaceSelector` with a `podSelector` for one inside it (never
 its Service's address: the policy sees the Pod after the Service's translation). Selectors

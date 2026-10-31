@@ -22,12 +22,18 @@
 # aurum-ai-hermes-sandbox (about 2.5 GB) and aurum-ai-hermes-preview are built
 # here when missing. A run takes several minutes (the cluster, then the image
 # import); run it in the background with a timeout.
-# Set KEEP_HERMES_K8S_CLUSTER=1 to keep the cluster for inspection.
+# Set KEEP_HERMES_K8S_CLUSTER=1 to keep the cluster for inspection, and
+# HERMES_K8S_CNI=calico to run on Calico instead of k3s's own networking (it needs the
+# internet for Calico's manifest and images).
 set -euo pipefail
 if (( $# )); then echo "This launcher takes no arguments" >&2; exit 2; fi
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$ROOT_DIR"
 CLUSTER=${HERMES_K8S_CLUSTER:-aurum-ai-hermes-k8s-smoke}
+# flannel (k3s's own networking and policy controller) or calico; the boundary must
+# hold on both, since the chart only uses standard NetworkPolicy.
+CNI=${HERMES_K8S_CNI:-flannel}
+case "$CNI" in flannel|calico) ;; *) echo "HERMES_K8S_CNI must be flannel or calico" >&2; exit 2 ;; esac
 RELEASE=rel
 PLATFORM_NS=platform
 HERMES_NS=hermes-agents
@@ -67,10 +73,19 @@ ensure_image aurum-ai-hermes-sandbox:latest hermes-sandbox
 docker pull -q busybox:1.37 >/dev/null 2>&1 || docker image inspect busybox:1.37 >/dev/null 2>&1 || fail "busybox:1.37 is needed"
 
 export KUBECONFIG="$WORK/kubeconfig"
-log "creating the cluster"
+log "creating the cluster (CNI: $CNI)"
+CNI_ARGS=()
+if [[ "$CNI" == calico ]]; then
+  # No flannel and no k3s policy controller: Calico is both, installed below.
+  CNI_ARGS=(--k3s-arg "--flannel-backend=none@server:*" --k3s-arg "--disable-network-policy@server:*")
+fi
 k3d cluster create "$CLUSTER" --servers 1 --agents 0 --no-lb --wait \
-  --k3s-arg "--disable=traefik@server:0" --kubeconfig-update-default=false >/dev/null
+  --k3s-arg "--disable=traefik@server:0" --kubeconfig-update-default=false "${CNI_ARGS[@]}" >/dev/null
 k3d kubeconfig get "$CLUSTER" >"$KUBECONFIG"
+if [[ "$CNI" == calico ]]; then
+  log "installing Calico"
+  scripts/install-calico-k3d.sh >/dev/null
+fi
 kubectl wait --for=condition=Ready node --all --timeout=120s >/dev/null
 log "importing the images"
 # Ours must arrive: an image the cluster lacks would be pulled from a registry it
