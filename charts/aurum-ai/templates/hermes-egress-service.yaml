@@ -1,0 +1,22 @@
+{{- if .Values.hermes.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-egress
+  namespace: {{ .Values.hermes.namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-egress" "root" $) | nindent 4 }}
+  ports:
+    - name: platform
+      port: 8080
+      targetPort: platform
+      protocol: TCP
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+      protocol: TCP
+{{- end }}

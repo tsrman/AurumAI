@@ -123,6 +123,7 @@ def test_ci_runs_the_harness_when_the_overlay_changes() -> None:
 
     assert "grep -qx 'docker-compose.hermes.yml'" in workflow
     assert "scripts/.hermes-egress-trigger" in workflow
+    assert "templates/hermes-" in workflow and "scripts/.hermes-helm-trigger" in workflow
 
 
 @pytest.mark.parametrize("service", ["backend", "backend-admin"])

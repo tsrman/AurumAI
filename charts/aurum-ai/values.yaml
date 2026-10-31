@@ -271,6 +271,61 @@ web:
       - "2002::/16"
       - "3fff::/20"
 
+# Hermes Agent (docs/HERMES_AGENT.md). Opt-in. This block deploys the network
+# boundary: the namespace that will hold the agent sandboxes, the egress guard
+# that is their only way out, and the policies that enforce it. Sandbox Pods
+# themselves are created at run time by skill-executor.
+hermes:
+  enabled: false
+  # Dedicated namespace for the guard and the sandbox Pods; it must differ from
+  # the release, runner, sandbox and web namespaces.
+  namespace: ""
+  # Set false when the operator owns the namespace (including its quotas, Pod
+  # Security labels and Secret lifecycle).
+  createNamespace: true
+  egress:
+    # The most a sandbox can ever reach. Organizations choose a mode up to this
+    # one: none (platform only), packages (HTTPS to package registries) or
+    # public (ports 80 and 443 to public addresses).
+    maxMode: packages
+    # Dev-only managed credential shared by the backend and the guard. Clear it
+    # and set existingSecret for production.
+    serviceSecret: "change-me-hermes-egress-secret"
+    # Secret with HERMES_EGRESS_SERVICE_SECRET, pre-created independently in the
+    # release namespace AND in the Hermes namespace.
+    existingSecret: ""
+    # Bump on every rotation of an externally managed Secret.
+    secretRotationToken: ""
+    packageHosts:
+      - pypi.org
+      - files.pythonhosted.org
+      - registry.npmjs.org
+    # host:port entries the guard may reach in any mode but none. Each also
+    # needs a matching internalDestinations entry: NetworkPolicy knows CIDRs,
+    # not names.
+    internalPackageHosts: []
+    internalDestinations: []
+    # - cidr: 10.20.0.0/24
+    #   ports:
+    #     - protocol: TCP
+    #       port: 8443
+    idleTimeoutSeconds: 300
+    recheckSeconds: 30
+    maxConnections: 16
+    maxBytesPerTurn: 2147483648
+    replicaCount: 1
+    image:
+      repository: aurum-ai-web-egress
+      tag: ""
+      pullPolicy: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
 backendAdmin:
   image:
     repository: aurum-ai-backend

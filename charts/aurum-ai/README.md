@@ -93,6 +93,18 @@ code/migrations first. Web requires isolated namespaces, configured ingress/serv
 credential, bounded outbound destinations/search and operator enforcement checks.
 `backend.webEnabled=true` without the deployed web boundary is rejected.
 
+Hermes Agent (`hermes.enabled=true`, default off) deploys its network boundary: a
+dedicated namespace (`hermes.namespace`, Pod Security `restricted`), the `hermes-egress`
+guard and Service, a default-deny policy in which a sandbox Pod reaches only the guard
+(no DNS, no peer, no platform service), and a Role for skill-executor over Pods,
+`pods/exec` and the guard Service. The guard runs the proxy without nftables because the
+policies are the packet filter, and needs a CNI that enforces egress policies (k3s's
+built-in controller was checked). `hermes.egress.maxMode` bounds what organizations may
+choose; `internalDestinations` must accompany `internalPackageHosts`. The shared
+private-range exclusions are `web.networkPolicy.excluded*Cidrs`. The sandbox runtime on
+Kubernetes arrives in a following change: until then this block provides the boundary
+only. Previews (`hermes-preview`) are not in the chart yet.
+
 Identity synchronization starts with `identitySync.enabled=true` and admission false.
 Verify signed complete-groups mappers on both clients and worker readiness, then
 turn admission on. Roll back API admission first, then stop the worker. Its queue

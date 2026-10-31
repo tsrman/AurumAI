@@ -1,5 +1,12 @@
 # Changelog
 
+## Hermes Agent on Kubernetes: network boundary
+
+The Helm chart can deploy the Hermes Agent boundary (`hermes.enabled`, default off):
+a restricted namespace, the `hermes-egress` guard, default-deny NetworkPolicies in
+which a sandbox reaches only the guard, and skill-executor RBAC. The sandbox runtime
+itself follows in a later change.
+
 ## Documentation
 
 The documentation gains an [index by audience](docs/README.md), user, administrator,
