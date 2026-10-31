@@ -707,3 +707,23 @@ def test_the_k8s_acceptance_driver_exits_nonzero_on_a_failed_check() -> None:
     source = DRIVER.read_text()
     assert "sys.exit(1 if FAILED else 0)" in source
     compile(source, str(DRIVER), "exec")
+
+
+EGRESS_SMOKE = ROOT / "smoke-test-hermes-k8s-egress.sh"
+EGRESS_DRIVER = ROOT / "scripts" / "hermes-k8s-egress-modes.py"
+
+
+def test_the_egress_acceptance_is_disposable_and_applies_the_charts_own_templates() -> None:
+    launcher, driver = EGRESS_SMOKE.read_text(), EGRESS_DRIVER.read_text()
+    assert subprocess.run(["bash", "-n", str(EGRESS_SMOKE)], capture_output=True).returncode == 0
+    compile(driver, str(EGRESS_DRIVER), "exec")
+    assert 'if (( $# )); then' in launcher and "scripts/hermes-k8s-egress-modes.py" in launcher
+    # The cluster is removed at the end unless asked to be kept, and a clash is refused.
+    assert '"k3d", "cluster", "delete"' in driver and "KEEP_HERMES_K8S_CLUSTER" in driver
+    assert "already exists" in driver
+    for name in set(re.findall(r'"(hermes-[a-z-]+)"', driver)):
+        if name.startswith(("hermes-namespace", "hermes-secret", "hermes-egress-", "hermes-network", "hermes-rbac")):
+            assert (HELM_CHART / "templates" / f"{name}.yaml").exists(), name
+    assert "sys.exit(1 if FAILED else 0)" in driver
+    # Machine-independent: no path of the machine it was written on.
+    assert "/home/" not in driver and "/tmp/claude" not in driver

@@ -100,13 +100,16 @@ guard and Service, a default-deny policy in which a sandbox Pod reaches only the
 `pods/exec` and the guard Service. The guard runs the proxy without nftables because the
 policies are the packet filter, and needs a CNI that enforces egress policies (k3s's
 built-in controller was checked). `hermes.egress.maxMode` bounds what organizations may
-choose; `internalDestinations` must accompany `internalPackageHosts`. The shared
+choose; `internalDestinations` must accompany `internalPackageHosts`, and for a mirror
+inside the cluster it takes the address of the mirror's Pod, never of its Service (the
+policy sees the Pod after the Service's translation). The shared
 private-range exclusions are `web.networkPolicy.excluded*Cidrs`. skill-executor
 runs the sandboxes as Pods in that namespace (`hermes.sandbox.*`): one replica, and a
 `runtimeClassName` for a node PID limit, since Kubernetes has none per Pod. Previews
 (`hermes.preview.enabled`) add the preview service, its Secret and a wildcard Ingress rule
 for `hermes.preview.host`; use a domain outside the platform's own. `smoke-test-hermes-k8s.sh`
-is the acceptance run on a throwaway k3d cluster.
+is the acceptance run on a throwaway k3d cluster, and `smoke-test-hermes-k8s-egress.sh` checks
+the egress modes against the real internet.
 
 Identity synchronization starts with `identitySync.enabled=true` and admission false.
 Verify signed complete-groups mappers on both clients and worker readiness, then
