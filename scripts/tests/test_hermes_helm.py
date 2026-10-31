@@ -823,3 +823,24 @@ def test_internal_destinations_refuse_selectors_that_open_too_much(destination: 
     result = _with_destinations([destination])
     assert result.returncode != 0
     assert message in result.stderr
+
+
+NODES_SMOKE = ROOT / "smoke-test-hermes-k8s-nodes.sh"
+NODES_DRIVER = ROOT / "scripts" / "hermes-k8s-nodes-limits.py"
+
+
+def test_the_nodes_acceptance_is_disposable_and_machine_independent() -> None:
+    launcher, driver = NODES_SMOKE.read_text(), NODES_DRIVER.read_text()
+    assert subprocess.run(["bash", "-n", str(NODES_SMOKE)], capture_output=True).returncode == 0
+    compile(driver, str(NODES_DRIVER), "exec")
+    assert 'if (( $# )); then' in launcher and "scripts/hermes-k8s-nodes-limits.py" in launcher
+    # The Kubernetes client reads KUBECONFIG when it is imported: the launcher sets it first.
+    assert launcher.index("export KUBECONFIG") < launcher.index("uv run python")
+    # The cluster and the registry are removed unless asked to be kept, and a clash is refused.
+    assert '"k3d", "cluster", "delete"' in driver and '"k3d", "registry", "delete"' in driver
+    assert "KEEP_HERMES_K8S_CLUSTER" in driver and "already exists" in driver
+    assert "sys.exit(1 if FAILED else 0)" in driver
+    assert "/home/" not in driver and "/tmp/claude" not in driver
+    for name in re.findall(r'"(hermes-[a-z-]+)"', driver):
+        if name.startswith(("hermes-namespace", "hermes-secret", "hermes-egress-", "hermes-network", "hermes-rbac")):
+            assert (HELM_CHART / "templates" / f"{name}.yaml").exists(), name

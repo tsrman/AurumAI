@@ -110,8 +110,9 @@ runs the sandboxes as Pods in that namespace (`hermes.sandbox.*`): one replica, 
 `runtimeClassName` for a node PID limit, since Kubernetes has none per Pod. Previews
 (`hermes.preview.enabled`) add the preview service, its Secret and a wildcard Ingress rule
 for `hermes.preview.host`; use a domain outside the platform's own. `smoke-test-hermes-k8s.sh`
-is the acceptance run on a throwaway k3d cluster, and `smoke-test-hermes-k8s-egress.sh` checks
-the egress modes against the real internet.
+is the acceptance run on a throwaway k3d cluster, `smoke-test-hermes-k8s-egress.sh` checks
+the egress modes against the real internet, and `smoke-test-hermes-k8s-nodes.sh` the
+behaviour on three nodes (a cold pull, eviction, a PID limit, a lost node).
 
 Identity synchronization starts with `identitySync.enabled=true` and admission false.
 Verify signed complete-groups mappers on both clients and worker readiness, then

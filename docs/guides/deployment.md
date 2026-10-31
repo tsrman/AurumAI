@@ -200,7 +200,12 @@ chart:
   Pod after the Service's translation, so such an entry lets nothing through. Selectors take
   `matchLabels` only and may not select the Hermes or the release namespace.
 - Kubernetes has no per-Pod process limit. Point `hermes.sandbox.runtimeClassName` at a
-  RuntimeClass whose nodes set one, or accept the limit of the node.
+  RuntimeClass whose nodes set one (`scheduling.nodeSelector` on labelled nodes whose
+  kubelet runs with `--pod-max-pids`), or accept the limit of the node.
+- Sandboxes live on one node each. If it is lost, the session starts again on another from
+  its last snapshot (work since is lost). The first sandbox on a node pulls the 2.4 GB
+  image, which took under a minute from a local registry: allow more
+  (`hermes.sandbox.podStartTimeoutSeconds`) behind a slow one.
 
 For previews set `hermes.preview.enabled`, `origin` (for example
 `https://{preview}.preview.example.org`) and `host` (`*.preview.example.org`); the chart

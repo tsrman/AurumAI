@@ -562,14 +562,32 @@ Each phase is a separate PR behind the flag:
        nodes set one (`hermes.sandbox.runtimeClassName`); orphaned processes are
        reaped through a shared process namespace instead of Docker's init;
      - a restart of skill-executor adopts live Pods from their labels; one
-       replica only, as sandboxes are tracked in memory.
+       replica only, as sandboxes are tracked in memory;
+     - a lost node: the node controller marks its Pods not Ready within about a
+       minute, and `create` then treats the sandbox as lost (its Pod gone, being
+       deleted or not Ready): nothing can be snapshotted, so it starts the session
+       anew on a live node from the last snapshot, and work since that snapshot is
+       lost. A Pod that stays Terminating (a lost node never confirms it) is deleted
+       by force, by `create` and by the reaper, so its name is not held; before the
+       node controller notices, a dead sandbox still looks alive;
+     - a Pod deleted while its image is still being pulled stays Terminating until
+       the pull ends, so `create` waits for a Pod of the same name (up to the pod
+       start timeout) instead of refusing a session started again at once;
+     - measured on k3d against a local registry: a cold pull of the 2.4 GB image
+       took under a minute (start timeout 300 s), the kubelet evicted a Pod over its
+       workspace backstop within 70 s, and a RuntimeClass with a nodeSelector put a
+       sandbox on a node whose kubelet limited PIDs, where a fork loop stopped at
+       the limit.
      The chart also deploys the preview service (`hermes.preview`): a Deployment and
      Service in the release namespace, one Secret for both credentials, a wildcard
      Ingress rule for the preview origin and an executor ingress policy that lets
      only the preview service and tool-worker in. `./smoke-test-hermes-k8s.sh` is
      the acceptance on a disposable k3d cluster: the guard under Pod Security
      `restricted`, the platform paths, who reaches whom, the preview service, and
-     the runtime end to end with the real image.
+     the runtime end to end with the real image. `./smoke-test-hermes-k8s-egress.sh`
+     checks the egress modes against the real internet, and
+     `./smoke-test-hermes-k8s-nodes.sh` the behaviour on three nodes: a cold pull,
+     capacity and workspace eviction, a PID limit and a lost node.
 3. **MCP bridge.** Split into two changes:
    - 3a, implemented: `POST /v1/hermes/mcp` with knowledge search, `web.search`,
      `web.read`, image generation and editing; hermes-egress forwards it, and the

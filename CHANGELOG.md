@@ -12,6 +12,9 @@ Ingress rule, and `./smoke-test-hermes-k8s.sh` accepts the whole on a disposable
 `./smoke-test-hermes-k8s-egress.sh` checks the egress modes against the real internet.
 An internal package mirror in the cluster is allowed by namespace and Pod labels
 (`hermes.egress.internalDestinations`), not by an address.
+A sandbox on a lost node is started anew from its last snapshot by the next `create`, a Pod
+that stays Terminating is deleted by force, and `create` waits for a terminating Pod of the
+same name; `./smoke-test-hermes-k8s-nodes.sh` accepts the multi-node behaviour.
 
 ## Documentation
 

@@ -381,6 +381,11 @@ it tracks sandboxes in memory and re-adopts live Pods from their labels after a 
 The Role the chart grants covers Pods, `pods/exec` and the guard Service in the Hermes
 namespace only.
 
+If a node is lost, the node controller marks its Pods not Ready (about a minute) and the
+next `create` for such a session starts it anew on a live node from its last snapshot;
+work since that snapshot is lost. A cold pull of the sandbox image took under a minute
+from a local registry; with a slower registry raise `HERMES_POD_START_TIMEOUT_SECONDS`.
+
 A restarted skill-executor re-adopts live and stopped sandboxes from their Docker
 labels and reconnects a recreated guard. A sandbox past its idle or absolute
 lifetime is stopped, its workspace is snapshotted, and then it is removed; the
