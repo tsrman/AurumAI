@@ -6,12 +6,14 @@ relay's lines, which callers treat as untrusted data. Snapshot metadata is
 returned to the caller, which phase 4 records in the session row.
 """
 
+import asyncio
+import hmac
 import json
 import re
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +56,7 @@ _STATUS = {
     "hermes_file_failed": 502,
     "hermes_inputs_failed": 502,
     "hermes_input_invalid": 400,
+    "hermes_preview_port_invalid": 400,
 }
 
 
@@ -253,6 +256,52 @@ async def read_skills(session_id: str) -> dict[str, Any]:
         return await sandboxes.read_skills(session_id)
     except HermesSandboxError as exc:
         raise _error(exc) from None
+
+
+@router.websocket("/sandboxes/{session_id}/connect")
+async def connect_preview(websocket: WebSocket, session_id: str, port: int = Query(ge=1024, le=65535)) -> None:
+    """Binary frames to and from 127.0.0.1:port in the sandbox, for the
+    preview service; the stream ends when either side closes."""
+    if not settings.hermes_enabled or settings.runtime != "docker":
+        await websocket.close(code=1008)
+        return
+    secret = settings.hermes_preview_secret
+    presented = websocket.headers.get("authorization", "").removeprefix("Bearer ")
+    if not secret or not hmac.compare_digest(presented.encode(), secret.encode()):
+        await websocket.close(code=1008)
+        return
+    try:
+        stream = await sandboxes.connect(session_id, port)
+    except HermesSandboxError as exc:
+        await websocket.close(code=1008, reason=exc.code)
+        return
+    await websocket.accept()
+
+    async def browser_to_app() -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            if data := message.get("bytes"):
+                await stream.write_in(data)
+
+    async def app_to_browser() -> None:
+        while (message := await stream.read_out()) is not None:
+            if message.stream == 1:
+                await websocket.send_bytes(message.data)
+
+    # Either side closing ends both: the relay ends when its stdin does.
+    tasks = {asyncio.create_task(browser_to_app()), asyncio.create_task(app_to_browser())}
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await stream.close()
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 
 @router.get("/sandboxes/{session_id}/inputs")

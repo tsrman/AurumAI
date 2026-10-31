@@ -32,6 +32,7 @@ jobs:
           - { name: aurum-ai-backend, context: business-backend }
           - { name: aurum-ai-conversation-runner, context: conversation-runner }
           - { name: aurum-ai-tool-worker, context: tool-worker }
+          - { name: aurum-ai-hermes-preview, context: hermes-preview }
           - { name: aurum-ai-skill-executor, context: skill-executor }
           - { name: aurum-ai-skill-sandbox, context: skill-sandbox }
           - { name: aurum-ai-hermes-sandbox, context: hermes-sandbox }

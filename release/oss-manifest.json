@@ -23,6 +23,7 @@
     "admin-ui/**",
     "conversation-runner/**",
     "tool-worker/**",
+    "hermes-preview/**",
     "skill-executor/**",
     "skill-sandbox/**",
     "hermes-sandbox/**",
@@ -138,6 +139,8 @@
     "temporal/LICENSE-MIT-samples-server",
     "temporal/THIRD_PARTY_NOTICES.md",
     "tool-worker/LICENSE",
+    "hermes-preview/LICENSE",
+    "hermes-preview/README.md",
     "web-tools/LICENSE",
     "web-tools/README.md"
   ],
@@ -182,6 +185,8 @@
     "temporal/LICENSE-MIT-samples-server",
     "temporal/THIRD_PARTY_NOTICES.md",
     "tool-worker/LICENSE",
+    "hermes-preview/LICENSE",
+    "hermes-preview/README.md",
     "web-tools/LICENSE",
     "web-tools/README.md"
   ]

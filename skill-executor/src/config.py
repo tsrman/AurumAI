@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     # sandbox whose snapshot fails is paused instead and cannot be resumed.
     hermes_workspace_mode: Literal["volume", "tmpfs"] = "volume"
     hermes_workspace_max_bytes: int = 1024 * 1024 * 1024
+    # Shared with the preview service, the only caller of the preview stream;
+    # without it no stream is opened.
+    hermes_preview_secret: str = ""
     hermes_disk_check_interval_seconds: int = 60
     # Workspace snapshots (src/hermes_snapshots.py) in the s3_* bucket. Off
     # without an S3 endpoint; expired sandboxes are then removed outright.

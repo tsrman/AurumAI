@@ -728,3 +728,59 @@ def test_an_input_is_written_from_its_bytes_and_bounded(lifecycle, monkeypatch) 
     assert listed.json() == {"files": {"sales.xlsx": "a" * 64}}
     assert stored.status_code == 204 and written == [("sales q1.xlsx", b"PK book")]
     assert large.status_code == 413
+
+
+def test_a_preview_stream_carries_binary_frames_both_ways_and_refuses_low_ports(lifecycle, monkeypatch) -> None:
+    import asyncio as _asyncio
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from src import hermes_routes
+    from src.main import app
+
+    sandboxes, _, _ = lifecycle
+    opened: list[tuple[str, int]] = []
+
+    class Echo:
+        def __init__(self) -> None:
+            self.queue: _asyncio.Queue[bytes | None] = _asyncio.Queue()
+            self.closed = False
+
+        async def write_in(self, data: bytes) -> None:
+            await self.queue.put(b"app:" + data)
+
+        async def read_out(self):  # noqa: ANN202
+            data = await self.queue.get()
+            return None if data is None else SimpleNamespace(stream=1, data=data)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    streams: list[Echo] = []
+
+    async def connect(session_id: str, port: int) -> Echo:
+        opened.append((session_id, port))
+        streams.append(Echo())
+        return streams[-1]
+
+    monkeypatch.setattr(sandboxes, "connect", connect)
+    monkeypatch.setattr(hermes_routes, "sandboxes", sandboxes)
+    monkeypatch.setattr(hermes_routes, "settings", Settings(hermes_enabled=True, hermes_preview_secret="s3cret"))
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer s3cret"}
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/hermes/sandboxes/{SESSION}/connect?port=8899") as socket:
+            socket.receive_bytes()
+    assert opened == []
+    with client.websocket_connect(f"/hermes/sandboxes/{SESSION}/connect?port=8899", headers=auth) as socket:
+        socket.send_bytes(b"GET / HTTP/1.1\r\n\r\n")
+        assert socket.receive_bytes() == b"app:GET / HTTP/1.1\r\n\r\n"
+
+    assert opened == [(SESSION, 8899)] and streams[0].closed
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/hermes/sandboxes/{SESSION}/connect?port=80", headers=auth) as socket:
+            socket.receive_bytes()
+    assert opened == [(SESSION, 8899)]

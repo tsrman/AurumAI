@@ -561,3 +561,32 @@ def test_inputs_write_takes_only_its_staging_and_replaces_a_linked_folder(relay,
     assert not (tmp_path / "inputs").is_symlink() and (tmp_path / "inputs" / "data.csv").exists()
     assert list(outside.iterdir()) == []
     assert run("inputs-list")[0]["files"].keys() == {"data.csv"}
+
+
+def test_connect_streams_bytes_to_a_loopback_port_only(relay, tmp_path: Path) -> None:
+    import socket
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+
+    def echo() -> None:
+        connection, _ = server.accept()
+        data = connection.recv(1024)
+        connection.sendall(b"echo:" + data)
+        connection.close()
+
+    threading.Thread(target=echo, daemon=True).start()
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "hermes_relay.py"), "connect", str(port)],
+        input=b"hello", capture_output=True, timeout=30,
+    )
+    server.close()
+    assert result.returncode == 0 and result.stdout == b"echo:hello"
+
+    for refused, code in (("80", 2), ("70000", 2), ("x", 2), (str(port), 3)):
+        result = subprocess.run(
+            [sys.executable, str(IMAGE / "hermes_relay.py"), "connect", refused], input=b"", capture_output=True, timeout=30
+        )
+        assert result.returncode == code and result.stdout == b"", refused
