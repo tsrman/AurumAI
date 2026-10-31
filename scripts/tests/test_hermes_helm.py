@@ -859,3 +859,25 @@ def test_the_acceptance_scripts_can_run_on_calico() -> None:
         # Calico replaces both of k3s's networking pieces.
         assert "--flannel-backend=none@server:*" in source and "--disable-network-policy@server:*" in source, script.name
     assert "HERMES_K8S_CNI" in (ROOT / "smoke-test-hermes-k8s-egress.sh").read_text()
+
+
+PLATFORM_SMOKE = ROOT / "smoke-test-k8s.sh"
+PLATFORM_DRIVER = ROOT / "scripts" / "hermes-k8s-platform-acceptance.py"
+
+
+def test_the_platform_acceptance_has_a_hermes_profile_with_its_own_driver() -> None:
+    script, driver = PLATFORM_SMOKE.read_text(), PLATFORM_DRIVER.read_text()
+    assert subprocess.run(["bash", "-n", str(PLATFORM_SMOKE)], capture_output=True).returncode == 0
+    compile(driver, str(PLATFORM_DRIVER), "exec")
+    assert 'K8S_TEST_ACCEPTANCE must be full, user-questions or hermes' in script
+    assert "hermes-k8s-platform-acceptance.py" in script and "run_hermes_acceptance" in script
+    # A data plane with generated secrets needs its own values; the chart's defaults are the fallback.
+    for variable in ("K8S_TEST_DATABASE_ROLE_PASSWORD", "K8S_TEST_REDIS_PASSWORD", "K8S_TEST_S3_SECRET_KEY"):
+        assert variable in script, variable
+    # The real gateway key reaches the chart only through helm's flags, never a values file or a log line.
+    assert "--set-string" in script and "K8S_TEST_REAL_GATEWAY_API_KEY" in script
+    assert "K8S_TEST_REAL_GATEWAY_API_KEY" not in script.split("write_helm_values()")[1].split("render_and_install()")[0]
+    assert "sys.exit(1 if FAILED else 0)" in driver
+    assert "/home/" not in driver and "/tmp/claude" not in driver
+    # The organization's Hermes settings and the user's memory are put back after the run.
+    assert "restore" in driver and "DELETE" in driver
