@@ -55,8 +55,12 @@ operator. The deployment-specific procedures are in
 
 Hermes runs model-chosen commands, so its boundary is stricter than the others:
 
-- **Each sandbox has its own internal network.** Its only way out is the `hermes-egress`
-  guard. The backend never joins a sandbox network and sandboxes never share one.
+- **A sandbox's only way out is the `hermes-egress` guard.** On Docker each sandbox has its
+  own internal network, which the backend never joins and sandboxes never share. On
+  Kubernetes a default-deny NetworkPolicy lets a sandbox Pod reach only the guard (no DNS,
+  no peer Pod, no platform service, no node, no cluster API) and lets only sandbox Pods
+  reach the guard; this needs a CNI that enforces egress policy, and the sandbox Pod
+  mounts no service-account token.
 - **Egress is a mode**, `none`, `packages` or `public`, chosen by the organization within
   the operator's maximum (`HERMES_EGRESS_MAX_MODE`). Choose the lowest that does the job.
 - **No provider credentials** reach the sandbox: only a session token that names a person.

@@ -30,7 +30,9 @@ design and its reasoning in the [design document](../HERMES_AGENT.md).
 
 ## Set it up
 
-You need Docker 28 or newer on the host: every sandbox gets its own internal network.
+On Docker you need version 28 or newer on the host: every sandbox gets its own internal
+network. On Kubernetes see [Hermes on Kubernetes](deployment.md#hermes-agent-on-kubernetes)
+instead of steps 1 and 2 below; steps 3 and 4 are the same.
 
 1. Create the secrets. In `.env`:
 
@@ -60,7 +62,7 @@ You need Docker 28 or newer on the host: every sandbox gets its own internal net
    grant the `agents.hermes` capability to the right group.
 
 Hermes needs `tool-worker` and `skill-executor` running (`skill-executor` is in the
-`skills-exec` profile). It is not part of the Helm chart.
+`skills-exec` profile on Compose, and part of the chart on Kubernetes).
 
 ### Previews of running apps (optional)
 
@@ -82,8 +84,9 @@ a preview runs agent-written code in the viewer's browser, and a page on a share
 parent domain can set cookies for that parent. See the
 [security model](../reference/security.md#previews).
 
-For local trials set the origin to `http://{preview}.preview.localhost:8095`, which
-browsers resolve to the machine itself. Connection limits and timeouts are in the
+On Kubernetes the chart's `hermes.preview` block does the same and adds a wildcard
+Ingress rule. For local trials with Compose set the origin to
+`http://{preview}.preview.localhost:8095`, which browsers resolve to the machine itself. Connection limits and timeouts are in the
 [configuration reference](../CONFIGURATION.md#hermes-agent).
 
 ## Administration

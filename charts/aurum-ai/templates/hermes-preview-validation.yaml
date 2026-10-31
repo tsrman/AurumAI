@@ -1,0 +1,36 @@
+{{- if .Values.hermes.preview.enabled }}
+{{- $preview := .Values.hermes.preview -}}
+{{- if not .Values.hermes.enabled -}}
+{{- fail "hermes.preview.enabled requires hermes.enabled=true" -}}
+{{- end -}}
+{{- if not (regexMatch "^https?://[^/?#]*\\{preview\\}[^/?#]*$" ($preview.origin | default "")) -}}
+{{- fail "hermes.preview.origin must be an http(s) URL with a {preview} label" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (not $preview.host) -}}
+{{- fail "hermes.preview.host is required with ingress.enabled=true: the wildcard host that carries the previews" -}}
+{{- end -}}
+{{- $service := $preview.serviceSecret | default "" -}}
+{{- $executor := $preview.executorSecret | default "" -}}
+{{- $existing := $preview.existingSecret | default "" -}}
+{{- if and $existing (or $service $executor) -}}
+{{- fail "set only one of hermes.preview.serviceSecret/executorSecret or hermes.preview.existingSecret" -}}
+{{- end -}}
+{{- if and (not $existing) (or (not $service) (not $executor)) -}}
+{{- fail "hermes.preview.serviceSecret and hermes.preview.executorSecret or hermes.preview.existingSecret is required" -}}
+{{- end -}}
+{{- if and $service (lt (len $service) 16) -}}
+{{- fail "hermes.preview.serviceSecret must contain at least 16 characters" -}}
+{{- end -}}
+{{- if and $executor (lt (len $executor) 16) -}}
+{{- fail "hermes.preview.executorSecret must contain at least 16 characters" -}}
+{{- end -}}
+{{- if and $existing (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $existing)) -}}
+{{- fail "hermes.preview.existingSecret must be a valid Kubernetes Secret name" -}}
+{{- end -}}
+{{- if and $existing (not ($preview.secretRotationToken | default "")) -}}
+{{- fail "hermes.preview.secretRotationToken is required with hermes.preview.existingSecret" -}}
+{{- end -}}
+{{- if lt (int $preview.replicaCount) 1 -}}
+{{- fail "hermes.preview.replicaCount must be at least 1" -}}
+{{- end -}}
+{{- end }}

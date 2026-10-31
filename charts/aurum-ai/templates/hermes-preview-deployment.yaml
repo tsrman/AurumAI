@@ -1,0 +1,96 @@
+{{- if .Values.hermes.preview.enabled }}
+{{- $preview := .Values.hermes.preview -}}
+{{- $secret := include "aurum-ai.hermesPreviewSecretName" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-hermes-preview
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aurum-ai.labels" . | nindent 4 }}
+    {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-preview" "root" $) | nindent 4 }}
+spec:
+  replicas: {{ $preview.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-preview" "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-ai.selectorLabels" (dict "component" "hermes-preview" "root" $) | nindent 8 }}
+      annotations:
+        checksum/hermes-preview-secret: {{ include "aurum-ai.hermesPreviewSecretChecksum" . }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: hermes-preview
+          image: {{ include "aurum-ai.image" (dict "service" $preview "root" $) }}
+          imagePullPolicy: {{ include "aurum-ai.imagePullPolicy" (dict "service" $preview "root" $) }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8095
+              protocol: TCP
+          env:
+            - name: HERMES_PREVIEW_ORIGIN
+              value: {{ $preview.origin | quote }}
+            - name: HERMES_PREVIEW_BACKEND_URL
+              value: {{ printf "http://%s-backend.%s.svc:8000" .Release.Name .Release.Namespace | quote }}
+            - name: HERMES_PREVIEW_EXECUTOR_URL
+              value: {{ printf "ws://%s-skill-executor.%s.svc:8090" .Release.Name .Release.Namespace | quote }}
+            - name: HERMES_PREVIEW_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: HERMES_PREVIEW_SERVICE_SECRET
+            - name: HERMES_PREVIEW_EXECUTOR_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: HERMES_PREVIEW_EXECUTOR_SECRET
+            - name: HERMES_PREVIEW_MAX_CONNECTIONS
+              value: {{ $preview.maxConnections | quote }}
+            - name: HERMES_PREVIEW_IDLE_SECONDS
+              value: {{ $preview.idleSeconds | quote }}
+            - name: HERMES_PREVIEW_RECHECK_SECONDS
+              value: {{ $preview.recheckSeconds | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $preview.resources | nindent 12 }}
+{{- end }}

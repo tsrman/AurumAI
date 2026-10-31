@@ -305,6 +305,39 @@ hermes:
     # Kubernetes has no per-Pod PID limit: name a RuntimeClass whose nodes set one.
     runtimeClassName: ""
     podStartTimeoutSeconds: 300
+  # Previews of the web apps the agent runs, opened at origins of their own
+  # (docs/HERMES_AGENT.md). Needs a wildcard host that is NOT under the
+  # platform's registrable domain: a preview's page script could otherwise set
+  # cookies for the parent domain that the platform would receive.
+  preview:
+    enabled: false
+    # https://{preview}.preview.example.org: {preview} stands for one DNS label.
+    origin: ""
+    # The Ingress host that carries them, for example *.preview.example.org.
+    host: ""
+    # Dev-only managed credentials: the backend and the service share the first,
+    # skill-executor and the service the second. Clear both and set
+    # existingSecret (keys HERMES_PREVIEW_SERVICE_SECRET and
+    # HERMES_PREVIEW_EXECUTOR_SECRET, in the release namespace) for production.
+    serviceSecret: "change-me-hermes-preview-service-secret"
+    executorSecret: "change-me-hermes-preview-executor-secret"
+    existingSecret: ""
+    secretRotationToken: ""
+    replicaCount: 1
+    maxConnections: 32
+    idleSeconds: 300
+    recheckSeconds: 30
+    image:
+      repository: aurum-ai-hermes-preview
+      tag: ""
+      pullPolicy: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
   egress:
     # The most a sandbox can ever reach. Organizations choose a mode up to this
     # one: none (platform only), packages (HTTPS to package registries) or

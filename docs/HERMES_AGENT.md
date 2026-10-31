@@ -563,7 +563,13 @@ Each phase is a separate PR behind the flag:
        reaped through a shared process namespace instead of Docker's init;
      - a restart of skill-executor adopts live Pods from their labels; one
        replica only, as sandboxes are tracked in memory.
-     Previews (`hermes-preview`) are not in the chart yet.
+     The chart also deploys the preview service (`hermes.preview`): a Deployment and
+     Service in the release namespace, one Secret for both credentials, a wildcard
+     Ingress rule for the preview origin and an executor ingress policy that lets
+     only the preview service and tool-worker in. `./smoke-test-hermes-k8s.sh` is
+     the acceptance on a disposable k3d cluster: the guard under Pod Security
+     `restricted`, the platform paths, who reaches whom, the preview service, and
+     the runtime end to end with the real image.
 3. **MCP bridge.** Split into two changes:
    - 3a, implemented: `POST /v1/hermes/mcp` with knowledge search, `web.search`,
      `web.read`, image generation and editing; hermes-egress forwards it, and the

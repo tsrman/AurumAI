@@ -48,6 +48,19 @@ spec:
                 name: {{ .Release.Name }}-admin-ui
                 port:
                   number: 3000
+    {{- if and .Values.hermes.preview.enabled .Values.hermes.preview.host }}
+    # Previews at origins of their own: one wildcard host, this service only.
+    - host: {{ .Values.hermes.preview.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-hermes-preview
+                port:
+                  number: 8095
+    {{- end }}
   {{- if .Values.ingress.tls }}
   tls:
     {{- toYaml .Values.ingress.tls | nindent 4 }}

@@ -32,7 +32,7 @@ Detailed fresh verification belongs in the release report and CI.
   node agents create and edit images and receive attachments.
 - Guided workflow authoring with runnable examples, and starter tools
   (`install-platform.sh`, CSV statistics and JSON formatting code skills).
-- Hermes Agent as an opt-in system agent (Docker; Kubernetes sandboxes in progress): an isolated
+- Hermes Agent as an opt-in system agent (Docker Compose and Helm): an isolated
   long-lived sandbox per conversation, organization-chosen network mode, platform
   tools over an MCP bridge, per-user memory, reviewed skills, files in both
   directions, vision, workflow nodes and previews of the apps it runs
@@ -57,9 +57,10 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 
 ## Remaining product and verification work
 
-- Hermes Agent on Kubernetes: the chart deploys the boundary and skill-executor runs the
-  sandboxes (accepted on k3d); the repository's smoke script, the guides and
-  `hermes-preview` in the chart follow.
+- Hermes Agent on other Kubernetes CNIs: the boundary, the sandbox runtime and the preview
+  service are deployed by the chart and accepted on k3d
+  (`smoke-test-hermes-k8s.sh`); other policy controllers, a runtime-class PID limit and
+  a previewed app opened through a real wildcard Ingress remain to be verified.
 - Loop wall-clock budgets; nested/overlapping loop bodies and confirmation nodes
   inside a loop remain outside the current graph contract.
 - Broader runtime/provider/load coverage, with fresh Kubernetes CNI/SSRF acceptance

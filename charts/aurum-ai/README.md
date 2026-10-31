@@ -104,7 +104,9 @@ choose; `internalDestinations` must accompany `internalPackageHosts`. The shared
 private-range exclusions are `web.networkPolicy.excluded*Cidrs`. skill-executor
 runs the sandboxes as Pods in that namespace (`hermes.sandbox.*`): one replica, and a
 `runtimeClassName` for a node PID limit, since Kubernetes has none per Pod. Previews
-(`hermes-preview`) are not in the chart yet.
+(`hermes.preview.enabled`) add the preview service, its Secret and a wildcard Ingress rule
+for `hermes.preview.host`; use a domain outside the platform's own. `smoke-test-hermes-k8s.sh`
+is the acceptance run on a throwaway k3d cluster.
 
 Identity synchronization starts with `identitySync.enabled=true` and admission false.
 Verify signed complete-groups mappers on both clients and worker readiness, then
