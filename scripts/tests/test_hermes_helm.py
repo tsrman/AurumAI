@@ -844,3 +844,18 @@ def test_the_nodes_acceptance_is_disposable_and_machine_independent() -> None:
     for name in re.findall(r'"(hermes-[a-z-]+)"', driver):
         if name.startswith(("hermes-namespace", "hermes-secret", "hermes-egress-", "hermes-network", "hermes-rbac")):
             assert (HELM_CHART / "templates" / f"{name}.yaml").exists(), name
+
+
+def test_the_acceptance_scripts_can_run_on_calico() -> None:
+    installer = ROOT / "scripts" / "install-calico-k3d.sh"
+    assert subprocess.run(["bash", "-n", str(installer)], capture_output=True).returncode == 0
+    assert installer.stat().st_mode & 0o111, "the installer is not executable"
+    text = installer.read_text()
+    # The pool must lie inside k3s's cluster CIDR, and be set before calico-node starts.
+    assert "10.42.0.0/16" in text and "CALICO_IPV4POOL_CIDR" in text
+    for script in (ROOT / "smoke-test-hermes-k8s.sh", ROOT / "scripts" / "hermes-k8s-egress-modes.py"):
+        source = script.read_text()
+        assert "HERMES_K8S_CNI" in source and "install-calico-k3d.sh" in source, script.name
+        # Calico replaces both of k3s's networking pieces.
+        assert "--flannel-backend=none@server:*" in source and "--disable-network-policy@server:*" in source, script.name
+    assert "HERMES_K8S_CNI" in (ROOT / "smoke-test-hermes-k8s-egress.sh").read_text()

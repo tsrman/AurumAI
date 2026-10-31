@@ -21,6 +21,9 @@ CLUSTER = os.environ.get("HERMES_K8S_EGRESS_CLUSTER", "aurum-ai-hermes-egress-sm
 WORK = Path(tempfile.mkdtemp(prefix="egress-modes-"))
 ENV = {**os.environ, "KUBECONFIG": str(WORK / "kubeconfig")}
 HN, PN, MN = "hermes-agents", "platform", "mirrors"
+CNI = os.environ.get("HERMES_K8S_CNI", "flannel")
+if CNI not in ("flannel", "calico"):
+    raise SystemExit("HERMES_K8S_CNI must be flannel or calico")
 SECRET = "change-me-hermes-egress-secret"
 FAILED = 0
 MIRROR_HOST = "mirror.mirrors.svc.cluster.local"
@@ -53,9 +56,15 @@ def setup():
     existing = sh(["k3d", "cluster", "list", "-o", "json"]).stdout
     if f'"name":"{CLUSTER}"' in existing.replace(" ", ""):
         raise SystemExit(f"a cluster named {CLUSTER} already exists; delete it or set HERMES_K8S_EGRESS_CLUSTER")
+    cni_args = []
+    if CNI == "calico":
+        # No flannel and no k3s policy controller: Calico is both, installed below.
+        cni_args = ["--k3s-arg", "--flannel-backend=none@server:*", "--k3s-arg", "--disable-network-policy@server:*"]
     sh(["k3d", "cluster", "create", CLUSTER, "--servers", "1", "--agents", "0", "--no-lb", "--wait",
-        "--k3s-arg", "--disable=traefik@server:0", "--kubeconfig-update-default=false"])
+        "--k3s-arg", "--disable=traefik@server:0", "--kubeconfig-update-default=false", *cni_args])
     (WORK / "kubeconfig").write_text(sh(["k3d", "kubeconfig", "get", CLUSTER]).stdout)
+    if CNI == "calico":
+        sh([str(ROOT / "scripts/install-calico-k3d.sh")])
     kc("wait", "--for=condition=Ready", "node", "--all", "--timeout=120s")
     sh(["k3d", "image", "import", "aurum-ai-web-egress:latest", "aurum-ai-hermes-sandbox:latest", "-c", CLUSTER])
     kc("create", "ns", PN)

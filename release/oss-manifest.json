@@ -160,6 +160,7 @@
     "scripts/hermes-k8s-acceptance.py",
     "scripts/hermes-k8s-egress-modes.py",
     "scripts/hermes-k8s-nodes-limits.py",
+    "scripts/install-calico-k3d.sh",
     "scripts/oss_release/__init__.py",
     "scripts/oss_release/audit.py",
     "scripts/oss_release/docs.py",

@@ -64,9 +64,10 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
   pip and npm, the re-check of open tunnels) and its behaviour on three nodes by
   `smoke-test-hermes-k8s-nodes.sh` (a cold pull, capacity and workspace eviction, a PID
   limit, a lost node). Still to verify:
-  - Other policy controllers (Calico, Cilium and the like): that a sandbox Pod reaches
+  - Other policy controllers (Cilium, cloud CNIs and the like): that a sandbox Pod reaches
     only the guard through its Service address and nothing else, that no DNS escapes, and
-    that the guard's address exclusions hold. Only k3s's built-in controller was checked.
+    that the guard's address exclusions hold. k3s's built-in controller and Calico were
+    checked (`HERMES_K8S_CNI=calico`, boundary, runtime and egress modes, 0 failures).
   - The whole platform on Kubernetes with a real model: a Hermes chat turn through the
     guard to the real backend (session tokens, quota, the MCP bridge, skill drafts, files
     in both directions), not the stand-in.

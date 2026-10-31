@@ -186,7 +186,8 @@ guard and default-deny NetworkPolicies in which a sandbox reaches only the guard
 the Role that lets skill-executor create sandbox Pods. Requirements beyond the base
 chart:
 
-- A CNI that enforces **egress** NetworkPolicy (k3s's built-in controller was checked).
+- A CNI that enforces **egress** NetworkPolicy (k3s's built-in controller and Calico were
+  checked, with the acceptance runs below; others need their own check).
   Without enforcement the boundary does not exist.
 - The `aurum-ai-hermes-sandbox` image (about 2.5 GB) in your registry, and its pull
   secret in the Hermes namespace (`skillSandbox.imagePullSecrets` names it).
@@ -213,7 +214,8 @@ adds the preview service, its secrets and a wildcard Ingress rule for it. Use a 
 that is not the platform's and not under it (see the
 [security model](../reference/security.md#previews)), and terminate a wildcard certificate
 at the Ingress. The [Hermes guide](hermes-agent.md#set-it-up) covers the rest, and
-`./smoke-test-hermes-k8s.sh` is the acceptance run on a disposable k3d cluster.
+`./smoke-test-hermes-k8s.sh` is the acceptance run on a disposable k3d cluster
+(`HERMES_K8S_CNI=calico` runs it on Calico).
 
 ## Air-gapped installation
 
