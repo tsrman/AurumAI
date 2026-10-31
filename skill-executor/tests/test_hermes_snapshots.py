@@ -784,3 +784,14 @@ def test_a_preview_stream_carries_binary_frames_both_ways_and_refuses_low_ports(
         with client.websocket_connect(f"/hermes/sandboxes/{SESSION}/connect?port=80", headers=auth) as socket:
             socket.receive_bytes()
     assert opened == [(SESSION, 8899)]
+
+
+def test_the_server_can_serve_the_preview_streams_websocket_route() -> None:
+    """The route works under Starlette's test client without uvicorn; served
+    for real, uvicorn needs a WebSocket implementation or answers it 404."""
+    from uvicorn.config import Config
+
+    config = Config(app="src.main:app", ws="auto")
+    config.load()
+
+    assert config.ws_protocol_class is not None

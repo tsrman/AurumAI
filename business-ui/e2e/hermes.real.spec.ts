@@ -35,6 +35,7 @@ import {
  */
 const ENABLED = process.env.E2E_HERMES_UI === "true";
 const MODEL = process.env.E2E_HERMES_MODEL || "gpt-4o-mini";
+const BUSINESS_API = process.env.E2E_BUSINESS_BACKEND_URL || "http://localhost:8000";
 // A sandbox is created, or restored, on the first turn of a conversation.
 const TURN_TIMEOUT = 240_000;
 const ask = (page: Parameters<typeof askWithin>[0], text: string, expected: string | RegExp) =>
@@ -219,6 +220,53 @@ test.describe("Hermes Agent: chat, questions, memory and skill drafts in the bro
       for (const entry of ["webapp/app.py", "webapp/README.md"]) {
         expect(zipped.includes(Buffer.from(entry)), entry).toBe(true);
       }
+
+      // The member opens the running app at its own origin, in a new tab; the
+      // ticket leaves the address bar, and nobody else gets in.
+      await ask(member, "HERMES_PREVIEW", "HERMES_PREVIEW_DONE");
+      const running = member.getByRole("group", { name: "Running apps" }).last();
+      await expect(running).toContainText("Port 8898");
+      const opening = memberContext.waitForEvent("page");
+      await running.getByRole("button", { name: "Open prototype" }).click();
+      const preview = await opening;
+      await preview.waitForURL(/^http:\/\/[0-9a-f]{32}\.preview\.localhost:8095\/$/u, { timeout: 30_000 });
+      await preview.getByRole("button", { name: "Say hello" }).click({ timeout: 30_000 });
+      await expect(preview.locator("#out")).toHaveText("Hello from the API", { timeout: 30_000 });
+      const previewOrigin = new URL(preview.url()).origin;
+      await preview.close();
+
+      const strangerContext = await browser.newContext();
+      contexts.push(strangerContext);
+      const stranger = await strangerContext.newPage();
+      await stranger.goto(`${previewOrigin}/`, { timeout: 30_000 });
+      await expect(stranger.getByRole("heading")).toHaveText("This preview is not available", { timeout: 30_000 });
+      // A ticket opens once: the first browser gets in, the next one does not.
+      const previewId = new URL(previewOrigin).hostname.split(".")[0].replace(
+        /^(.{8})(.{4})(.{4})(.{4})(.{12})$/u,
+        "$1-$2-$3-$4-$5"
+      );
+      const ticketUrl = await member.evaluate(
+        async ([api, id]) => {
+          const keycloak = (window as Window & { keycloak?: { token?: string } }).keycloak;
+          const headers = { Authorization: `Bearer ${keycloak?.token}` };
+          // The conversation in use is the member's most recent one.
+          const listed = (await (await fetch(`${api}/v1/conversations?limit=1`, { headers })).json()) as {
+            data: { id: string }[];
+          };
+          const response = await fetch(`${api}/v1/conversations/${listed.data[0].id}/previews/${id}/ticket`, {
+            method: "POST",
+            headers,
+          });
+          return ((await response.json()) as { url: string }).url;
+        },
+        [BUSINESS_API, previewId]
+      );
+      await stranger.goto(ticketUrl, { timeout: 30_000 });
+      await expect(stranger.getByRole("button", { name: "Say hello" })).toBeVisible({ timeout: 30_000 });
+      const late = await (await browser.newContext()).newPage();
+      await late.goto(ticketUrl, { timeout: 30_000 });
+      await expect(late.getByRole("heading")).toHaveText("This preview is not available", { timeout: 30_000 });
+      await late.context().close();
 
       // An agent definition can be a Hermes Agent, for workflow nodes, on the
       // organization's Hermes model and without tools of its own.

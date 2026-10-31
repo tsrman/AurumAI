@@ -302,6 +302,13 @@
       "download": "Download {name}",
       "failed": "The file could not be downloaded.",
       "attachedLabel": "Your files"
+    },
+    "previews": {
+      "label": "Running apps",
+      "title": "Prototype in Hermes's sandbox",
+      "hint": "Port {port}, opens in a new tab while the session lasts",
+      "open": "Open prototype",
+      "failed": "The prototype is no longer running. Ask Hermes to start it again."
     }
   },
   "settings": {

@@ -40,10 +40,10 @@ done
 REAL_LLM="${HERMES_E2E_REAL_LLM:-false}"
 if [[ "$REAL_LLM" == true ]]; then
   # The stack's own gateway; no deterministic overlay.
-  E2E=(docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile hermes --profile skills-exec)
+  E2E=(docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile hermes --profile hermes-preview --profile skills-exec)
   GATEWAY=()
 else
-  E2E=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml -f docker-compose.hermes.yml --profile hermes --profile skills-exec)
+  E2E=(docker compose -f docker-compose.yml -f docker-compose.e2e.yml -f docker-compose.hermes.yml --profile hermes --profile hermes-preview --profile skills-exec)
   GATEWAY=(test-gateway)
 fi
 # Images on: the member's pictures reach a model marked as taking them.
@@ -51,6 +51,12 @@ export HERMES_ENABLED=true USER_QUESTIONS_ENABLED=true HERMES_EGRESS_MAX_MODE=pa
 # Shared by the backend and hermes-egress for this run only.
 HERMES_EGRESS_SERVICE_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 export HERMES_EGRESS_SERVICE_SECRET
+# Previews of the apps Hermes runs, at *.preview.localhost, which browsers
+# resolve to this machine; the secrets live for this run only.
+export HERMES_PREVIEW_ENABLED=true HERMES_PREVIEW_ORIGIN='http://{preview}.preview.localhost:8095'
+HERMES_PREVIEW_SERVICE_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+HERMES_PREVIEW_EXECUTOR_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+export HERMES_PREVIEW_SERVICE_SECRET HERMES_PREVIEW_EXECUTOR_SECRET
 
 remove_sandboxes() {
   for name in $(docker ps -aq --filter label=aurum-ai.hermes-sandbox=1); do docker rm -f "$name" >/dev/null 2>&1 || true; done
@@ -69,8 +75,8 @@ restore() {
   fi
   log "removing the Hermes sandboxes and services, restoring the ordinary configuration"
   remove_sandboxes
-  "${E2E[@]}" rm -sf "${GATEWAY[@]}" hermes-egress hermes-egress-guard >/dev/null 2>&1 || true
-  HERMES_ENABLED=false USER_QUESTIONS_ENABLED="${ORIGINAL_USER_QUESTIONS_ENABLED:-false}" \
+  "${E2E[@]}" rm -sf "${GATEWAY[@]}" hermes-egress hermes-egress-guard hermes-preview >/dev/null 2>&1 || true
+  HERMES_ENABLED=false HERMES_PREVIEW_ENABLED=false USER_QUESTIONS_ENABLED="${ORIGINAL_USER_QUESTIONS_ENABLED:-false}" \
     IMAGES_ENABLED="${ORIGINAL_IMAGES_ENABLED:-false}" \
     docker compose -f docker-compose.yml --profile skills-exec up -d --no-build --force-recreate \
     backend backend-admin tool-worker skill-executor >/dev/null 2>&1 || true
@@ -92,7 +98,7 @@ wait_for() {
 
 log "building the runner, the Hermes sandbox, the services and both UIs from this checkout"
 "${E2E[@]}" --profile build build runner hermes-sandbox
-"${E2E[@]}" build backend backend-admin "${GATEWAY[@]}" frontend admin-ui tool-worker skill-executor hermes-egress-guard
+"${E2E[@]}" build backend backend-admin "${GATEWAY[@]}" frontend admin-ui tool-worker skill-executor hermes-egress-guard hermes-preview
 # Unbound pool runners outlive a backend restart and would keep serving the
 # previous runner image; only unbound ones are removed, bound conversations
 # keep their runner.
@@ -104,12 +110,13 @@ fi
 remove_sandboxes
 log "starting the services with Hermes enabled (real model: $REAL_LLM)"
 "${E2E[@]}" up -d --no-build --force-recreate \
-  "${GATEWAY[@]}" backend backend-admin frontend admin-ui tool-worker skill-executor hermes-egress-guard hermes-egress
+  "${GATEWAY[@]}" backend backend-admin frontend admin-ui tool-worker skill-executor hermes-egress-guard hermes-egress hermes-preview
 
 wait_for "business backend" "http://localhost:8000/health"
 wait_for "admin backend" "http://localhost:8001/health"
 wait_for "Business UI" "http://localhost:3000/login"
 wait_for "Admin UI" "http://localhost:3100/login"
+wait_for "preview service" "http://localhost:8095/health"
 
 log "running the browser acceptance"
 (

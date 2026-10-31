@@ -229,3 +229,36 @@ async def test_an_upgraded_connection_is_spliced_and_cut_once_the_preview_closes
     assert head.startswith(b"HTTP/1.1 101")
     assert echoed == b"echo:frame"
     assert closed == b""
+
+
+async def test_one_connection_carries_the_entry_and_the_requests_after_it(stack) -> None:
+    """A browser keeps its connection after the redirect: the next request on
+    it reaches the app."""
+    port, _, app = stack
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    client = h11.Connection(h11.CLIENT)
+
+    async def get(path: str, cookie: str = "") -> tuple[int, bytes]:
+        headers = [("host", f"{LABEL}.preview.localhost:8095")] + ([("cookie", cookie)] if cookie else [])
+        writer.write(client.send(h11.Request(method="GET", target=path, headers=headers)) + client.send(h11.EndOfMessage()))
+        status, body = 0, b""
+        while True:
+            event = client.next_event()
+            if event is h11.NEED_DATA:
+                client.receive_data(await reader.read(65536))
+            elif isinstance(event, h11.Response):
+                status = event.status_code
+            elif isinstance(event, h11.Data):
+                body += event.data
+            elif isinstance(event, h11.EndOfMessage):
+                client.start_next_cycle()
+                return status, body
+
+    entered, _ = await get("/__aurum/enter?ticket=good-ticket")
+    first, body = await get("/one", f"{COOKIE}=grant-1")
+    second, _ = await get("/two", f"{COOKIE}=grant-1")
+    writer.close()
+
+    assert (entered, first, second) == (303, 200, 200) and json.loads(body) == {"path": "/one"}
+    # The app's connection is reused across the requests.
+    assert app.streams == 1

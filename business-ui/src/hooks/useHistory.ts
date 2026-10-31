@@ -10,6 +10,7 @@ import { useDeleteConversation } from "@/hooks/useDeleteConversation";
 import { getConversation, toolCallsFromHistory } from "@/lib/chat-api";
 import { loadSourcesForMessage } from "@/lib/web-sources-api";
 import { filesFrom } from "@/lib/files-api";
+import { previewsFrom } from "@/lib/previews-api";
 import { imageIdsFrom } from "@/lib/images-api";
 import { formatHistoryTime, historyBucket } from "@/lib/date";
 import { useLocale, useTranslations } from "next-intl";
@@ -64,6 +65,7 @@ function mapMessageToUIMessage(
     sources,
     images: imageIdsFrom(msg.imageIds),
     files: filesFrom(msg.files),
+    previews: previewsFrom(msg.previews),
     thinkingShown: "",
     contentShown: msg.content ?? "",
     phase: "done",

@@ -1,4 +1,5 @@
 import type { AttachedFile } from "@/lib/files-api";
+import type { SharedPreview } from "@/lib/previews-api";
 
 export interface Agent {
   id: string;
@@ -94,6 +95,8 @@ export interface AssistantMessage {
   images?: string[];
   // Files this answer's agent attached; offered for download under it.
   files?: AttachedFile[];
+  // Apps this answer's Hermes Agent shared from its sandbox.
+  previews?: SharedPreview[];
   sql?: string;
   createdAt?: string;
 }

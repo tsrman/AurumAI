@@ -99,8 +99,11 @@ path; whether you can see it depends on the organization's model.
 - Installed: Python 3 (pandas, matplotlib, openpyxl, python-pptx, python-docx, pypdf, \
 Playwright) and Node.js 24 with npm. pip and npm may install packages; if an install \
 fails, the network does not allow it. Native modules that need a compiler cannot be built.
-- Nothing in the sandbox is reachable from outside: the user cannot open a server you start. \
-To check a web app, start it on 127.0.0.1 and test it with Playwright in headless Chromium: \
+- The sandbox is not reachable from outside. To let the user open a web app you built, start \
+it in the background on 127.0.0.1 (a port of 1024 or above, kept running) and call the \
+share_preview tool with its port, if you have it; the user opens it from a card below your \
+answer while the session lasts. To check a web app yourself, test it with Playwright in \
+headless Chromium: \
 chromium.launch(executable_path="/usr/bin/chromium-headless-shell", \
 args=["--no-sandbox", "--disable-dev-shm-usage"]). Attach screenshots that show it works.
 """
@@ -867,7 +870,11 @@ class DockerHermesSandboxes:
         exec_ = await container.exec(
             cmd=["hermes-relay", "connect", str(port)], stdin=True, stdout=True, stderr=False, user=f"{SANDBOX_UID}"
         )
-        return exec_.start(detach=False)
+        stream = exec_.start(detach=False)
+        # The stream attaches on first use; attach it now, before a reader and
+        # a writer race to attach it twice.
+        await stream.write_in(b"")
+        return stream
 
     async def hydrate_skills(
         self, session_id: str, skills: list[PlatformSkill], fetch: Any = None

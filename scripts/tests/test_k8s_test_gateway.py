@@ -1437,3 +1437,26 @@ def test_hermes_vision_marker_looks_at_the_logo_and_reports_what_arrived() -> No
         },
     )
     assert "HERMES_VISION_DONE: VISION_SEEN:1" in answered.text
+
+
+def test_hermes_preview_marker_starts_the_app_in_the_background_and_shares_it() -> None:
+    from fastapi.testclient import TestClient
+
+    gateway = _load_gateway()
+    client = TestClient(gateway.app)
+    tools = [{"type": "function", "function": {"name": name}} for name in ("terminal", "mcp__aurum__share_preview")]
+    messages: list[dict] = [{"role": "user", "content": "HERMES_PREVIEW"}]
+    calls = []
+    for step in range(2):
+        response = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+        [call] = json.loads(response.text.splitlines()[0][6:])["choices"][0]["delta"]["tool_calls"]
+        calls.append((call["function"]["name"], json.loads(call["function"]["arguments"])))
+        messages += [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": call["id"]}]},
+            {"role": "tool", "tool_call_id": call["id"], "content": f"result {step}"},
+        ]
+
+    assert calls[0][1]["background"] is True and "app.serve(8898)" in calls[0][1]["command"]
+    assert calls[1] == ("mcp__aurum__share_preview", {"port": 8898})
+    done = client.post("/v1/chat/completions", json={"messages": messages, "tools": tools})
+    assert "HERMES_PREVIEW_DONE: result 1" in done.text
