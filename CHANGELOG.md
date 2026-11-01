@@ -1,34 +1,46 @@
 # Changelog
 
-## Hermes Agent on Kubernetes
+## v0.0.4 (2026-11-01)
 
-The Helm chart can deploy the Hermes Agent boundary (`hermes.enabled`, default off):
-a restricted namespace, the `hermes-egress` guard, default-deny NetworkPolicies in
-which a sandbox reaches only the guard, and skill-executor RBAC. skill-executor runs
-the sandboxes as Pods there (`KubernetesHermesSandboxes`), sharing the lifecycle
-with the Docker runtime: files and previews through `pods/exec`, snapshots of the
-running Pod, adoption by labels. `hermes.preview` adds the preview service with a wildcard
-Ingress rule, and `./smoke-test-hermes-k8s.sh` accepts the whole on a disposable k3d cluster;
-`./smoke-test-hermes-k8s-egress.sh` checks the egress modes against the real internet.
-An internal package mirror in the cluster is allowed by namespace and Pod labels
-(`hermes.egress.internalDestinations`), not by an address.
-A sandbox on a lost node is started anew from its last snapshot by the next `create`, a Pod
-that stays Terminating is deleted by force, and `create` waits for a terminating Pod of the
-same name; `./smoke-test-hermes-k8s-nodes.sh` accepts the multi-node behaviour.
-`HERMES_K8S_CNI=calico` runs the acceptance scripts on Calico, which passes them like k3s's own
-networking. `K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh` runs Hermes turns on the whole
-platform, with a real model if given a gateway.
+### Hermes Agent on Kubernetes
 
-Fixed: the chart rendered the image upload limit as `1.048576e+07`, which the backend could not
-parse, so a release with the default values did not start on Kubernetes. The preview service
-answered a WebSocket handshake without `Connection: Upgrade`, which browsers and proxies refuse,
-so WebSockets of a previewed app did not open.
+The Helm chart deploys Hermes Agent (`hermes.enabled`, default off); skill-executor runs the
+sandboxes as Pods (`KubernetesHermesSandboxes`), sharing the lifecycle with the Docker runtime.
 
-## Documentation
+- **Boundary.** A restricted namespace, the `hermes-egress` guard (the proxy, without nftables:
+  NetworkPolicy is the packet filter) and default-deny NetworkPolicies in which a sandbox reaches
+  only the guard, with no DNS of its own. Egress modes `none`, `packages` and `public` bound by
+  `hermes.egress.maxMode`. An internal package mirror is allowed by `cidr` or by namespace and Pod
+  labels (`hermes.egress.internalDestinations`), never by a Service address.
+- **Runtime.** One Pod per session; files, snapshots and the preview byte pipe go through
+  `pods/exec`; an idle sandbox is snapshotted from its running Pod and removed, and a restart of
+  skill-executor adopts live Pods by label. Capacity and workspace limits (a soft limit, and the
+  kubelet's eviction as a backstop), and a RuntimeClass for a node PID limit.
+- **Lost nodes.** The next `create` for a sandbox whose node was lost starts the session anew from
+  its last snapshot, a Pod stuck Terminating is deleted by force, and `create` waits for a
+  terminating Pod of the same name.
+- **Previews.** `hermes.preview` deploys the preview service with a wildcard Ingress rule.
+- **Acceptance.** `smoke-test-hermes-k8s.sh` (the boundary and the runtime on k3d, also on Calico with
+  `HERMES_K8S_CNI=calico`), `smoke-test-hermes-k8s-egress.sh` (the egress modes against the real
+  internet), `smoke-test-hermes-k8s-nodes.sh` (three nodes: a cold pull, eviction, a PID limit, a lost
+  node) and `K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh` (Hermes on the whole platform over the
+  Compose data plane: files in and out, the MCP bridge, memory, skill drafts, snapshot and restore,
+  previews over TLS through the Ingress, and one turn on a real model).
+
+### Fixed
+
+- The chart rendered the image upload limit as `1.048576e+07`, which the backend could not parse, so a
+  release with the default values did not start on Kubernetes.
+- The preview service answered a WebSocket handshake without `Connection: Upgrade`, which browsers
+  and proxies refuse, so WebSockets of a previewed app did not open.
+- A flaky preview stream test in skill-executor.
+
+### Documentation
 
 The documentation gains an [index by audience](docs/README.md), user, administrator,
 Hermes Agent, deployment and operations guides, an API reference and a security
-model. Stale Hermes and archive statements in the existing documents are corrected.
+model, and covers Hermes on Kubernetes. Stale Hermes and archive statements in the
+existing documents are corrected. It is published at https://tsrman.github.io/aurumai/.
 
 ## Initial public source preparation
 
