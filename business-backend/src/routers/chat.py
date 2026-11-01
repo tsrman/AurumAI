@@ -43,6 +43,14 @@ from src.schemas.common import ApiResponse, Meta, Pagination
 from src.schemas.document import DocumentResponse
 from src.core.temporal import get_temporal_client
 from src.services.streaming import sse_event, create_streaming_response
+from src.services.agent_authorization import (
+    AgentDefinitionNotFound,
+    AgentDependencyAccessDenied,
+    ChatAgentTurn,
+    ChatAgentUnsupported,
+    agent_authorization_service,
+)
+from src.repositories.agent_definition_repository import agent_definition_repository
 from src.services.chat_service import chat_service
 from src.services.completion_stream import (
     parse_provider_usage,
@@ -143,6 +151,7 @@ def _conv_response(
         createdAt=conv.created_at.isoformat(),
         temperature=resolve_temperature(conv.temperature, org_default_temperature),
         agent="hermes" if hermes else None,
+        agentDefinitionId=str(conv.agent_definition_id) if conv.agent_definition_id else None,
     )
 
 
@@ -554,8 +563,59 @@ async def chat_agents(
     return ApiResponse(data=agents, meta=_meta())
 
 
+async def _chat_agent(session: AsyncSession, user: UserInfo, agent_id: uuid.UUID) -> ChatAgentTurn:
+    """The agent for this turn, or the refusal a user gets for one they may not use."""
+    try:
+        return await agent_authorization_service.require_chat_agent(
+            session, authorization_subject(user), agent_id
+        )
+    except AgentDefinitionNotFound:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found") from None
+    except AgentDependencyAccessDenied:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Agent dependencies are not accessible"
+        ) from None
+    except ChatAgentUnsupported:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="This agent cannot be used in chat"
+        ) from None
+
+
+class ChatAgentDefinition(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    modelId: str
+
+
+@router.get("/chat/agent-definitions", response_model=ApiResponse[list[ChatAgentDefinition]])
+async def chat_agent_definitions(
+    user: UserInfo = Depends(require_capability(Capability.CHAT_SEND)),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[list[ChatAgentDefinition]]:
+    """The administrator's agents the composer offers: those a chat turn would accept now."""
+    subject = authorization_subject(user)
+    offered: list[ChatAgentDefinition] = []
+    for agent in await agent_definition_repository.list_accessible(session, subject):
+        if agent.kind != "agent":
+            continue
+        try:
+            await agent_authorization_service.require_executable(session, subject, agent.id)
+            await ensure_model_allowed(
+                session, user.org_id, agent.model_id, user_id=user.user_id, role=user.role
+            )
+        except (AgentDefinitionNotFound, AgentDependencyAccessDenied, HTTPException):
+            continue
+        offered.append(
+            ChatAgentDefinition(
+                id=str(agent.id), name=agent.name, description=agent.description, modelId=agent.model_id
+            )
+        )
+    return ApiResponse(data=offered, meta=_meta())
+
+
 async def _require_sendable_uploads(
-    session: AsyncSession, request: ChatRequest, conv: "Conversation"
+    session: AsyncSession, request: ChatRequest, conv: "Conversation", model: str
 ) -> None:
     if not settings.IMAGES_ENABLED:
         raise HTTPException(
@@ -564,7 +624,7 @@ async def _require_sendable_uploads(
     # A workflow's agents use their own models; the chat proxy inlines the
     # images only for those marked as vision models.
     if request.workflow_id is None and not await vision_enabled(
-        session, conv.org_id, request.model
+        session, conv.org_id, model
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -608,6 +668,13 @@ async def chat_stream(
     upload_ids = user_message.image_ids
     hermes = request.agent == "hermes"
     turn_model = request.model
+    chat_agent: ChatAgentTurn | None = None
+    if request.agent_definition_id is not None:
+        chat_agent = await _chat_agent(session, user, request.agent_definition_id)
+        turn_model = chat_agent.model_id
+    wanted_agent_id = chat_agent.id if chat_agent else None
+    if conv.agent_definition_id != wanted_agent_id:
+        conv.agent_definition_id = wanted_agent_id
     if hermes:
         turn_model = await _hermes_model(session, user)
         if upload_ids:
@@ -616,7 +683,7 @@ async def chat_stream(
                 detail="Hermes does not take images yet",
             )
     if upload_ids:
-        await _require_sendable_uploads(session, request, conv)
+        await _require_sendable_uploads(session, request, conv, turn_model)
     file_ids = user_message.file_ids
     if file_ids:
         if not hermes:
@@ -634,7 +701,7 @@ async def chat_stream(
 
     effective_workflow_id = request.workflow_id
     auto_routed = False
-    if effective_workflow_id is None and not hermes:
+    if effective_workflow_id is None and not hermes and chat_agent is None:
         effective_workflow_id = await _maybe_classify_workflow(session, quota, user, request)
         auto_routed = effective_workflow_id is not None
 
@@ -864,10 +931,24 @@ async def chat_stream(
             # Hermes reaches web, images and questions through its own bridge.
             # Hermes asks through its clarify tool, as the turn's questions.
             "user_questions_enabled": settings.USER_QUESTIONS_ENABLED,
-            "web_tools_enabled": web_tools_enabled and not hermes,
-            "image_generation_enabled": image_generation_enabled and not hermes,
-            "image_editing_enabled": image_editing_enabled and not hermes,
+            # An agent has the tools it was given, no more.
+            "web_tools_enabled": web_tools_enabled and not hermes and chat_agent is None,
+            "image_generation_enabled": image_generation_enabled and not hermes and chat_agent is None,
+            "image_editing_enabled": image_editing_enabled and not hermes and chat_agent is None,
         }
+        if chat_agent is not None:
+            signal_payload["agent"] = {
+                "id": str(chat_agent.id),
+                "name": chat_agent.name,
+                "system_prompt": chat_agent.system_prompt,
+                "allowed_skill_ids": chat_agent.allowed_skill_ids,
+                "knowledge_bases": chat_agent.knowledge_bases,
+            }
+            # The conversation's own setting, then the agent's, then the
+            # organization's (which the runner resolves when none is sent).
+            temperature = conv.temperature if conv.temperature is not None else chat_agent.temperature
+            if temperature is not None:
+                signal_payload["temperature"] = temperature
         if hermes:
             signal_payload["hermes"] = True
         if recent_images:

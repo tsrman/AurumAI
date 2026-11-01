@@ -13,9 +13,12 @@ import {
   models as mockModels,
   seedConversations,
 } from "@/lib/mock-data";
+import { isRealMode } from "@/lib/real-mode";
 import { useAuth } from "@/providers/AuthProvider";
+import { useChatAgentDefinitions } from "@/hooks/useChatAgentDefinitions";
 import { useModels } from "@/hooks/useModels";
 import { useSettings } from "@/hooks/useSettings";
+import type { ChatAgentDefinition } from "@/lib/chat-api";
 import type {
   Agent,
   Conversation,
@@ -57,6 +60,32 @@ function activeConversationStorageKey(
   return `${ACTIVE_CONVERSATION_STORAGE_PREFIX}:${organizationId ?? "no-org"}:${userId}`;
 }
 
+const AGENT_BADGE_COLORS = ["amber", "green", "blue", "violet", "rose"] as const;
+
+/** An administrator's agent as a sidebar and picker entry. */
+function agentFromDefinition(definition: ChatAgentDefinition): Agent {
+  const initials = definition.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+  const hash = [...definition.id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return {
+    id: definition.id,
+    name: definition.name,
+    badge: initials || "AG",
+    badgeColor: AGENT_BADGE_COLORS[hash % AGENT_BADGE_COLORS.length],
+    kind: "definition",
+    kindLabel: definition.modelId,
+    description: definition.description ?? "",
+    capabilities: [],
+    suggestions: [],
+    model: definition.modelId,
+  };
+}
+
 export function AppShellProvider({
   children,
   initialState,
@@ -68,7 +97,6 @@ export function AppShellProvider({
   }>;
 }) {
   const agentsT = useTranslations("agents");
-  const agents = useMemo(() => localizeAgents(agentsT), [agentsT]);
   const [sideMini, setSideMini] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState(
     initialState?.activeAgentId ?? "general"
@@ -84,6 +112,15 @@ export function AppShellProvider({
   );
 
   const { isAuthenticated, user } = useAuth();
+  // Signed in, the sidebar offers the ordinary chat and the administrator's
+  // agents; the demo catalog is only for the unauthenticated mock mode.
+  const backendSession = isAuthenticated && isRealMode();
+  const { data: agentDefinitions } = useChatAgentDefinitions({ enabled: backendSession });
+  const agents = useMemo(() => {
+    const builtIn = localizeAgents(agentsT);
+    if (!backendSession) return builtIn;
+    return [builtIn[0], ...(agentDefinitions ?? []).map(agentFromDefinition)];
+  }, [agentsT, backendSession, agentDefinitions]);
   const activeConversationStorage = useMemo(
     () =>
       isAuthenticated && user
@@ -129,6 +166,14 @@ export function AppShellProvider({
     },
     [activeConversationStorage]
   );
+  // Opening a conversation shows the agent it last ran on; "New chat" keeps
+  // whatever is chosen.
+  const openAgentId = conversations.find((c) => c.id === activeConversationId)?.agentDefinitionId;
+  const [restoredFor, setRestoredFor] = useState<string | null>(null);
+  if (activeConversationId && openAgentId !== undefined && restoredFor !== activeConversationId) {
+    setRestoredFor(activeConversationId);
+    setActiveAgentId(openAgentId ?? "general");
+  }
   const { data: modelsData } = useModels({ enabled: isAuthenticated });
   const { data: settingsData, isPending: settingsPending } = useSettings({
     enabled: isAuthenticated,
@@ -207,6 +252,11 @@ export function AppShellProvider({
     }
   }, [modelStorageKey]);
 
+  // An agent that was archived or revoked falls back to the ordinary chat.
+  const effectiveAgentId = [...agents, ...myAgents].some((agent) => agent.id === activeAgentId)
+    ? activeAgentId
+    : "general";
+
   const toggleSide = useCallback(() => setSideMini((p) => !p), []);
 
   const addMyAgent = useCallback((agent: Agent) => {
@@ -219,7 +269,7 @@ export function AppShellProvider({
       toggleSide,
       agents,
       myAgents,
-      activeAgentId,
+      activeAgentId: effectiveAgentId,
       setActiveAgentId,
       addMyAgent,
       conversations,
@@ -235,7 +285,7 @@ export function AppShellProvider({
     [
       sideMini,
       agents,
-      activeAgentId,
+      effectiveAgentId,
       myAgents,
       conversations,
       activeConversationId,

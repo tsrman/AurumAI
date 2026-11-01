@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAppShell } from "@/hooks/useAppShell";
-import { getRuntimeConfig } from "@/lib/runtime-config";
+import { isRealMode } from "@/lib/real-mode";
 import {
   cancelChat,
   createConversation as createBackendConversation,
@@ -113,14 +113,6 @@ function resetAssistantView(msg: AssistantMessageView): AssistantMessageView {
     images: [],
     tools: msg.tools.map((tool) => ({ ...tool, state: "wait" })),
   };
-}
-
-function isRealMode(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    !!window.keycloak?.token &&
-    !!getRuntimeConfig().apiUrl
-  );
 }
 
 function backendMessageToUIMessage(
@@ -1031,6 +1023,10 @@ export function useChat(): UseChatReturn {
           options: { temperature: 0.7, max_tokens: 4096 },
           workflowId,
           agent,
+          // One of an agent, a system agent or a workflow runs a turn.
+          ...(!workflowId && !agent && activeAgent.kind === "definition"
+            ? { agentDefinitionId: activeAgent.id }
+            : {}),
           onOpen: () => {
             void queryClient.invalidateQueries({
               queryKey: questionKeys.list(convId),
@@ -1211,6 +1207,9 @@ export function useChat(): UseChatReturn {
         options: { temperature: 0.7, max_tokens: 4096 },
         // A conversation on Hermes Agent is answered again by Hermes.
         ...(activeConversation.agent === "hermes" ? { agent: "hermes" as const } : {}),
+        ...(activeConversation.agentDefinitionId
+          ? { agentDefinitionId: activeConversation.agentDefinitionId }
+          : {}),
         onOpen: () => {
           void queryClient.invalidateQueries({
             queryKey: questionKeys.list(activeConversationId),
@@ -1353,6 +1352,7 @@ export function useChat(): UseChatReturn {
             messageCount: messages.length + survivingWorkflowMessages.length,
             // The composer keeps the conversation's agent chosen after a reload.
             agent: conversation.agent ?? null,
+            agentDefinitionId: conversation.agentDefinitionId ?? null,
           };
           if (existing) {
             return prev.map((c) => (c.id === conversation.id ? updated : c));

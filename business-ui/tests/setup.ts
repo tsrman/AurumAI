@@ -37,3 +37,10 @@ vi.mock("next-intl", async (importOriginal) => {
     useFormatter: () => actual.createFormatter({ locale: "en", timeZone: "UTC" }),
   };
 });
+
+// The shell asks the backend for the administrator's agents; tests that do not
+// care render it without a QueryClient, so the list is empty unless a test
+// mocks the hook itself.
+vi.mock("@/hooks/useChatAgentDefinitions", () => ({
+  useChatAgentDefinitions: () => ({ data: undefined }),
+}));

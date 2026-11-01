@@ -37,6 +37,8 @@ class ConversationResponse(BaseModel):
     # The agent the conversation runs on, so the composer keeps it chosen:
     # "hermes" once a Hermes Agent session was opened for it.
     agent: Optional[Literal["hermes"]] = None
+    # The administrator's agent the conversation last ran on (None for plain chat).
+    agentDefinitionId: Optional[str] = None
 
 
 class AttachedFile(BaseModel):

@@ -135,6 +135,7 @@ export function useHistory(options?: { limit?: number }): UseHistoryReturn {
         status: conv.status,
         messageCount: conv.messageCount,
         agent: conv.agent ?? null,
+        agentDefinitionId: conv.agentDefinitionId ?? null,
       });
       map.set(dateKey, list);
     }
@@ -168,6 +169,7 @@ export function useHistory(options?: { limit?: number }): UseHistoryReturn {
         status: conversation.status,
         messageCount: messages.length,
         agent: conversation.agent ?? null,
+        agentDefinitionId: conversation.agentDefinitionId ?? null,
       };
 
       setConversations((prev) => {

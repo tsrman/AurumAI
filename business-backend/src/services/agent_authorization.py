@@ -31,6 +31,26 @@ class AgentDependencyAccessDenied(Exception):
     agent_id: UUID
 
 
+@dataclass(frozen=True, slots=True)
+class ChatAgentUnsupported(Exception):
+    """The agent cannot run a chat turn (Hermes-kind agents are workflow nodes only)."""
+
+    kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChatAgentTurn:
+    """What a chat turn takes from an agent, resolved fresh for each turn."""
+
+    id: UUID
+    name: str
+    model_id: str
+    system_prompt: str
+    temperature: float | None
+    allowed_skill_ids: list[str]
+    knowledge_bases: list[dict[str, str]]
+
+
 class AgentAuthorizationService:
     def __init__(
         self,
@@ -205,6 +225,37 @@ class AgentAuthorizationService:
             knowledge_base_ids=agent.knowledge_base_ids,
         )
         return agent
+
+    async def require_chat_agent(
+        self,
+        session: AsyncSession,
+        subject: AuthorizationSubject,
+        agent_id: UUID,
+    ) -> ChatAgentTurn:
+        """The agent a user may chat with now: granted, active, its dependencies accessible."""
+        agent = await self.require_executable(session, subject, agent_id)
+        if agent.kind != "agent":
+            raise ChatAgentUnsupported(agent.kind)
+        bases = {}
+        if agent.knowledge_base_ids:
+            rows = await session.execute(
+                select(KnowledgeBase.id, KnowledgeBase.name).where(
+                    KnowledgeBase.org_id == subject.org_id,
+                    KnowledgeBase.id.in_(agent.knowledge_base_ids),
+                )
+            )
+            bases = {row.id: row.name for row in rows}
+        return ChatAgentTurn(
+            id=agent.id,
+            name=agent.name,
+            model_id=agent.model_id,
+            system_prompt=agent.system_prompt,
+            temperature=agent.temperature,
+            allowed_skill_ids=[str(item) for item in agent.skill_ids],
+            knowledge_bases=[
+                {"id": str(base_id), "name": bases[base_id]} for base_id in agent.knowledge_base_ids if base_id in bases
+            ],
+        )
 
 
 agent_authorization_service = AgentAuthorizationService()

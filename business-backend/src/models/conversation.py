@@ -33,3 +33,23 @@ class Conversation(OrgScopedModel):
     token_count_out: Mapped[int | None] = mapped_column(BigInteger, default=0)
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), default=0)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def agent_definition_id(self) -> uuid.UUID | None:
+        """The administrator's agent the conversation last ran on, so the composer keeps it
+        chosen. Kept in `extra` (no new column, so the archive format is untouched); a stale id
+        is harmless, the agent is resolved afresh on every turn."""
+        raw = (self.extra or {}).get("agent_definition_id")
+        try:
+            return uuid.UUID(str(raw)) if raw else None
+        except ValueError:
+            return None
+
+    @agent_definition_id.setter
+    def agent_definition_id(self, value: uuid.UUID | None) -> None:
+        extra = dict(self.extra or {})
+        if value is None:
+            extra.pop("agent_definition_id", None)
+        else:
+            extra["agent_definition_id"] = str(value)
+        self.extra = extra
