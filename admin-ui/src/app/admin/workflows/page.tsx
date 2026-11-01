@@ -14,6 +14,7 @@ import { WorkflowTable } from "@/components/workflows/WorkflowTable";
 import { WorkflowTemplatesPanel } from "@/components/workflows/WorkflowTemplatesPanel";
 import { AccessDialog } from "@/components/authorization/AccessDialog";
 import { Button } from "@/components/primitives/Button";
+import { Toggle } from "@/components/primitives/Toggle";
 import { AdminGate, ButtonTabs, EmptyState, Notice, PageBody, PageHeader } from "@/components/ui";
 import {
   useArchiveWorkflow,
@@ -74,7 +75,11 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
   const w = useTranslations("workflows.workspace");
   const g = useTranslations("workflows.guide");
   const examples = useTranslations("workflows.examples");
+  // Everything is fetched (the templates panel picks sources among all of it);
+  // the overview hides archived workflows unless asked.
   const workflows = useWorkflows(true);
+  const [showArchived, setShowArchived] = useState(false);
+  const visibleWorkflows = (workflows.data?.data ?? []).filter((item) => showArchived || item.status !== "archived");
   const agents = useQuery({
     queryKey: ["agent-definitions"],
     queryFn: () => getAgentDefinitions(),
@@ -245,8 +250,14 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
           ) : null}
           {workflows.isError ? <Notice tone="error">{w("loadFailed")}</Notice> : null}
           {workflows.data?.data.length ? (
+            <label className="flex items-center gap-2 text-sm text-aurum-text-2">
+              <Toggle checked={showArchived} onChange={setShowArchived} aria-label={w("showArchived")} />
+              {w("showArchived")}
+            </label>
+          ) : null}
+          {visibleWorkflows.length ? (
             <WorkflowTable
-              workflows={workflows.data.data}
+              workflows={visibleWorkflows}
               canWrite={canWrite}
               onEdit={(id) => openEditor(id)}
               onArchive={setArchiveTarget}
@@ -260,7 +271,7 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
                   : undefined
               }
             />
-          ) : workflows.data ? (
+          ) : workflows.data && workflows.data.data.length === 0 ? (
             <EmptyState
               icon={<BookOpen size={30} aria-hidden="true" />}
               title={w("emptyTitle")}

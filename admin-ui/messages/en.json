@@ -241,7 +241,8 @@
       "archiveHint": "It will no longer be available for new runs. Existing execution history is preserved.",
       "archiveConfirm": "Archive workflow",
       "browseExamples": "Browse examples",
-      "refreshFailed": "Could not refresh the data. Your draft is retained; check the connection before validating and saving."
+      "refreshFailed": "Could not refresh the data. Your draft is retained; check the connection before validating and saving.",
+      "showArchived": "Show archived"
     },
     "guide": {
       "stepLabel": "{number}. {name}",
