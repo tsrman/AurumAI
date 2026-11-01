@@ -147,7 +147,8 @@
     "pickers": {
       "model": {
         "choose": "Choose model",
-        "fallback": "Model"
+        "fallback": "Model",
+        "fixedByAgent": "The model is set by the agent: {model}"
       },
       "agent": {
         "choose": "Choose agent",

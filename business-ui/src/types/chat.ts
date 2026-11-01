@@ -29,6 +29,8 @@ export interface ConversationResponse {
   costUsd: number;
   // "hermes" once a Hermes Agent session was opened for the conversation.
   agent?: "hermes" | null;
+  // The administrator's agent the conversation last ran on.
+  agentDefinitionId?: string | null;
 }
 
 export interface MessageResponse {

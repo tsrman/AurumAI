@@ -28,8 +28,9 @@ assistant's own answers are not translated: they follow the language you write i
 
 ![An empty chat with the agent list, the composer and the pickers](../assets/screenshots/chat-empty.png)
 
-- **Sidebar.** **New chat** starts a conversation. **Agents** lists the assistants
-  your organization offers, each with its own instructions, tools and knowledge.
+- **Sidebar.** **New chat** starts a conversation. **Agents** lists the ordinary chat and
+  the agents your administrator created and granted to you, each with its own model,
+  instructions, tools and knowledge.
   **History** lists your recent conversations. **Knowledge bases** and **History** below it
   open the pages of the same name. At the bottom are the sidebar toggle, the theme
   switch, the language switcher and sign-out.
@@ -61,9 +62,19 @@ only. By default the agent's or organization's value is used.
 
 ### Agents
 
-An agent is a model with instructions, allowed tools and knowledge bases.
-Pick one in the sidebar or the agent picker. If you have the capability to create
-agents, ask your administrator or see the [administrator guide](admin-guide.md#agents).
+An agent is a model with instructions, allowed tools and knowledge bases, created by an
+administrator (see the [administrator guide](admin-guide.md#agents)). Pick one in the
+sidebar or the agent picker, then write as usual:
+
+- The turn runs on the agent's model and instructions, and the agent has only the skills
+  and knowledge bases it was given. Web search and image tools are off for it. The model
+  picker shows the agent's model and cannot change it.
+- The agent stays chosen for the conversation, also after a reload. Choosing a workflow or
+  Hermes Agent for a turn replaces the agent for that turn.
+- You see only agents granted to you. An agent that was archived or whose access was
+  withdrawn disappears from the list, and an open conversation goes back to the ordinary chat.
+- The temperature you set for the conversation wins over the agent's own value, which wins
+  over the organization's.
 
 ### Workflows
 

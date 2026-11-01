@@ -147,7 +147,8 @@
     "pickers": {
       "model": {
         "choose": "Выбрать модель",
-        "fallback": "Модель"
+        "fallback": "Модель",
+        "fixedByAgent": "Модель задана агентом: {model}"
       },
       "agent": {
         "choose": "Выбрать агента",

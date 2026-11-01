@@ -41,11 +41,15 @@ class ChatRequest(BaseModel):
     # A system agent instead of the plain model: "hermes" runs Hermes Agent
     # in its sandbox on the organization's Hermes model (`model` is ignored).
     agent: Literal["hermes"] | None = None
+    # An agent of the administrator's (GET /chat/agent-definitions): its model,
+    # instructions, skills and knowledge bases scope the turn (`model` is ignored).
+    agent_definition_id: UUID | None = Field(default=None, alias="agentDefinitionId")
 
     @model_validator(mode="after")
     def one_agent_or_workflow(self) -> "ChatRequest":
-        if self.agent is not None and self.workflow_id is not None:
-            raise ValueError("choose an agent or a workflow, not both")
+        chosen = [self.agent, self.agent_definition_id, self.workflow_id]
+        if sum(item is not None for item in chosen) > 1:
+            raise ValueError("choose one of an agent, an agent definition or a workflow")
         return self
 
 

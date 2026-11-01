@@ -57,6 +57,21 @@ export async function getChatAgents(): Promise<{ id: ChatAgentId }[]> {
   return response.data;
 }
 
+/** An agent of the administrator's that a chat turn can run on. */
+export interface ChatAgentDefinition {
+  id: string;
+  name: string;
+  description?: string | null;
+  modelId: string;
+}
+
+export async function getChatAgentDefinitions(): Promise<ChatAgentDefinition[]> {
+  const response = await api
+    .get("chat/agent-definitions")
+    .json<ApiResponse<ChatAgentDefinition[]>>();
+  return response.data;
+}
+
 function baseUrl(): string {
   return getRuntimeConfig().apiUrl;
 }
@@ -68,6 +83,7 @@ export interface StreamChatOptions {
   options?: ChatRequest["options"];
   workflowId?: string;
   agent?: ChatAgentId;
+  agentDefinitionId?: string;
   onOpen?: () => void;
   onEvent: (event: SSEEvent) => void;
   onError?: (error: Error) => void;
@@ -204,6 +220,7 @@ export function streamChat(options: StreamChatOptions): { cancel: () => void } {
     options: options.options ?? {},
     ...(options.workflowId ? { workflowId: options.workflowId } : {}),
     ...(options.agent ? { agent: options.agent } : {}),
+    ...(options.agentDefinitionId ? { agentDefinitionId: options.agentDefinitionId } : {}),
   });
 
   const run = async () => {

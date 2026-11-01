@@ -83,6 +83,18 @@ SKILLS_SYSTEM_PROMPT_TEMPLATE = (
 )
 
 
+def _with_agent(agent: dict[str, Any], system_message: str) -> str:
+    """The agent's own instructions lead the prompt; its knowledge bases are named after the tools."""
+    sections = [str(agent.get("system_prompt") or ""), system_message]
+    bases = agent.get("knowledge_bases") or []
+    if bases:
+        sections.append(
+            "Configured knowledge bases:\n"
+            + "\n".join(f"- id={item.get('id')} name={item.get('name')}" for item in bases)
+        )
+    return "\n\n".join(section for section in sections if section)
+
+
 def _build_skills_system_message(
     skills: list[dict[str, Any]],
     *,
@@ -356,6 +368,15 @@ class ConversationWorkflow:
                 start_to_close_timeout=timedelta(seconds=15),
                 retry_policy=_ACTIVITY_RETRY_POLICY,
             )
+        # Evaluated only for agent turns, so other histories record no marker.
+        agent = message.get("agent")
+        if isinstance(agent, dict) and workflow.patched("chat-agent-v1"):
+            allowed_skill_ids = {str(item) for item in agent.get("allowed_skill_ids") or []}
+            skills = [skill for skill in skills if str(skill.get("id", "")) in allowed_skill_ids]
+            if isinstance(message.get("temperature"), (int, float)):
+                temperature = float(message["temperature"])
+        else:
+            agent = None
         has_skills = bool(skills)
         user_questions_enabled = message.get("user_questions_enabled") is True
         web_tools_requested = message.get("web_tools_enabled") is True
@@ -374,6 +395,8 @@ class ConversationWorkflow:
                 ),
             }
         ] + self.messages
+        if agent is not None:
+            llm_messages[0]["content"] = _with_agent(agent, llm_messages[0]["content"])
         request: dict[str, Any] = {"model": model, "messages": llm_messages, "stream": True}
         if temperature is not None:
             request["temperature"] = temperature

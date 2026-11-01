@@ -81,7 +81,9 @@ export function Composer({
   const errorMessage = useErrorMessage();
   const isDisabled = Boolean(disabled || blockedByActiveTurn);
   const { agents, myAgents, activeAgentId, conversations, models, activeModelId } = useAppShell();
-  const visionModel = Boolean(models.find((model) => model.id === activeModelId)?.vision);
+  // An administrator's agent runs on its own model, whatever the picker says.
+  const agentModelId = [...agents, ...myAgents].find((item) => item.id === activeAgentId && item.kind === "definition")?.model;
+  const visionModel = Boolean(models.find((model) => model.id === (agentModelId ?? activeModelId))?.vision);
   // An agent stays chosen for the conversation, whose workspace it keeps,
   // also after a reload: the conversation names it. A workflow is chosen for
   // one turn. A new chat's first send creates its conversation, which keeps

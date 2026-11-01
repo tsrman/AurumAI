@@ -34,6 +34,8 @@ def _fixture():
         org_id=org_id,
         status="active",
         last_message_at=None,
+        temperature=None,
+        agent_definition_id=None,
     )
     user = UserInfo(user_id=str(user_id), org_id=str(org_id), role="member")
     session = MagicMock()
