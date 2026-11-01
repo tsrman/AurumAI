@@ -69,15 +69,15 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
     only the guard through its Service address and nothing else, that no DNS escapes, and
     that the guard's address exclusions hold. k3s's built-in controller and Calico were
     checked (`HERMES_K8S_CNI=calico`, boundary, runtime and egress modes, 0 failures).
-  - More of Hermes on the whole platform on Kubernetes: files the user uploads, pictures
-    (vision), workflow nodes run by Hermes, usage and quota accounting of its turns, and a
-    long dialogue on a real model. One real-model turn, the MCP bridge, memory across
-    conversations, skill drafts and an idle snapshot with its restore were accepted
-    (`K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh`).
-  - A previewed app opened from a browser through a real wildcard Ingress with a
-    wildcard certificate and a domain outside the platform's: the `__Host-` cookie, the
-    WebSocket upgrade through the Ingress controller, and the periodic re-check that ends
-    a preview with its session.
+  - More of Hermes on the whole platform on Kubernetes: pictures (vision), workflow nodes
+    run by Hermes, usage and quota accounting of its turns, and a long dialogue on a real
+    model. Uploaded files, one real-model turn, the MCP bridge, memory across
+    conversations, skill drafts, an idle snapshot with its restore and previews through
+    the Ingress over TLS were accepted (`K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh`).
+  - Previews in real browsers: the acceptance's client is curl and a raw socket, over a
+    self-signed certificate on a name it was told to resolve. A certificate from a real
+    CA, a real wildcard DNS record, and Chromium, Firefox and Safari accepting the
+    `__Host-` cookie and the WebSocket remain to be seen.
   - Failures and runtimes beyond k3d: a node lost to a real failure (the acceptance stops a
     k3d node), a RuntimeClass whose handler is a sandboxing runtime (gVisor, Kata) rather
     than a PID limit on `runc`, and the node-side limits the chart cannot set.

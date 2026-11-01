@@ -20,7 +20,9 @@ networking. `K8S_TEST_ACCEPTANCE=hermes ./smoke-test-k8s.sh` runs Hermes turns o
 platform, with a real model if given a gateway.
 
 Fixed: the chart rendered the image upload limit as `1.048576e+07`, which the backend could not
-parse, so a release with the default values did not start on Kubernetes.
+parse, so a release with the default values did not start on Kubernetes. The preview service
+answered a WebSocket handshake without `Connection: Upgrade`, which browsers and proxies refuse,
+so WebSockets of a previewed app did not open.
 
 ## Documentation
 

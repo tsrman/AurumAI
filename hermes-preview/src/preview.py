@@ -399,9 +399,12 @@ class Connection:
                     return False
             response = await upstream.next_event()
             if isinstance(response, h11.InformationalResponse) and response.status_code == 101 and upgrade:
+                # `Connection: Upgrade` is a hop header the filter drops, yet the handshake
+                # (RFC 6455) needs it: a browser, and a proxy in front, refuse the answer without.
+                headers = [(n, v) for n, v in self._response_headers(response, decision.port) if n != b"connection"]
                 await self._send(
                     h11.InformationalResponse(
-                        status_code=101, headers=self._response_headers(response, decision.port), reason=response.reason
+                        status_code=101, headers=[*headers, (b"connection", b"Upgrade")], reason=response.reason
                     )
                 )
                 await self._splice(upstream, grant)

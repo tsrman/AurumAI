@@ -171,6 +171,7 @@
     "scripts/prepare-oss-release.py",
     "scripts/tests/test_chart_env_integers.py",
     "scripts/tests/test_hermes_helm.py",
+    "scripts/tests/test_hermes_platform_acceptance.py",
     "scripts/tests/test_oss_release_audit.py",
     "scripts/tests/test_oss_release_bootstrap.py",
     "scripts/tests/test_oss_release_ci.py",
