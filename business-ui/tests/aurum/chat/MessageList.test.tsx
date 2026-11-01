@@ -59,6 +59,71 @@ test("renders empty list", () => {
   expect(container.querySelector("[data-testid='assistant-message']")).toBeNull();
 });
 
+test.each(["think", "tools", "answer", "done"] as const)(
+  "keeps the prompt above its answer in phase %s when their timestamps match",
+  (phase) => {
+    const createdAt = "2026-11-01T10:30:00.123Z";
+    render(
+      <MessageList
+        messages={[
+          { ...userMessage, id: "u42", createdAt },
+          {
+            ...assistantMessage,
+            id: "a43",
+            createdAt,
+            phase,
+            thinking: "",
+            thinkingShown: "",
+            contentShown: phase === "answer" || phase === "done" ? "Partial answer" : "",
+          },
+        ]}
+      />,
+      { wrapper: Wrapper }
+    );
+
+    const prompt = screen.getByText(userMessage.content);
+    const answer = screen.getByTestId("assistant-message");
+    expect(prompt.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+);
+
+test("preserves turn order as a response streams with equal message timestamps", () => {
+  const createdAt = "2026-11-01T10:30:00.123Z";
+  const messages = [
+    { ...userMessage, id: "u40", content: "Previous prompt", createdAt },
+    { ...assistantMessage, id: "a41", createdAt },
+    { ...userMessage, id: "u42", createdAt },
+    { ...assistantMessage, id: "a43", phase: "answer" as const, contentShown: "Partial", createdAt },
+  ];
+  const { rerender } = render(<MessageList messages={messages} />, { wrapper: Wrapper });
+
+  function expectTurnOrder() {
+    const answers = screen.getAllByTestId("assistant-message");
+    const timeline = [
+      screen.getByText("Previous prompt"),
+      answers[0],
+      screen.getByText(userMessage.content),
+      answers[1],
+    ];
+    for (let index = 1; index < timeline.length; index++) {
+      expect(
+        timeline[index - 1].compareDocumentPosition(timeline[index]) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+    }
+  }
+
+  expectTurnOrder();
+  rerender(
+    <MessageList
+      messages={messages.map((message) => message.id === "a43"
+        ? { ...assistantMessage, id: message.id, createdAt, phase: "answer", contentShown: "Partial answer" }
+        : message)}
+    />
+  );
+  expectTurnOrder();
+  expect(screen.getByText("Partial answer")).toBeInTheDocument();
+});
+
 test("calls onRegenerate when regenerate is triggered", () => {
   const onRegenerate = vi.fn();
   render(

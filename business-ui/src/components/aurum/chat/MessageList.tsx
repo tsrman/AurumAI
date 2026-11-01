@@ -47,8 +47,8 @@ function timelineItems(
       const timestamp =
         new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
       if (timestamp !== 0) return timestamp;
-      return left.id.localeCompare(right.id);
     }
+    // A prompt and its live answer can be created in the same millisecond.
     return left.order - right.order;
   });
 }

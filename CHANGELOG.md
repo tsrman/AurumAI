@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- A streaming answer no longer appears above its prompt when both messages have the same
+  millisecond timestamp; the chat timeline preserves their insertion order.
 - Deleting an agent that only past runs referred to ended in a 500 from the foreign key; it is now a
   409 that points to archiving.
 - A failed Hermes sandbox Pod creation no longer deletes an existing Pod with the same name.
