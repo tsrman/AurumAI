@@ -17,6 +17,9 @@
 
 - Deleting an agent that only past runs referred to ended in a 500 from the foreign key; it is now a
   409 that points to archiving.
+- A failed Hermes sandbox Pod creation no longer deletes an existing Pod with the same name.
+  Kubernetes cleanup checks the release, session, organization and conversation ownership and
+  uses UID preconditions for graceful and forced deletion, preserving replacement Pods.
 
 ### Upgrade notes
 

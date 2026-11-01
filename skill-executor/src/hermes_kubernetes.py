@@ -40,8 +40,10 @@ from kubernetes_asyncio.config.config_exception import ConfigException
 from src.config import Settings
 from src.hermes_runtime import (
     _CHUNK,
+    CONVERSATION_LABEL,
     CREATED_LABEL,
     LABEL,
+    ORG_LABEL,
     SANDBOX_UID,
     SESSION_LABEL,
     HermesSandbox,
@@ -73,6 +75,17 @@ class RelayMessage:
 
     stream: int
     data: bytes
+
+
+@dataclass(frozen=True)
+class PodIdentity:
+    """Ownership observed on an acknowledged creation or scoped discovery."""
+
+    name: str
+    uid: str
+    session_id: str
+    org_id: str
+    conversation_id: str
 
 
 class PreviewStream:
@@ -118,6 +131,7 @@ class KubernetesHermesSandboxes(HermesSandboxes):
         self._api_client: Any | None = None
         self._exec_client = exec_client or KubernetesExecClient()
         self._poll_interval = poll_interval_seconds
+        self._pod_identities: dict[str, PodIdentity] = {}
 
     @property
     def namespace(self) -> str:
@@ -159,6 +173,25 @@ class KubernetesHermesSandboxes(HermesSandboxes):
     @property
     def _selector(self) -> str:
         return f"{LABEL}=1,{RELEASE_LABEL}={self._settings.kubernetes_release_name},{COMPONENT_LABEL}={COMPONENT_VALUE}"
+
+    def _pod_identity(self, pod: k8s_client.V1Pod) -> PodIdentity | None:
+        metadata = pod.metadata
+        labels = metadata.labels or {}
+        session_id = labels.get(SESSION_LABEL, "")
+        org_id = labels.get(ORG_LABEL, "")
+        conversation_id = labels.get(CONVERSATION_LABEL, "")
+        if (
+            not metadata.uid
+            or not session_id
+            or not org_id
+            or not conversation_id
+            or metadata.name != resource_name(session_id)
+            or labels.get(LABEL) != "1"
+            or labels.get(RELEASE_LABEL) != self._settings.kubernetes_release_name
+            or labels.get(COMPONENT_LABEL) != COMPONENT_VALUE
+        ):
+            return None
+        return PodIdentity(metadata.name, metadata.uid, session_id, org_id, conversation_id)
 
     def build_pod(
         self, *, session_id: str, org_id: str, conversation_id: str, created: float, guard_address: str
@@ -276,10 +309,14 @@ class KubernetesHermesSandboxes(HermesSandboxes):
         ]
 
     async def _discover(self) -> list[tuple[str, dict[str, str], bool]]:
-        return [
-            (pod.metadata.name, dict(pod.metadata.labels or {}), pod.status.phase in ("Pending", "Running"))
-            for pod in await self._live_pods()
-        ]
+        discovered = []
+        for pod in await self._live_pods():
+            identity = self._pod_identity(pod)
+            if identity is None or self._pod_identities.get(identity.name, identity) != identity:
+                continue
+            self._pod_identities[identity.name] = identity
+            discovered.append((identity.name, dict(pod.metadata.labels or {}), pod.status.phase in ("Pending", "Running")))
+        return discovered
 
     # Creation ---------------------------------------------------------------
 
@@ -330,8 +367,10 @@ class KubernetesHermesSandboxes(HermesSandboxes):
         )
         restored = False
         core = await self._api()
+        # An uncertain create or a conflict is not proof this attempt owns a Pod.
+        identity = await self._create_pod(core, pod)
+        self._pod_identities[name] = identity
         try:
-            await self._create_pod(core, pod)
             await self._wait_running(name)
             if snapshot_sha256 is not None:
                 await self._restore(sandbox, org_id, conversation_id, snapshot_sha256)
@@ -351,20 +390,27 @@ class KubernetesHermesSandboxes(HermesSandboxes):
         self._sandboxes[session_id] = sandbox
         return sandbox, restored
 
-    async def _create_pod(self, core: Any, pod: k8s_client.V1Pod) -> None:
+    async def _create_pod(self, core: Any, pod: k8s_client.V1Pod) -> PodIdentity:
         """Create the Pod. One of the same name that is still terminating (deleted
         while its image was being pulled, it can outlast the removal's own wait)
         is waited for, so a session started again at once is not refused."""
         for attempt in range(2):
             try:
-                await core.create_namespaced_pod(self.namespace, pod)
-                return
+                created = await core.create_namespaced_pod(self.namespace, pod)
+                identity = self._pod_identity(created)
+                if identity is None or any(
+                    (created.metadata.labels or {}).get(key) != value
+                    for key, value in (pod.metadata.labels or {}).items()
+                ):
+                    raise HermesSandboxError("hermes_sandbox_owner_mismatch")
+                return identity
             except ApiException as exc:
                 if exc.status != 409:
                     logger.warning("Could not create the Hermes sandbox Pod", exc_info=True)
                     raise HermesSandboxError("hermes_kubernetes_failed") from None
                 if attempt or not await self._wait_gone(core, pod.metadata.name):
                     raise HermesSandboxError("hermes_sandbox_exists") from None
+        raise HermesSandboxError("hermes_sandbox_exists")
 
     async def _wait_gone(self, core: Any, name: str) -> bool:
         """True once a Pod that is being deleted has gone; False for one that is not
@@ -498,35 +544,56 @@ class KubernetesHermesSandboxes(HermesSandboxes):
         with `force`) the Pod object is deleted by force: its workspace was only a
         cache of the last snapshot, and a node that returns kills what remains."""
         core = await self._api()
+        identity = self._pod_identities.get(name)
+        if identity is None:
+            return
         grace = 0 if force else self._settings.hermes_stop_timeout_seconds
-        try:
-            await core.delete_namespaced_pod(name, self.namespace, grace_period_seconds=grace)
-        except ApiException as exc:
-            if exc.status != 404:
-                logger.warning("Could not delete Hermes sandbox Pod %s", name, exc_info=True)
+        if not await self._delete_pod(core, identity, grace):
             return
         wait = self._force_wait_seconds if force else grace + self._remove_wait_seconds
-        if await self._wait_deleted(core, name, wait) or force:
-            return
-        logger.warning("Hermes sandbox Pod %s is still terminating; deleting it by force", name)
-        await self._force_delete(core, name)
-        await self._wait_deleted(core, name, self._force_wait_seconds)
+        gone = await self._wait_deleted(core, identity, wait)
+        if gone is False and not force:
+            logger.warning("Hermes sandbox Pod %s is still terminating; deleting it by force", name)
+            if await self._force_delete(core, identity):
+                gone = await self._wait_deleted(core, identity, self._force_wait_seconds)
+        if gone and self._pod_identities.get(name) == identity:
+            self._pod_identities.pop(name, None)
 
-    async def _force_delete(self, core: Any, name: str) -> None:
+    async def _delete_pod(self, core: Any, identity: PodIdentity, grace: int) -> bool:
+        """Recheck ownership and fence the API mutation against replacement."""
         try:
-            await core.delete_namespaced_pod(name, self.namespace, grace_period_seconds=0)
+            pod = await core.read_namespaced_pod(identity.name, self.namespace)
+            if self._pod_identity(pod) != identity:
+                logger.warning("Refusing to delete Hermes Pod %s: ownership changed", identity.name)
+                return False
+            await core.delete_namespaced_pod(
+                identity.name,
+                self.namespace,
+                grace_period_seconds=grace,
+                body=k8s_client.V1DeleteOptions(preconditions=k8s_client.V1Preconditions(uid=identity.uid)),
+            )
         except ApiException as exc:
-            if exc.status != 404:
-                logger.warning("Could not force-delete Hermes sandbox Pod %s", name, exc_info=True)
+            if exc.status == 404:
+                return True
+            logger.warning("Could not delete Hermes sandbox Pod %s", identity.name, exc_info=True)
+            return False
+        return True
 
-    async def _wait_deleted(self, core: Any, name: str, seconds: float) -> bool:
+    async def _force_delete(self, core: Any, identity: PodIdentity) -> bool:
+        return await self._delete_pod(core, identity, 0)
+
+    async def _wait_deleted(self, core: Any, identity: PodIdentity, seconds: float) -> bool | None:
+        """True if the UID is gone, False on timeout, None when the API is unsure."""
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             try:
-                await core.read_namespaced_pod(name, self.namespace)
+                pod = await core.read_namespaced_pod(identity.name, self.namespace)
             except ApiException as exc:
                 if exc.status != 404:
-                    logger.warning("Could not check Hermes sandbox Pod %s", name, exc_info=True)
+                    logger.warning("Could not check Hermes sandbox Pod %s", identity.name, exc_info=True)
+                    return None
+                return True
+            if pod.metadata.uid != identity.uid:
                 return True
             await asyncio.sleep(self._poll_interval)
         return False
@@ -576,6 +643,10 @@ class KubernetesHermesSandboxes(HermesSandboxes):
         grace = self._settings.hermes_orphan_grace_seconds
         present: set[str] = set()
         for pod in listed.items:
+            identity = self._pod_identity(pod)
+            if identity is None or self._pod_identities.get(identity.name, identity) != identity:
+                continue
+            self._pod_identities[identity.name] = identity
             labels = pod.metadata.labels or {}
             name = pod.metadata.name
             if pod.metadata.deletion_timestamp is not None:
@@ -585,7 +656,7 @@ class KubernetesHermesSandboxes(HermesSandboxes):
                     datetime.now(UTC) - since
                 ).total_seconds() > self._settings.hermes_stop_timeout_seconds + self._remove_wait_seconds + 30:
                     logger.warning("Hermes sandbox Pod %s has been terminating for long; deleting it by force", name)
-                    await self._force_delete(core, name)
+                    await self._force_delete(core, identity)
                 continue
             session_id = labels.get(SESSION_LABEL, "")
             age = now - float(labels.get(CREATED_LABEL, "0") or 0)
@@ -602,4 +673,3 @@ class KubernetesHermesSandboxes(HermesSandboxes):
                     if self._sandboxes.get(session_id) is sandbox:
                         logger.warning("Hermes sandbox %s lost its Pod", session_id)
                         self._sandboxes.pop(session_id, None)
-

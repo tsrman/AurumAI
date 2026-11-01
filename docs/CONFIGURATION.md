@@ -163,8 +163,10 @@ inlines the four newest images of the request as base64 `image_url` parts, and
 replaces older images, or all of them when the selected model is not marked, with a
 short text note. Attached images also appear in the image list a later turn can edit. Removing an
 attachment before sending deletes it; an upload left unsent (for example when the tab
-closes) stays with the conversation, unused, and like any conversation image keeps
-it from being archived.
+closes) stays with the conversation, unused. Its bytes are included when the
+conversation is archived. Conversations with images remain live if the data worker
+lacks the separate platform-bucket credentials described under
+[Identity and data lifecycle](#identity-and-data-lifecycle).
 Workflows use images too. Their node agents get `generate_image` and `edit_image`
 under the same switch, capability and organization models (supervisors never do);
 a node can edit an image an earlier node created, and the images of the nodes the

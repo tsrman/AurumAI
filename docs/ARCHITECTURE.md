@@ -226,10 +226,12 @@ availability is independent from controlled policy/Temporal acceptance.
 
 ## Hermes Agent
 
-Hermes Agent is an opt-in system agent with a runtime of its own (Docker only). A
+Hermes Agent is an opt-in system agent with Docker and Kubernetes runtimes. A
 conversation's turn goes from the runner to a `HermesSessionWorkflow` on tool-worker's
-queue, and skill-executor starts one long-lived sandbox for the conversation, on its
-own internal network. The sandbox's only way out is `hermes-egress`: the platform path
+queue, and skill-executor starts one long-lived sandbox for the conversation. Docker
+uses a separate internal network per sandbox; Kubernetes uses a Pod in the Hermes
+namespace with default-deny NetworkPolicies. The sandbox's only way out is
+`hermes-egress`: the platform path
 to the backend (model completions and the MCP bridge of platform tools), and CONNECT
 tunnels up to the network mode the organization chose. Its token holds identity only
 and has an audience of its own. Workspaces are snapshotted to object storage.
