@@ -50,6 +50,9 @@ const state: ConstructorState = {
   temperature: 0.2,
   tools: { "11111111-1111-4111-8111-111111111111": true },
   bases: { "22222222-2222-4222-8222-222222222222": true },
+  webEnabled: true,
+  imagesEnabled: true,
+  askUserEnabled: true,
 };
 
 function Wrapper({ children }: { children: React.ReactNode }) {
@@ -114,6 +117,9 @@ test("save persists canonical model, skill and knowledge-base IDs", async () => 
     temperature: 0.2,
     skillIds: ["11111111-1111-4111-8111-111111111111"],
     knowledgeBaseIds: ["22222222-2222-4222-8222-222222222222"],
+    webEnabled: true,
+    imagesEnabled: true,
+    askUserEnabled: true,
     kind: "agent",
   });
   expect(mocks.push).toHaveBeenCalledWith("/admin/agents");

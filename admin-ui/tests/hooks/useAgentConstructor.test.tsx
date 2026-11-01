@@ -51,6 +51,9 @@ const DEFAULT_STATE: ConstructorState = {
   temperature: 0.3,
   tools: {},
   bases: {},
+  webEnabled: true,
+  imagesEnabled: true,
+  askUserEnabled: true,
 };
 
 let initialState: ConstructorState = DEFAULT_STATE;
@@ -177,6 +180,9 @@ describe("useAgentConstructor", () => {
       temperature: null,
       skillIds: ["11111111-1111-4111-8111-111111111111"],
       knowledgeBaseIds: [],
+      webEnabled: true,
+      imagesEnabled: true,
+      askUserEnabled: true,
     });
     expect(mocks.push).toHaveBeenCalledWith("/admin/agents");
   });

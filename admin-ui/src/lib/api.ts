@@ -212,6 +212,10 @@ export interface AgentDefinition {
   knowledgeBaseIds: string[];
   // "hermes": a workflow node run by Hermes Agent on the organization's Hermes model.
   kind?: AgentKind;
+  // Built-in capabilities a chat turn on the agent may use.
+  webEnabled?: boolean;
+  imagesEnabled?: boolean;
+  askUserEnabled?: boolean;
   // Set when archived: hidden from pickers and refused for new use; history stays.
   archivedAt?: string | null;
   canWrite: boolean;
@@ -231,6 +235,9 @@ export interface AgentDefinitionCreate {
   temperature: number | null;
   skillIds: string[];
   knowledgeBaseIds: string[];
+  webEnabled?: boolean;
+  imagesEnabled?: boolean;
+  askUserEnabled?: boolean;
 }
 
 export type ResourceType =

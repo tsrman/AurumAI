@@ -26,6 +26,9 @@ function stateFromAgent(agent: AgentDefinition): ConstructorState {
     temperature: agent.temperature,
     tools: Object.fromEntries(agent.skillIds.map((id) => [id, true])),
     bases: Object.fromEntries(agent.knowledgeBaseIds.map((id) => [id, true])),
+    webEnabled: agent.webEnabled ?? true,
+    imagesEnabled: agent.imagesEnabled ?? true,
+    askUserEnabled: agent.askUserEnabled ?? true,
   };
 }
 
@@ -150,6 +153,9 @@ export function useAgentConstructor(agent?: AgentDefinition) {
         temperature: state.temperature,
         skillIds,
         knowledgeBaseIds,
+        webEnabled: state.webEnabled,
+        imagesEnabled: state.imagesEnabled,
+        askUserEnabled: state.askUserEnabled,
       };
       if (agent) await updateAgentDefinition(agent.id, payload);
       else await createAgentDefinition({ ...payload, kind: state.kind });

@@ -143,4 +143,9 @@ export interface ConstructorState {
   temperature: number | null;
   tools: Record<string, boolean>;
   bases: Record<string, boolean>;
+  // Built-in capabilities a chat turn on the agent may use (platform switches and
+  // the user's rights still apply).
+  webEnabled: boolean;
+  imagesEnabled: boolean;
+  askUserEnabled: boolean;
 }

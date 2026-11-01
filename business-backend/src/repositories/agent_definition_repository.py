@@ -57,6 +57,9 @@ class AgentDefinitionRepository:
             skill_ids=data.skill_ids,
             knowledge_base_ids=data.knowledge_base_ids,
             kind=data.kind,
+            web_enabled=data.web_enabled,
+            images_enabled=data.images_enabled,
+            ask_user_enabled=data.ask_user_enabled,
         )
         session.add(agent)
         await session.flush()
@@ -165,6 +168,9 @@ class AgentDefinitionRepository:
             "temperature",
             "skill_ids",
             "knowledge_base_ids",
+            "web_enabled",
+            "images_enabled",
+            "ask_user_enabled",
         ):
             if field in data.model_fields_set:
                 setattr(agent, field, getattr(data, field))

@@ -27,6 +27,9 @@ const DEFAULT_CONSTRUCTOR: ConstructorState = {
   temperature: 0.3,
   tools: {},
   bases: {},
+  webEnabled: true,
+  imagesEnabled: true,
+  askUserEnabled: true,
 };
 
 export function AppShellProvider({ children }: { children?: React.ReactNode }) {

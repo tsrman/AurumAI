@@ -191,6 +191,9 @@ class WorkflowTemplateService:
                     skill_ids=list(config.skill_ids),
                     knowledge_base_ids=list(config.knowledge_base_ids),
                     kind=config.kind,
+                    web_enabled=config.web_enabled,
+                    images_enabled=config.images_enabled,
+                    ask_user_enabled=config.ask_user_enabled,
                 )
             )
             agent_ids[config.key] = new_id
