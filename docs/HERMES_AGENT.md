@@ -594,9 +594,15 @@ Each phase is a separate PR behind the flag:
      end to end: a chart and a CSV made in the sandbox and attached (and a platform
      secret refused), the MCP bridge, memory carried to a new conversation, a skill
      written by Hermes arriving as a draft for an administrator, an idle sandbox
-     snapshotted to MinIO and restored into a new Pod; and, on a real model, a turn
-     that installs a package through the guard, authorized per connection by the real
-     backend, and attaches the result.
+     snapshotted to MinIO and restored into a new Pod, two uploaded workbooks pivoted
+     into an attached workbook and deck, and a web app in the sandbox opened through
+     traefik over TLS at a preview origin of its own (the one-time ticket, the
+     host-only `__Host-` cookie, an app that is told nothing of it, a WebSocket, and
+     revoking `agents.hermes` ending the open connection and refusing the next
+     request); and, on a real model, a turn that installs a package through the
+     guard, authorized per connection by the real backend, and attaches the result.
+     That run found that the preview service answered a WebSocket handshake without
+     `Connection: Upgrade`, which browsers, and traefik, refuse: fixed.
 3. **MCP bridge.** Split into two changes:
    - 3a, implemented: `POST /v1/hermes/mcp` with knowledge search, `web.search`,
      `web.read`, image generation and editing; hermes-egress forwards it, and the

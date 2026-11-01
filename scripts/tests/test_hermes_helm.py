@@ -881,3 +881,17 @@ def test_the_platform_acceptance_has_a_hermes_profile_with_its_own_driver() -> N
     assert "/home/" not in driver and "/tmp/claude" not in driver
     # The organization's Hermes settings and the user's memory are put back after the run.
     assert "restore" in driver and "DELETE" in driver
+
+
+def test_the_platform_acceptance_serves_previews_over_tls_with_its_own_certificate() -> None:
+    script, driver = PLATFORM_SMOKE.read_text(), PLATFORM_DRIVER.read_text()
+    # A wildcard host of its own, a self-signed certificate offered by the Ingress, and the HTTPS port published.
+    assert "create_preview_tls_secret" in script and "hermes-preview-tls" in script and "openssl req -x509" in script
+    assert "PREVIEW_HTTPS_PORT" in script and "30443" in script
+    assert "origin: \"https://{preview}.$PREVIEW_DOMAIN:$PREVIEW_HTTPS_PORT\"" in script
+    assert 'recheckSeconds: 5' in script
+    # The domain is not the platform's own, and no resolver is asked for it.
+    assert 'PREVIEW_DOMAIN="preview.example.test"' in script and "nip.io" not in script.split('PREVIEW_DOMAIN="')[1].split("\n")[0]
+    assert "--resolve" in driver and "def previews(" in driver and "def uploads(" in driver
+    # What a previewed app must not be given, and what revoking must end.
+    assert "aurum-preview" in driver and "set_capabilities" in driver and "restored" in driver

@@ -30,6 +30,11 @@ RELEASE_NAMESPACE="${K8S_TEST_NAMESPACE:-aurum-ai-k8s-smoke}"
 RUNNER_NAMESPACE="${K8S_TEST_RUNNER_NAMESPACE:-${RELEASE_NAME}-runners}"
 SANDBOX_NAMESPACE="${K8S_TEST_SANDBOX_NAMESPACE:-${RELEASE_NAME}-sandboxes}"
 HERMES_NAMESPACE="${K8S_TEST_HERMES_NAMESPACE:-${RELEASE_NAME}-hermes}"
+# Previews of the apps Hermes runs: a wildcard host of their own (no resolver knows it; the
+# acceptance's client is told where it is), served over TLS by traefik with a self-signed
+# certificate, on this host port.
+PREVIEW_HTTPS_PORT="${K8S_TEST_PREVIEW_HTTPS_PORT:-8443}"
+PREVIEW_DOMAIN="preview.example.test"
 HERMES_IDLE_SECONDS="${K8S_TEST_HERMES_IDLE_SECONDS:-45}"
 KEEP_RESOURCES="${KEEP_K8S_TEST_RESOURCES:-0}"
 ACCEPTANCE_PROFILE="${K8S_TEST_ACCEPTANCE:-full}"
@@ -336,6 +341,9 @@ ensure_cluster() {
   local browser_k3s_args=()
   if [[ "$ACCEPTANCE_PROFILE" == "user-questions" || "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
     browser_ports=(-p "127.0.0.1:$FRONTEND_PORT:$INGRESS_NODE_PORT@loadbalancer")
+    if [[ "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
+      browser_ports+=(-p "127.0.0.1:$PREVIEW_HTTPS_PORT:30443@loadbalancer")
+    fi
     browser_k3s_args=(--k3s-arg '--disable=servicelb@server:*')
   fi
   if cluster_exists; then
@@ -376,6 +384,11 @@ configure_ingress_node_port() {
   ((ready)) || fail "Traefik service did not become ready"
   kubectl -n kube-system patch service traefik --type merge -p \
     '{"spec":{"type":"NodePort","ports":[{"name":"web","port":80,"protocol":"TCP","targetPort":"web","nodePort":30080},{"name":"websecure","port":443,"protocol":"TCP","targetPort":"websecure"}]}}' >/dev/null
+  if [[ "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
+    # TLS for the previews' origins: the HTTPS entry point on a node port the cluster publishes.
+    kubectl -n kube-system patch service traefik --type json \
+      -p '[{"op":"add","path":"/spec/ports/1/nodePort","value":30443}]' >/dev/null
+  fi
   kubectl -n kube-system rollout status deployment/traefik --timeout=180s
 }
 
@@ -618,6 +631,10 @@ write_helm_values() {
     browser_api="http://backend.127.0.0.1.nip.io:$FRONTEND_PORT/v1"
     browser_ingress=true
   fi
+  local ingress_tls=""
+  if [[ "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
+    ingress_tls=$'  tls:\n    - hosts:\n        - "*.'"$PREVIEW_DOMAIN"$'"\n      secretName: hermes-preview-tls'
+  fi
   cat >"$WORK_DIR/k8s-smoke-values.yaml" <<EOF
 image:
   pullPolicy: IfNotPresent
@@ -634,6 +651,7 @@ secrets:
 ingress:
   enabled: $browser_ingress
   externalPort: $FRONTEND_PORT
+$ingress_tls
 backend:
   replicaCount: 1
   debug: true
@@ -725,8 +743,24 @@ hermes:
     idleTtlSeconds: $HERMES_IDLE_SECONDS
     cpuRequest: 100m
     memoryRequest: 256Mi
+  preview:
+    enabled: true
+    origin: "https://{preview}.$PREVIEW_DOMAIN:$PREVIEW_HTTPS_PORT"
+    host: "*.$PREVIEW_DOMAIN"
+    recheckSeconds: 5
 EOF
   fi
+}
+
+create_preview_tls_secret() {
+  # One self-signed certificate for every preview origin; the Ingress offers it on the HTTPS entry point.
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=*.$PREVIEW_DOMAIN" \
+    -addext "subjectAltName=DNS:*.$PREVIEW_DOMAIN" \
+    -keyout "$WORK_DIR/preview-tls.key" -out "$WORK_DIR/preview-tls.crt" >/dev/null 2>&1 \
+    || fail "could not make the preview certificate"
+  kubectl -n "$RELEASE_NAMESPACE" create secret tls hermes-preview-tls \
+    --cert "$WORK_DIR/preview-tls.crt" --key "$WORK_DIR/preview-tls.key" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 
 render_and_install() {
@@ -762,6 +796,10 @@ wait_for_rollouts() {
     kubectl -n "$RELEASE_NAMESPACE" rollout status \
       "deployment/${RELEASE_NAME}-${component}" --timeout=180s
   done
+  if [[ "$ACCEPTANCE_PROFILE" == "hermes" ]]; then
+    kubectl -n "$RELEASE_NAMESPACE" rollout status \
+      "deployment/${RELEASE_NAME}-hermes-preview" --timeout=180s
+  fi
 }
 
 restart_permanent_workloads() {
@@ -1112,6 +1150,7 @@ run_hermes_acceptance() {
   export K8S_HERMES_PLATFORM_NAMESPACE="$RELEASE_NAMESPACE"
   export K8S_HERMES_IDLE_SECONDS="$HERMES_IDLE_SECONDS"
   export K8S_HERMES_WORK_DIR="$WORK_DIR"
+  export K8S_HERMES_PREVIEW_HTTPS_PORT="$PREVIEW_HTTPS_PORT" K8S_HERMES_PREVIEW_DOMAIN="$PREVIEW_DOMAIN"
   python3 "$REPO_ROOT/scripts/hermes-k8s-platform-acceptance.py" deterministic \
     || fail "the deterministic Hermes acceptance failed"
   if [[ -n "${K8S_TEST_REAL_GATEWAY_URL:-}" && -n "${K8S_TEST_REAL_GATEWAY_API_KEY:-}" ]]; then
@@ -1181,6 +1220,7 @@ main() {
   build_and_import_images
   start_fetch_fixture
   ensure_owned_namespace
+  [[ "$ACCEPTANCE_PROFILE" == "hermes" ]] && create_preview_tls_secret
   deploy_gateway
 
   docker_subnet=$(docker network inspect "$DOCKER_NETWORK" \

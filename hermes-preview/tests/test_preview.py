@@ -227,6 +227,9 @@ async def test_an_upgraded_connection_is_spliced_and_cut_once_the_preview_closes
     closed = await asyncio.wait_for(reader.read(100), 5)
 
     assert head.startswith(b"HTTP/1.1 101")
+    # RFC 6455: a browser, and any proxy in front, refuse the answer without both headers.
+    lowered = {line.split(b":", 1)[0].strip().lower(): line.split(b":", 1)[1].strip().lower() for line in head.split(b"\r\n")[1:] if b":" in line}
+    assert lowered.get(b"upgrade") == b"websocket" and lowered.get(b"connection") == b"upgrade"
     assert echoed == b"echo:frame"
     assert closed == b""
 
