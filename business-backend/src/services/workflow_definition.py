@@ -110,6 +110,8 @@ class WorkflowDefinitionService:
                     select(AgentDefinition).where(
                         AgentDefinition.org_id == actor.org_id,
                         AgentDefinition.id.in_(agent_ids),
+                        # An archived agent is gone for new use, like a missing one.
+                        AgentDefinition.archived_at.is_(None),
                     )
                 )
             ).scalars()

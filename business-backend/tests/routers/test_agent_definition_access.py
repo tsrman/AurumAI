@@ -332,5 +332,7 @@ async def test_delete_rejects_agent_referenced_by_active_or_archived_workflow(
 
     assert active.status_code == 409
     assert archived.status_code == 409
-    assert active.json()["detail"] == "Agent definition is used by a workflow"
-    assert archived.json()["detail"] == active.json()["detail"]
+    workflows = [{"id": str(workflow.id), "name": "Saved workflow"}]
+    assert active.json()["detail"] == {"code": "agent_in_use", "workflows": workflows}
+    # An archived workflow keeps its nodes: the agent is held by history, not in use.
+    assert archived.json()["detail"] == {"code": "agent_has_history", "workflows": workflows}

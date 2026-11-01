@@ -212,6 +212,8 @@ export interface AgentDefinition {
   knowledgeBaseIds: string[];
   // "hermes": a workflow node run by Hermes Agent on the organization's Hermes model.
   kind?: AgentKind;
+  // Set when archived: hidden from pickers and refused for new use; history stays.
+  archivedAt?: string | null;
   canWrite: boolean;
   createdAt: string;
   updatedAt: string;
@@ -741,16 +743,47 @@ export async function getKnowledgeBases() {
   return (await api.get("knowledge-bases")).json<ApiResponse<KnowledgeBase[]>>();
 }
 
-export async function getAgentDefinitions() {
-  return (await api.get("agent-definitions")).json<
-    ApiResponse<AgentDefinition[]>
-  >();
+const AGENT_ERROR_CODES = new Set(["agent_in_use", "agent_has_history", "agent_in_active_run", "agent_name_archived"]);
+
+/** Why an agent cannot be deleted, archived or named so, in the active locale; workflows named by the backend are listed. */
+export function describeAgentError(detail: { code: string; workflows?: { name: string }[] }): LocalizedError {
+  const known = AGENT_ERROR_CODES.has(detail.code);
+  const names = (detail.workflows ?? []).map((workflow) => workflow.name);
+  return new LocalizedError(known ? `agent.${detail.code}` : "agent.unknown", {
+    values: known ? undefined : { code: detail.code },
+    detail: names.length > 0 ? names.join(", ") : undefined,
+  });
+}
+
+async function unwrapAgentError<T>(promise: Promise<T>): Promise<T> {
+  try {
+    return await promise;
+  } catch (err) {
+    if (err instanceof HTTPError) {
+      const message = await err.response
+        .clone()
+        .json()
+        .then((body: { error?: { message?: unknown } }) => body.error?.message)
+        .catch(() => undefined);
+      if (typeof message === "string") throw new Error(message);
+      if (isWorkflowGraphErrorDetail(message)) throw describeAgentError(message);
+    }
+    throw err;
+  }
+}
+
+export async function getAgentDefinitions(includeArchived = false) {
+  return (
+    await api.get("agent-definitions", {
+      searchParams: { includeArchived: String(includeArchived) },
+    })
+  ).json<ApiResponse<AgentDefinition[]>>();
 }
 
 export async function createAgentDefinition(payload: AgentDefinitionCreate) {
-  return (await api.post("agent-definitions", { json: payload })).json<
-    ApiResponse<AgentDefinition>
-  >();
+  return unwrapAgentError(
+    api.post("agent-definitions", { json: payload }).json<ApiResponse<AgentDefinition>>(),
+  );
 }
 
 export type AgentDefinitionUpdate = Partial<AgentDefinitionCreate>;
@@ -762,13 +795,21 @@ export async function getAgentDefinition(id: string) {
 }
 
 export async function updateAgentDefinition(id: string, payload: AgentDefinitionUpdate) {
-  return (await api.patch(`agent-definitions/${id}`, { json: payload })).json<
-    ApiResponse<AgentDefinition>
-  >();
+  return unwrapAgentError(
+    api.patch(`agent-definitions/${id}`, { json: payload }).json<ApiResponse<AgentDefinition>>(),
+  );
 }
 
 export async function deleteAgentDefinition(id: string) {
-  return api.delete(`agent-definitions/${id}`);
+  return unwrapAgentError(api.delete(`agent-definitions/${id}`));
+}
+
+export async function archiveAgentDefinition(id: string) {
+  return unwrapAgentError(api.post(`agent-definitions/${id}/archive`).json<ApiResponse<AgentDefinition>>());
+}
+
+export async function unarchiveAgentDefinition(id: string) {
+  return unwrapAgentError(api.post(`agent-definitions/${id}/unarchive`).json<ApiResponse<AgentDefinition>>());
 }
 
 export async function getAdminWorkflows(includeArchived = false) {

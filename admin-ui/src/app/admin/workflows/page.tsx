@@ -77,7 +77,7 @@ function AdminWorkflowsContent({ canWrite }: { canWrite: boolean }) {
   const workflows = useWorkflows(true);
   const agents = useQuery({
     queryKey: ["agent-definitions"],
-    queryFn: getAgentDefinitions,
+    queryFn: () => getAgentDefinitions(),
   });
   const [view, setView] = useState<View>("overview");
   const [editor, setEditor] = useState<Editor | null>(null);

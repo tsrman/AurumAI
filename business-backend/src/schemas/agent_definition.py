@@ -83,6 +83,7 @@ class AgentDefinitionResponse(BaseModel):
     skillIds: list[UUID]
     knowledgeBaseIds: list[UUID]
     kind: Literal["agent", "hermes"] = "agent"
+    archivedAt: datetime | None = None
     canWrite: bool
     createdAt: datetime
     updatedAt: datetime

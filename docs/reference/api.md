@@ -77,8 +77,9 @@ Paths below are relative to the plane's host. The business routes are mounted un
 
 | Method and path | Purpose | Needs |
 |---|---|---|
-| `GET /v1/agent-definitions`, `POST /v1/agent-definitions` | List and create agents | `workspace.agents.create` to create |
+| `GET /v1/agent-definitions`, `POST /v1/agent-definitions` | List (`includeArchived=true` adds archived agents) and create agents | `workspace.agents.create` to create |
 | `GET/PATCH/DELETE /v1/agent-definitions/{id}`, `GET .../{id}/execution` | Read, edit, delete an agent; its execution settings | grant / owner |
+| `POST /v1/agent-definitions/{id}/archive`, `POST .../{id}/unarchive` | Archive or restore an agent (idempotent); an archived agent is hidden from lists, refused for new use and keeps its history | write grant |
 | `GET /v1/skills/`, `GET /v1/skills/{id}` | Skills the user may use | grant |
 | `GET /v1/workflows`, `GET /v1/workflows/{id}` | Workflows the user may run | grant |
 | `GET /v1/workflow-runs/{id}` | A run's state | owner |

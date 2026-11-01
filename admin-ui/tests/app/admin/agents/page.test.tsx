@@ -6,6 +6,10 @@ import type { AgentDefinition } from "@/lib/api";
 let adminAccess = { allowed: true, canWrite: true, error: null as string | null, isLoading: false };
 let agentsResult: { data?: { data: AgentDefinition[] }; isLoading: boolean; error: unknown };
 const push = vi.fn();
+let lastIncludeArchived: boolean | undefined;
+const archiveMutate = vi.fn((_vars: { id: string; archived: boolean }, options?: { onSuccess?: () => void }) =>
+  options?.onSuccess?.(),
+);
 const removeMutate = vi.fn((_id: string, options?: { onSuccess?: () => void }) => options?.onSuccess?.());
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -16,7 +20,11 @@ vi.mock("@/components/authorization/GrantEditor", () => ({
   ),
 }));
 vi.mock("@/hooks/useAgentDefinitions", () => ({
-  useAgentDefinitions: () => agentsResult,
+  useAgentDefinitions: (includeArchived?: boolean) => {
+    lastIncludeArchived = includeArchived;
+    return agentsResult;
+  },
+  useArchiveAgentDefinition: () => ({ mutate: archiveMutate, reset: vi.fn(), isPending: false, isError: false, error: null }),
   useDeleteAgentDefinition: () => ({ mutate: removeMutate, reset: vi.fn(), isPending: false, isError: false, error: null }),
 }));
 
@@ -39,6 +47,8 @@ beforeEach(() => {
   agentsResult = { data: { data: [agent] }, isLoading: false, error: null };
   push.mockClear();
   removeMutate.mockClear();
+  archiveMutate.mockClear();
+  lastIncludeArchived = undefined;
 });
 
 test("lists agents with model and dependencies", () => {
@@ -80,4 +90,27 @@ test("shows the empty state with a create action and filters by search", () => {
   fireEvent.change(screen.getByPlaceholderText("Search agents"), { target: { value: "" } });
   expect(screen.getByText("No agents yet")).toBeInTheDocument();
   expect(screen.getAllByRole("link", { name: "New agent" })).toHaveLength(2);
+});
+
+test("archives an agent after confirmation and explains what that means", () => {
+  render(<AdminAgentsPage />);
+  fireEvent.click(screen.getByRole("button", { name: "Archive Researcher" }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(within(dialog).getByText(/Past runs keep their history/)).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Archive" }));
+  expect(archiveMutate).toHaveBeenCalledWith({ id: "agent-1", archived: true }, expect.anything());
+});
+
+test("archived agents are fetched on demand, badged and restorable", () => {
+  render(<AdminAgentsPage />);
+  expect(lastIncludeArchived).toBe(false);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
+  expect(lastIncludeArchived).toBe(true);
+
+  agentsResult = { data: { data: [{ ...agent, archivedAt: "2026-03-01T00:00:00Z" }] }, isLoading: false, error: null };
+  render(<AdminAgentsPage />);
+  const row = screen.getAllByText("Researcher").map((el) => el.closest("tr")!).find((tr) => within(tr).queryByText("Archived"))!;
+  expect(within(row).queryByRole("button", { name: "Edit Researcher" })).not.toBeInTheDocument();
+  fireEvent.click(within(row).getByRole("button", { name: "Restore Researcher" }));
+  expect(archiveMutate).toHaveBeenCalledWith({ id: "agent-1", archived: false });
 });

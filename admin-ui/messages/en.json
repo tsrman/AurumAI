@@ -25,7 +25,14 @@
       "unknown": "Graph validation error: {code}"
     },
     "invalidJsonObject": "Invalid JSON object",
-    "invalidJsonList": "Invalid JSON list"
+    "invalidJsonList": "Invalid JSON list",
+    "agent": {
+      "agent_in_use": "The agent is used by active workflows. Remove it from them or archive them first",
+      "agent_has_history": "The agent appears in the history of workflows or runs, so it cannot be deleted. Archive it instead",
+      "agent_in_active_run": "The agent is in a running workflow. Wait for the run to finish or cancel it",
+      "agent_name_archived": "An archived agent already has this name. Restore it or choose another name",
+      "unknown": "The agent could not be changed ({code})"
+    }
   },
   "common": {
     "loading": "Loading...",
@@ -834,8 +841,16 @@
       "delete": "Delete",
       "deleteAria": "Delete {agent}",
       "deleteTitle": "Delete the agent?",
-      "deleteDescription": "“{agent}” will disappear from chat for everyone. Workflows that use it will stop working.",
-      "hermes": "Hermes Agent"
+      "deleteDescription": "“{agent}” will be deleted for good. This works only for an agent nothing has ever used; otherwise archive it.",
+      "hermes": "Hermes Agent",
+      "showArchived": "Show archived",
+      "archived": "Archived",
+      "archive": "Archive",
+      "archiveAria": "Archive {agent}",
+      "restore": "Restore",
+      "restoreAria": "Restore {agent}",
+      "archiveTitle": "Archive the agent?",
+      "archiveDescription": "“{agent}” will disappear from chat and from lists, and nothing new can run it. Past runs keep their history, and you can restore the agent later."
     },
     "editor": {
       "createTitle": "New agent",

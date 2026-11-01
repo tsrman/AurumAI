@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Agents
+
+- **Archiving agents.** An agent that a workflow or a run ever referred to cannot be deleted, so it
+  can now be archived: hidden from lists and pickers, refused for new use (`/execution`, workflows,
+  runs), history intact, and restorable. `POST /v1/agent-definitions/{id}/archive` and `/unarchive`;
+  `GET /v1/agent-definitions?includeArchived=true`. The admin UI has archive and restore actions and
+  a **Show archived** switch.
+- **Clear reasons instead of a bare 409.** Deleting or archiving an agent is refused with a coded
+  reason (`agent_in_use`, `agent_has_history`, `agent_in_active_run`) naming the workflows involved, and
+  the UI says why. A name held by an archived agent is reported as such.
+
+### Fixed
+
+- Deleting an agent that only past runs referred to ended in a 500 from the foreign key; it is now a
+  409 that points to archiving.
+
+### Upgrade notes
+
+- Migration `20261106_agent_archive` adds `archived_at` and `archived_by` to `agent_definitions`.
+
 ## v0.0.4 (2026-11-01)
 
 ### Hermes Agent on Kubernetes
