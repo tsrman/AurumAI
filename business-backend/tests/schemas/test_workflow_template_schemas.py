@@ -203,6 +203,9 @@ def test_snapshot_serializes_only_camel_case_configuration(template_snapshot) ->
                 "skillIds": [],
                 "knowledgeBaseIds": [],
                 "kind": "agent",
+                "webEnabled": True,
+                "imagesEnabled": True,
+                "askUserEnabled": True,
             }
         ],
         "nodes": [

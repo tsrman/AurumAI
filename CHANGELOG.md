@@ -12,10 +12,16 @@
 - **Clear reasons instead of a bare 409.** Deleting or archiving an agent is refused with a coded
   reason (`agent_in_use`, `agent_has_history`, `agent_in_active_run`) naming the workflows involved, and
   the UI says why. A name held by an archived agent is reported as such.
+- **Configurable agents and a creation wizard.** Each agent has three switches for its built-in
+  capabilities in chat: web search and reading pages, image generation and editing, and questions
+  to the user (`webEnabled`, `imagesEnabled`, `askUserEnabled`, all on by default, so existing
+  agents keep working). They narrow what the platform's switches and the user's rights already
+  allow, never widen it. The admin UI creates and edits agents in a step-by-step wizard (type,
+  basics, instructions, tools and knowledge, capabilities, review).
 - **Agents in chat.** The sidebar and the agent picker list the agents an administrator created
   and granted, in place of the built-in demo agents, and a chat turn can run on one:
   `agentDefinitionId` in `POST /v1/chat/stream`, `GET /v1/chat/agent-definitions`. The turn takes
-  the agent's model, instructions, skills and knowledge bases (web and image tools are off), the
+  the agent's model, instructions, skills and knowledge bases (web, image and question tools as the agent allows), the
   agent stays chosen for the conversation, and access, archiving and dependencies are checked on
   every turn. The conversation runner scopes the prompt and tools of an agent turn.
 
@@ -31,7 +37,9 @@
 
 ### Upgrade notes
 
-- Migration `20261106_agent_archive` adds `archived_at` and `archived_by` to `agent_definitions`.
+- Migrations `20261106_agent_archive` (`archived_at`, `archived_by`) and
+  `20261107_agent_capabilities` (`web_enabled`, `images_enabled`, `ask_user_enabled`, default true)
+  extend `agent_definitions`.
 - Roll out business-backend and conversation-runner together with business-ui: an agent turn
   signals the runner a new `agent` field, which an older runner ignores.
 

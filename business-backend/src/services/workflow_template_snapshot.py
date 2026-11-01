@@ -40,6 +40,10 @@ def build_template_snapshot(
                 skill_ids=agent.skill_ids,
                 knowledge_base_ids=agent.knowledge_base_ids,
                 kind=cast(Literal["agent", "hermes"], agent.kind or "agent"),
+                # Not yet flushed rows carry no value: the capabilities default to on.
+                web_enabled=agent.web_enabled is not False,
+                images_enabled=agent.images_enabled is not False,
+                ask_user_enabled=agent.ask_user_enabled is not False,
             )
             for agent in sorted_agents
         ],

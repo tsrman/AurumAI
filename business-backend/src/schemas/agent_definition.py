@@ -52,6 +52,9 @@ class AgentDefinitionCreate(_AgentDefinitionFields):
     # Fixed at creation. "hermes": a workflow node run by Hermes Agent, which
     # brings the platform's tools and its own skills instead of these.
     kind: Literal["agent", "hermes"] = "agent"
+    web_enabled: bool = True
+    images_enabled: bool = True
+    ask_user_enabled: bool = True
 
     @model_validator(mode="after")
     def hermes_has_no_tools(self) -> "AgentDefinitionCreate":
@@ -68,6 +71,16 @@ class AgentDefinitionUpdate(_AgentDefinitionFields):
     temperature: float | None = Field(default=None, ge=0, le=2)
     skill_ids: list[UUID] | None = Field(default=None, max_length=100)
     knowledge_base_ids: list[UUID] | None = Field(default=None, max_length=100)
+    web_enabled: bool | None = None
+    images_enabled: bool | None = None
+    ask_user_enabled: bool | None = None
+
+    @field_validator("web_enabled", "images_enabled", "ask_user_enabled")
+    @classmethod
+    def reject_null_switch(cls, value: bool | None) -> bool | None:
+        if value is None:
+            raise ValueError("value must not be null")
+        return value
 
 
 class AgentDefinitionResponse(BaseModel):
@@ -83,6 +96,9 @@ class AgentDefinitionResponse(BaseModel):
     skillIds: list[UUID]
     knowledgeBaseIds: list[UUID]
     kind: Literal["agent", "hermes"] = "agent"
+    webEnabled: bool = True
+    imagesEnabled: bool = True
+    askUserEnabled: bool = True
     archivedAt: datetime | None = None
     canWrite: bool
     createdAt: datetime

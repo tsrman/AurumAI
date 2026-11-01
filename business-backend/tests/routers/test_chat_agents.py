@@ -36,6 +36,9 @@ def _agent(**overrides):  # noqa: ANN003, ANN202
         "temperature": 0.2,
         "allowed_skill_ids": [str(SKILL_ID)],
         "knowledge_bases": [{"id": str(BASE_ID), "name": "Procedures"}],
+        "web_enabled": True,
+        "images_enabled": True,
+        "ask_user_enabled": True,
     }
     values.update(overrides)
     return ChatAgentTurn(**values)
@@ -61,15 +64,32 @@ def _patches(conv, pubsub, signal, resolver=None, **overrides):  # noqa: ANN001,
     return patches
 
 
+def _platform(monkeypatch, *, web=True, images=True, questions=True):  # noqa: ANN001, ANN202
+    monkeypatch.setattr(chat.settings, "WEB_ENABLED", web)
+    monkeypatch.setattr(chat.settings, "IMAGES_ENABLED", images)
+    monkeypatch.setattr(chat.settings, "USER_QUESTIONS_ENABLED", questions)
+
+
+def _image_models():  # noqa: ANN202
+    return {
+        "image_models": patch.object(chat, "organization_image_models", AsyncMock(return_value=("gen-model", "edit-model"))),
+        "recent_images": patch.object(chat, "recent_conversation_images", AsyncMock(return_value=[])),
+    }
+
+
+FLAGS = ("web_tools_enabled", "image_generation_enabled", "image_editing_enabled", "user_questions_enabled")
+
+
 async def test_an_agent_turn_runs_on_the_agents_model_with_its_prompt_and_tool_scope(monkeypatch) -> None:
-    monkeypatch.setattr(chat.settings, "WEB_ENABLED", True)
-    monkeypatch.setattr(chat.settings, "USER_QUESTIONS_ENABLED", True)
+    _platform(monkeypatch)
     conv, user, session, pubsub = _fixture()
     conv.temperature = None
     conv.agent_definition_id = None
     signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
 
-    mocks, error = await _stream(conv, user, session, _request(conv), _patches(conv, pubsub, signal))
+    mocks, error = await _stream(
+        conv, user, session, _request(conv), _patches(conv, pubsub, signal, **_image_models())
+    )
 
     assert error is None
     mocks["classify"].assert_not_awaited()
@@ -86,8 +106,8 @@ async def test_an_agent_turn_runs_on_the_agents_model_with_its_prompt_and_tool_s
         "knowledge_bases": [{"id": str(BASE_ID), "name": "Procedures"}],
     }
     assert payload["temperature"] == 0.2
-    # The agent has the tools it was given: no web, no images.
-    assert not any(payload[flag] for flag in ("web_tools_enabled", "image_generation_enabled", "image_editing_enabled"))
+    # All three built-in capabilities are on for this agent and allowed for the user.
+    assert all(payload[flag] for flag in ("web_tools_enabled", "image_generation_enabled", "image_editing_enabled"))
     assert payload["user_questions_enabled"] is True
     assert conv.agent_definition_id == AGENT_ID
 
@@ -149,3 +169,44 @@ def test_at_most_one_of_an_agent_a_system_agent_and_a_workflow() -> None:
     ):
         with pytest.raises(ValidationError):
             ChatRequest(**base, **extra)
+
+
+@pytest.mark.parametrize(
+    ("switch", "flags_off"),
+    [
+        ("web_enabled", {"web_tools_enabled"}),
+        ("images_enabled", {"image_generation_enabled", "image_editing_enabled"}),
+        ("ask_user_enabled", {"user_questions_enabled"}),
+    ],
+)
+async def test_each_capability_of_an_agent_is_switched_on_its_own(monkeypatch, switch, flags_off) -> None:  # noqa: ANN001
+    _platform(monkeypatch)
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+    resolver = AsyncMock(return_value=_agent(**{switch: False}))
+
+    await _stream(conv, user, session, _request(conv), _patches(conv, pubsub, signal, resolver=resolver, **_image_models()))
+
+    payload = signal.call_args.args[2]
+    assert {flag for flag in FLAGS if not payload[flag]} == flags_off
+
+
+async def test_an_agent_never_widens_what_the_platform_or_the_user_allows(monkeypatch) -> None:
+    _platform(monkeypatch, web=False, images=False, questions=False)
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+
+    await _stream(conv, user, session, _request(conv), _patches(conv, pubsub, signal, **_image_models()))
+
+    assert not any(signal.call_args.args[2][flag] for flag in FLAGS)
+
+    # The platform allows everything, the user lacks the capabilities.
+    _platform(monkeypatch)
+    signal.reset_mock()
+    no_rights = patch.object(chat.authorization_service, "has_capability", AsyncMock(return_value=False))
+    await _stream(
+        conv, user, session, _request(conv), _patches(conv, pubsub, signal, capability=no_rights, **_image_models())
+    )
+
+    payload = signal.call_args.args[2]
+    assert not any(payload[flag] for flag in ("web_tools_enabled", "image_generation_enabled", "image_editing_enabled"))

@@ -100,6 +100,28 @@ bases, offered to users in chat. Create, edit and delete them here; people with
 and knowledge bases it has been granted, and a person using it must be granted the
 agent itself.
 
+### Creating and configuring an agent
+
+**New agent** opens a step-by-step wizard (editing an agent uses the same steps and can be
+saved from any of them):
+
+1. **Type.** An ordinary **Agent**, or a **Hermes Agent** (a workflow node that runs in a
+   workspace of its own). The type is fixed once the agent exists.
+2. **Basics.** Name, description and the model (a Hermes Agent runs on the organization's
+   Hermes model).
+3. **Instructions.** The system prompt and the temperature (or inherit the organization's).
+4. **Tools and knowledge.** The skills and knowledge bases the agent may use, and nothing
+   else.
+5. **Capabilities.** Three built-in capabilities, each on its own switch: **web search and
+   reading pages**, **image generation and editing** and **questions to the user**. All are on
+   for a new agent.
+6. **Review** and create.
+
+The capability switches only narrow what a chat turn on the agent may use. The platform's
+own switches (web, images, user questions) and the person's rights (`web.access`,
+`images.generate`) still apply, so an agent never gets more than the person may do. They
+apply to chat turns on the agent; a workflow's tools are set on the workflow run.
+
 ### Archiving and deleting
 
 An agent that nothing ever used can be **deleted**. An agent a workflow or a run has ever

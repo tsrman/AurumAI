@@ -235,6 +235,33 @@ async def test_capture_ignores_later_source_changes(
     assert template.version == 1
 
 
+async def test_capture_keeps_the_capabilities_switched_for_each_agent(
+    db: AsyncSession,
+    test_org: Organization,
+    test_user: User,
+    template_source: WorkflowDefinition,
+) -> None:
+    source_agent = await db.get(AgentDefinition, template_source.supervisor_agent_definition_id)
+    assert source_agent is not None
+    source_agent.web_enabled = False
+    source_agent.ask_user_enabled = False
+    await db.flush()
+
+    template = await WorkflowTemplateService(catalog=available_catalog).capture(
+        db,
+        _actor(test_org, test_user),
+        TemplateCaptureRequest(
+            source_workflow_id=template_source.id,
+            source_workflow_version=1,
+            name="Saved",
+            description=None,
+        ),
+    )
+
+    agent = template.snapshot["agents"][0]
+    assert (agent["webEnabled"], agent["imagesEnabled"], agent["askUserEnabled"]) == (False, True, False)
+
+
 async def test_capture_rejects_missing_and_foreign_sources(
     db: AsyncSession,
     test_org: Organization,

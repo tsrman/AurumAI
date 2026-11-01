@@ -930,11 +930,16 @@ async def chat_stream(
             "turn_id": str(turn_id),
             # Hermes reaches web, images and questions through its own bridge.
             # Hermes asks through its clarify tool, as the turn's questions.
-            "user_questions_enabled": settings.USER_QUESTIONS_ENABLED,
-            # An agent has the tools it was given, no more.
-            "web_tools_enabled": web_tools_enabled and not hermes and chat_agent is None,
-            "image_generation_enabled": image_generation_enabled and not hermes and chat_agent is None,
-            "image_editing_enabled": image_editing_enabled and not hermes and chat_agent is None,
+            "user_questions_enabled": settings.USER_QUESTIONS_ENABLED and (chat_agent is None or chat_agent.ask_user_enabled),
+            # An agent switches each built-in capability on or off; it never adds
+            # one the platform or the user's rights do not allow.
+            "web_tools_enabled": web_tools_enabled and not hermes and (chat_agent is None or chat_agent.web_enabled),
+            "image_generation_enabled": image_generation_enabled
+            and not hermes
+            and (chat_agent is None or chat_agent.images_enabled),
+            "image_editing_enabled": image_editing_enabled
+            and not hermes
+            and (chat_agent is None or chat_agent.images_enabled),
         }
         if chat_agent is not None:
             signal_payload["agent"] = {

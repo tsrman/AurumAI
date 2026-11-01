@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { ConstructorForm } from "@/components/aurum/constructor/ConstructorForm";
+import { AgentWizard } from "@/components/aurum/constructor/AgentWizard";
 import { AgentPreview } from "@/components/aurum/constructor/AgentPreview";
 import { PageBody, PageHeader } from "@/components/ui";
 import { useAgentConstructor } from "@/hooks/useAgentConstructor";
@@ -34,7 +34,7 @@ export function AgentEditor({ agent }: { agent?: AgentDefinition }) {
       <PageBody>
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <div className="xl:col-span-2">
-            <ConstructorForm
+            <AgentWizard
               state={editor.state}
               setField={editor.setField}
               toggleTool={editor.toggleTool}

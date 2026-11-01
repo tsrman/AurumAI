@@ -49,6 +49,9 @@ class ChatAgentTurn:
     temperature: float | None
     allowed_skill_ids: list[str]
     knowledge_bases: list[dict[str, str]]
+    web_enabled: bool = True
+    images_enabled: bool = True
+    ask_user_enabled: bool = True
 
 
 class AgentAuthorizationService:
@@ -255,6 +258,9 @@ class AgentAuthorizationService:
             knowledge_bases=[
                 {"id": str(base_id), "name": bases[base_id]} for base_id in agent.knowledge_base_ids if base_id in bases
             ],
+            web_enabled=agent.web_enabled,
+            images_enabled=agent.images_enabled,
+            ask_user_enabled=agent.ask_user_enabled,
         )
 
 

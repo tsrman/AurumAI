@@ -67,8 +67,9 @@ administrator (see the [administrator guide](admin-guide.md#agents)). Pick one i
 sidebar or the agent picker, then write as usual:
 
 - The turn runs on the agent's model and instructions, and the agent has only the skills
-  and knowledge bases it was given. Web search and image tools are off for it. The model
-  picker shows the agent's model and cannot change it.
+  and knowledge bases it was given. Web search, image tools and questions to you are
+  available if the administrator switched them on for the agent and you may use them. The
+  model picker shows the agent's model and cannot change it.
 - The agent stays chosen for the conversation, also after a reload. Choosing a workflow or
   Hermes Agent for a turn replaces the agent for that turn.
 - You see only agents granted to you. An agent that was archived or whose access was
