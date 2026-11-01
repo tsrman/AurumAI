@@ -193,7 +193,8 @@ class AgentAuthorizationService:
             agent_id,
             AccessPermission.READ,
         )
-        if agent is None:
+        # An archived agent is gone for new use, exactly like a missing one.
+        if agent is None or agent.archived_at is not None:
             raise AgentDefinitionNotFound(agent_id)
         await self.require_dependencies(
             session,

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,7 @@ from src.core.authorization_types import AccessPermission, AuthorizationSubject,
 from src.core.capability_catalog import Capability
 from src.core.dependencies import get_org_db_session, get_service_db_session
 from src.models.agent_definition import AgentDefinition
-from src.repositories.agent_definition_repository import agent_definition_repository
+from src.repositories.agent_definition_repository import AgentReferences, agent_definition_repository
 from src.schemas.agent_definition import (
     AgentDefinitionCreate,
     AgentDefinitionResponse,
@@ -26,7 +27,6 @@ from src.services.agent_authorization import (
     agent_authorization_service,
 )
 from src.services.authorization import authorization_service
-from src.repositories.workflow_definition_repository import workflow_definition_repository
 
 
 router = APIRouter(prefix="/agent-definitions")
@@ -64,6 +64,7 @@ def _response(agent: AgentDefinition, *, can_write: bool) -> AgentDefinitionResp
         skillIds=agent.skill_ids,
         knowledgeBaseIds=agent.knowledge_base_ids,
         kind=cast(Literal["agent", "hermes"], agent.kind),
+        archivedAt=agent.archived_at,
         canWrite=can_write,
         createdAt=agent.created_at,
         updatedAt=agent.updated_at,
@@ -96,6 +97,60 @@ async def _require_dependency_access(
         )
 
 
+def _workflows(items: list[tuple[UUID, str]]) -> list[dict[str, str]]:
+    return [{"id": str(item_id), "name": name} for item_id, name in items]
+
+
+def _conflict(code: str, **extra: object) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": code, **extra})
+
+
+def _require_not_in_use(refs: AgentReferences) -> None:
+    """Refuse while an active workflow names the agent, or a run of it is open."""
+    if refs.active_workflows:
+        raise _conflict("agent_in_use", workflows=_workflows(refs.active_workflows))
+    if refs.in_active_run:
+        raise _conflict("agent_in_active_run")
+
+
+async def _name_conflict(session: AsyncSession, org_id: UUID, name: str | None) -> HTTPException:
+    """The 409 for a taken name; it says so when an archived agent holds the name."""
+    if name is not None:
+        holder = await session.scalar(
+            select(AgentDefinition.archived_at).where(
+                AgentDefinition.org_id == org_id, AgentDefinition.name == name
+            )
+        )
+        if holder is not None:
+            return _conflict("agent_name_archived")
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Agent definition name already exists",
+    )
+
+
+async def _writable_agent(
+    session: AsyncSession, subject: AuthorizationSubject, agent_id: UUID
+) -> AgentDefinition:
+    visible = await agent_definition_repository.get_accessible(
+        session, subject, agent_id, AccessPermission.READ
+    )
+    if visible is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent definition not found",
+        )
+    agent = await agent_definition_repository.get_accessible(
+        session, subject, agent_id, AccessPermission.WRITE
+    )
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agent definition write access required",
+        )
+    return agent
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_agent_definition(
     data: AgentDefinitionCreate,
@@ -126,20 +181,20 @@ async def create_agent_definition(
         )
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Agent definition name already exists",
-        )
+        raise await _name_conflict(session, subject.org_id, data.name)
     return ApiResponse(data=_response(agent, can_write=True), meta=_meta())
 
 
 @router.get("")
 async def list_agent_definitions(
+    includeArchived: bool = False,
     user: UserInfo = Depends(get_current_user),
     session: AsyncSession = Depends(get_org_db_session),
 ) -> ApiResponse[list[AgentDefinitionResponse]]:
     subject = _subject(user)
-    rows = await agent_definition_repository.list_accessible(session, subject)
+    rows = await agent_definition_repository.list_accessible(
+        session, subject, include_archived=includeArchived
+    )
     writable_ids = await authorization_service.accessible_resource_ids(
         session,
         subject,
@@ -234,11 +289,34 @@ async def update_agent_definition(
         updated = await agent_definition_repository.update(session, agent, data)
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Agent definition name already exists",
-        )
+        raise await _name_conflict(session, subject.org_id, data.name)
     return ApiResponse(data=_response(updated, can_write=True), meta=_meta())
+
+
+@router.post("/{agent_id}/archive")
+async def archive_agent_definition(
+    agent_id: UUID,
+    user: UserInfo = Depends(get_current_user),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[AgentDefinitionResponse]:
+    subject = _subject(user)
+    agent = await _writable_agent(session, subject, agent_id)
+    if agent.archived_at is None:
+        _require_not_in_use(await agent_definition_repository.references(session, subject.org_id, agent.id))
+    agent = await agent_definition_repository.set_archived(session, agent, subject, archived=True)
+    return ApiResponse(data=_response(agent, can_write=True), meta=_meta())
+
+
+@router.post("/{agent_id}/unarchive")
+async def unarchive_agent_definition(
+    agent_id: UUID,
+    user: UserInfo = Depends(get_current_user),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[AgentDefinitionResponse]:
+    subject = _subject(user)
+    agent = await _writable_agent(session, subject, agent_id)
+    agent = await agent_definition_repository.set_archived(session, agent, subject, archived=False)
+    return ApiResponse(data=_response(agent, can_write=True), meta=_meta())
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -248,30 +326,18 @@ async def delete_agent_definition(
     session: AsyncSession = Depends(get_org_db_session),
 ) -> None:
     subject = _subject(user)
-    visible = await agent_definition_repository.get_accessible(
-        session, subject, agent_id, AccessPermission.READ
-    )
-    if visible is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent definition not found",
-        )
-    agent = await agent_definition_repository.get_accessible(
-        session, subject, agent_id, AccessPermission.WRITE
-    )
-    if agent is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Agent definition write access required",
-        )
-    if await workflow_definition_repository.is_agent_referenced(
-        session, subject.org_id, agent.id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Agent definition is used by a workflow",
-        )
-    await agent_definition_repository.delete_with_grants(session, agent)
+    agent = await _writable_agent(session, subject, agent_id)
+    refs = await agent_definition_repository.references(session, subject.org_id, agent.id)
+    _require_not_in_use(refs)
+    if refs.archived_workflows or refs.has_history:
+        # History keeps the agent: archive it instead.
+        raise _conflict("agent_has_history", workflows=_workflows(refs.archived_workflows))
+    try:
+        await agent_definition_repository.delete_with_grants(session, agent)
+    except IntegrityError:
+        # A reference this router does not know of (a concurrent run, a later table): never a 500.
+        await session.rollback()
+        raise _conflict("agent_has_history", workflows=[])
 
 
 @router.get("/{agent_id}/execution")

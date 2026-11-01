@@ -100,6 +100,22 @@ bases, offered to users in chat. Create, edit and delete them here; people with
 and knowledge bases it has been granted, and a person using it must be granted the
 agent itself.
 
+### Archiving and deleting
+
+An agent that nothing ever used can be **deleted**. An agent a workflow or a run has ever
+referred to cannot: its history stays intact, so you **archive** it instead. An archived
+agent disappears from chat, lists and pickers (turn on **Show archived** to see it), nothing
+new can run it or add it to a workflow, and past runs keep their history. **Restore** brings
+it back. Its name stays taken while it is archived.
+
+When an action is refused, the message says why and names the workflows involved:
+
+- *Used by active workflows*: remove the agent from them, or archive those workflows, first.
+  Archiving a workflow keeps its nodes, so a workflow that is only archived still holds its
+  agents for history: archive them instead of deleting.
+- *Appears in history*: the agent took part in a past run or an archived workflow; archive it.
+- *In a running workflow*: wait for the run to finish or cancel it.
+
 Agent kinds include ordinary agents and, when Hermes Agent is on, an agent that runs on
 Hermes (usable as a workflow node, marked with a **Hermes Agent** badge).
 

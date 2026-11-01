@@ -191,6 +191,7 @@ class WorkflowRunService:
                     .where(
                         AgentDefinition.org_id == subject.org_id,
                         AgentDefinition.id.in_(agent_ids),
+                        AgentDefinition.archived_at.is_(None),
                     )
                     .with_for_update()
                 )

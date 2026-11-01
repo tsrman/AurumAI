@@ -175,6 +175,7 @@ test("the table selects only an active saved workflow as the template source", a
   );
   expect(screen.getByLabelText("Source workflow")).toHaveValue("active");
   await user.click(screen.getByRole("tab", { name: "My workflows" }));
+  await user.click(screen.getByRole("checkbox", { name: "Show archived" }));
   expect(
     within(screen.getByRole("row", { name: /Archived/ })).queryByRole(
       "button",
@@ -453,4 +454,19 @@ test("a failed background refetch keeps the dirty editor mounted", async () => {
     "Survive network outage",
   );
   expect(screen.getByRole("alert")).toHaveTextContent(/draft is retained/);
+});
+
+test("archived workflows are hidden until Show archived is switched on", async () => {
+  state.access = { allowed: true, canWrite: true, isLoading: false, error: null };
+  state.workflows = [
+    { id: "active", name: "Live flow", version: 1, maxParallelism: 1, status: "active" },
+    { id: "old", name: "Old flow", version: 1, maxParallelism: 1, status: "archived" },
+  ];
+  const user = userEvent.setup();
+  render(<AdminWorkflowsPage />);
+
+  expect(screen.getByRole("row", { name: /Live flow/ })).toBeInTheDocument();
+  expect(screen.queryByRole("row", { name: /Old flow/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: "Show archived" }));
+  expect(screen.getByRole("row", { name: /Old flow/ })).toBeInTheDocument();
 });

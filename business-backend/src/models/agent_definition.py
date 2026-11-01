@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,6 +43,15 @@ class AgentDefinition(BaseModel):
     # phase 6) on the organization's Hermes model, with its system prompt as
     # instructions and no skills or knowledge bases of its own.
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="agent", server_default="agent")
+
+    # An archived agent is hidden and refused for new use; what refers to it
+    # (workflow nodes, runs) stays intact. NULL means active.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
