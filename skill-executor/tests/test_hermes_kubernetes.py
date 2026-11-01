@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -60,6 +61,8 @@ class FakeCore:
         self.linger = 0
         self._terminating: dict[str, int] = {}
         self.forced: list[str] = []
+        self.delete_uids: list[str | None] = []
+        self.replace_before_delete: Any | None = None
         # Set to make the Pod report a Ready condition (the node's word about it).
         self.ready: str | None = None
 
@@ -81,6 +84,7 @@ class FakeCore:
         assert namespace == NAMESPACE
         if pod.metadata.name in self.pods:
             raise _api_error(409)
+        pod.metadata.uid = uuid4().hex
         pod.status = self._status()
         self.pods[pod.metadata.name] = pod
         return pod
@@ -106,9 +110,19 @@ class FakeCore:
         ]
         return SimpleNamespace(items=items)
 
-    async def delete_namespaced_pod(self, name: str, namespace: str, grace_period_seconds: int | None = None) -> None:
+    async def delete_namespaced_pod(
+        self, name: str, namespace: str, grace_period_seconds: int | None = None, body: Any = None
+    ) -> None:
+        assert namespace == NAMESPACE
+        uid = body.preconditions.uid if body is not None and body.preconditions is not None else None
+        self.delete_uids.append(uid)
+        if self.replace_before_delete is not None:
+            self.pods[name] = self.replace_before_delete
+            self.replace_before_delete = None
         if name not in self.pods:
             raise _api_error(404)
+        if uid is not None and uid != self.pods[name].metadata.uid:
+            raise _api_error(409)
         self.deleted.append(name)
         if grace_period_seconds == 0:
             # Forced: the API object goes at once, whatever the node says.
@@ -401,17 +415,47 @@ async def test_a_pod_that_never_runs_times_out_and_a_failed_pod_is_reported(clus
 
 
 @pytest.mark.asyncio
-async def test_an_existing_pod_name_and_a_failed_upload_are_errors_that_clean_up(cluster) -> None:
-    sandboxes, core, exec_client, _ = cluster
-    core.pods[resource_name(SESSION)] = SimpleNamespace(metadata=SimpleNamespace(name="x", labels={}))
+@pytest.mark.parametrize("owned", [False, True])
+async def test_a_create_conflict_preserves_the_existing_pod(cluster, owned: bool) -> None:
+    sandboxes, core, *_ = cluster
+    name = resource_name(SESSION)
+    existing = _pod(SESSION)
+    if not owned:
+        existing.metadata.labels = {}
+    core.pods[name] = existing
+
     with pytest.raises(HermesSandboxError) as excinfo:
         await _create(sandboxes)
+
     assert excinfo.value.code == "hermes_sandbox_exists"
-    core.pods.clear()
+    assert core.pods.get(name) is existing and not core.deleted
+
+
+@pytest.mark.asyncio
+async def test_a_failed_upload_removes_the_created_pod(cluster) -> None:
+    sandboxes, core, exec_client, _ = cluster
     exec_client.fail_upload = True
     with pytest.raises(HermesSandboxError) as excinfo:
         await _create(sandboxes)
     assert excinfo.value.code == "hermes_upload_failed" and not core.pods
+
+
+@pytest.mark.asyncio
+async def test_an_uncertain_create_response_preserves_the_pod(cluster, monkeypatch) -> None:
+    sandboxes, core, exec_client, _ = cluster
+    create = core.create_namespaced_pod
+
+    async def lose_response(namespace: str, pod: Any) -> Any:
+        await create(namespace, pod)
+        raise _api_error(503)
+
+    monkeypatch.setattr(core, "create_namespaced_pod", lose_response)
+    with pytest.raises(HermesSandboxError) as excinfo:
+        await _create(sandboxes)
+
+    assert excinfo.value.code == "hermes_kubernetes_failed"
+    assert resource_name(SESSION) in core.pods and not core.deleted
+    assert not exec_client.calls
 
 
 @pytest.mark.asyncio
@@ -580,7 +624,9 @@ def _pod(session: str, *, phase: str = "Running", created: float | None = None, 
         CREATED_LABEL: str(int(created if created is not None else time.time())),
     }
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=resource_name(session), labels=labels, deletion_timestamp="t" if deleting else None),
+        metadata=SimpleNamespace(
+            name=resource_name(session), uid=uuid4().hex, labels=labels, deletion_timestamp="t" if deleting else None
+        ),
         status=SimpleNamespace(phase=phase, container_statuses=[]),
     )
 
@@ -679,6 +725,124 @@ async def test_close_deletes_the_pod_and_purge_removes_a_conversation(cluster) -
 
 
 @pytest.mark.asyncio
+async def test_close_uses_the_created_pod_uid_as_a_delete_precondition(cluster) -> None:
+    sandboxes, core, *_ = cluster
+    sandbox, _ = await _create(sandboxes)
+    uid = core.pods[sandbox.container_id].metadata.uid
+
+    await sandboxes.close(SESSION)
+
+    assert core.delete_uids == [uid] and not core.pods
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label", [RELEASE_LABEL, COMPONENT_LABEL, LABEL, SESSION_LABEL, "aurum-ai.hermes-org", "aurum-ai.hermes-conversation"]
+)
+async def test_close_preserves_a_pod_whose_ownership_changed(cluster, label: str) -> None:
+    sandboxes, core, *_ = cluster
+    sandbox, _ = await _create(sandboxes)
+    existing = core.pods[sandbox.container_id]
+    existing.metadata.labels[label] = "another-owner"
+
+    await sandboxes.close(SESSION)
+
+    assert core.pods.get(sandbox.container_id) is existing and not core.deleted
+
+
+@pytest.mark.asyncio
+async def test_close_preserves_a_replacement_pod_when_the_delete_races(cluster) -> None:
+    sandboxes, core, *_ = cluster
+    sandbox, _ = await _create(sandboxes)
+    uid = core.pods[sandbox.container_id].metadata.uid
+    replacement = _pod(SESSION)
+    core.replace_before_delete = replacement
+
+    await sandboxes.close(SESSION)
+
+    assert core.pods.get(sandbox.container_id) is replacement and not core.deleted
+    assert core.delete_uids == [uid]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stops_when_a_new_pod_reuses_the_deleted_name(cluster, monkeypatch) -> None:
+    sandboxes, core, *_ = cluster
+    sandbox, _ = await _create(sandboxes)
+    uid = core.pods[sandbox.container_id].metadata.uid
+    replacement = _pod(SESSION)
+    read = core.read_namespaced_pod
+
+    async def replace_after_delete(name: str, namespace: str) -> Any:
+        if core.deleted:
+            core.pods[name] = replacement
+        return await read(name, namespace)
+
+    monkeypatch.setattr(core, "read_namespaced_pod", replace_after_delete)
+    sandboxes._settings.hermes_stop_timeout_seconds = 0
+    sandboxes._remove_wait_seconds = 0.02
+    sandboxes._force_wait_seconds = 0.02
+    await sandboxes.close(SESSION)
+
+    assert core.pods.get(sandbox.container_id) is replacement
+    assert core.delete_uids == [uid]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, 503])
+async def test_close_preserves_a_pod_when_ownership_cannot_be_read(cluster, monkeypatch, status: int) -> None:
+    sandboxes, core, *_ = cluster
+    sandbox, _ = await _create(sandboxes)
+    existing = core.pods[sandbox.container_id]
+
+    async def unavailable(name: str, namespace: str) -> Any:
+        raise _api_error(status)
+
+    monkeypatch.setattr(core, "read_namespaced_pod", unavailable)
+    await sandboxes.close(SESSION)
+
+    assert core.pods.get(sandbox.container_id) is existing and not core.delete_uids
+
+
+@pytest.mark.asyncio
+async def test_a_transient_read_failure_does_not_skip_the_deletion_grace_period(cluster, monkeypatch) -> None:
+    sandboxes, core, *_ = cluster
+    sandbox, _ = await _create(sandboxes)
+    core.linger = 10**6
+    read = core.read_namespaced_pod
+    failed = False
+
+    async def unavailable_once_after_delete(name: str, namespace: str) -> Any:
+        nonlocal failed
+        if core.deleted and not failed:
+            failed = True
+            raise _api_error(503)
+        return await read(name, namespace)
+
+    monkeypatch.setattr(core, "read_namespaced_pod", unavailable_once_after_delete)
+    await sandboxes.close(SESSION)
+
+    assert failed and sandbox.container_id in core.pods
+    assert core.deleted == [sandbox.container_id] and not core.forced
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["uid", "session", "org", "conversation"])
+async def test_discovery_preserves_pods_with_incomplete_ownership(cluster, missing: str) -> None:
+    sandboxes, core, *_ = cluster
+    pod = _pod(SESSION, created=time.time() - 4000)
+    if missing == "uid":
+        pod.metadata.uid = None
+    else:
+        pod.metadata.labels.pop({"session": SESSION_LABEL, "org": "aurum-ai.hermes-org", "conversation": "aurum-ai.hermes-conversation"}[missing])
+    core.pods[pod.metadata.name] = pod
+
+    assert await sandboxes.adopt() == 0
+    await sandboxes._reap_leftovers(time.time())
+
+    assert core.pods.get(pod.metadata.name) is pod and not core.deleted
+
+
+@pytest.mark.asyncio
 async def test_exec_failures_are_the_backends_errors(cluster) -> None:
     sandboxes, *_ = cluster
     assert SandboxExecError in sandboxes._backend_errors and ApiException in sandboxes._backend_errors
@@ -758,6 +922,7 @@ async def test_a_pod_stuck_terminating_is_force_deleted_after_the_wait(cluster) 
 
     # A graceful delete first, then a forced one once the wait is over.
     assert core.deleted == [resource_name(SESSION)] * 2
+    assert all(core.delete_uids) and len(set(core.delete_uids)) == 1
     assert core.forced == [resource_name(SESSION)] and not core.pods
 
 

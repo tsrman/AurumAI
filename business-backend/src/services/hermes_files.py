@@ -294,4 +294,3 @@ async def _store(
         "contentType": kind.content_type,
         "sizeBytes": len(data),
     }
-

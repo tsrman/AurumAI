@@ -1,8 +1,9 @@
 # Hermes Agent integration design
 
-Status: approved design, not yet implemented (2026-10-25). Each phase below is a
-separate flag-gated change; the open questions are settled in the PR that needs
-them.
+Status: implemented in Docker Compose and Helm, behind explicit rollout switches
+(2026-11-01). The phases below record the design, implementation and acceptance
+boundaries. Deployment-specific verification still required is listed in the
+[roadmap](../ROADMAP.md#remaining-product-and-verification-work).
 
 ## Intent
 
