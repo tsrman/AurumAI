@@ -17,7 +17,6 @@ from src.routers import chat
 from src.services.agent_authorization import (
     AgentAuthorizationService,
     AgentDefinitionNotFound,
-    ChatAgentUnsupported,
 )
 from src.services.resource_registry import ResourceRegistry
 
@@ -44,7 +43,8 @@ def service() -> AgentAuthorizationService:
 
 
 async def _agent(db: AsyncSession, org: Organization, user: User, name: str, *, grant: bool = True, **fields) -> AgentDefinition:  # noqa: ANN003
-    agent = AgentDefinition(org_id=org.id, name=name, model_id="provider/model-v1", system_prompt="Be useful", **fields)
+    values = {"model_id": "provider/model-v1", "system_prompt": "Be useful", **fields}
+    agent = AgentDefinition(org_id=org.id, name=name, **values)
     db.add(agent)
     await db.flush()
     if grant:
@@ -61,7 +61,6 @@ async def test_chat_offers_only_active_granted_chat_capable_agents(
     shown = await _agent(db, test_org, test_user, "Shown")
     archived = await _agent(db, test_org, test_user, "Archived")
     await _agent(db, test_org, test_user, "Ungranted", grant=False)
-    await _agent(db, test_org, test_user, "Hermes node", kind="hermes")
     from datetime import datetime, timezone
 
     archived.archived_at = datetime.now(timezone.utc)
@@ -73,7 +72,33 @@ async def test_chat_offers_only_active_granted_chat_capable_agents(
         offered = await chat.chat_agent_definitions(user=user, session=db)
 
     assert [item.id for item in offered.data] == [str(shown.id)]
-    assert offered.data[0].modelId == "provider/model-v1"
+    assert (offered.data[0].modelId, offered.data[0].kind) == ("provider/model-v1", "agent")
+
+
+async def test_hermes_agents_are_offered_only_where_a_hermes_turn_would_be_accepted(
+    db: AsyncSession, test_org: Organization, test_user: User, service: AgentAuthorizationService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.services.hermes_access import HermesAccessDenied
+
+    hermes = await _agent(db, test_org, test_user, "Finance analyst", kind="hermes")
+    monkeypatch.setattr(chat, "agent_authorization_service", service)
+    user = UserInfo(user_id=str(test_user.id), org_id=str(test_org.id), role="member", raw_claims={})
+
+    async def offered(enabled: bool, denied: bool = False, model: str | None = "hermes-model") -> list[tuple[str, str]]:
+        monkeypatch.setattr(chat.settings, "HERMES_ENABLED", enabled)
+        access = AsyncMock(side_effect=HermesAccessDenied("hermes_access_denied")) if denied else AsyncMock()
+        with (
+            patch.object(chat, "require_hermes_capabilities", access),
+            patch.object(chat, "organization_hermes_model", AsyncMock(return_value=model)),
+            patch.object(chat, "ensure_model_allowed", AsyncMock()),
+        ):
+            result = await chat.chat_agent_definitions(user=user, session=db)
+        return [(item.id, item.kind) for item in result.data]
+
+    assert await offered(True) == [(str(hermes.id), "hermes")]
+    assert await offered(False) == []
+    assert await offered(True, denied=True) == []
+    assert await offered(True, model=None) == []
 
 
 async def test_a_turn_takes_the_agents_settings_with_its_knowledge_base_names(
@@ -94,12 +119,24 @@ async def test_a_turn_takes_the_agents_settings_with_its_knowledge_base_names(
     assert turn.knowledge_bases == [{"id": str(base.id), "name": "Procedures"}]
 
 
-async def test_hermes_kind_and_archived_agents_cannot_run_a_chat_turn(
+async def test_a_hermes_agent_is_chosen_without_a_stale_model_getting_in_the_way(
+    db: AsyncSession, test_org: Organization, test_user: User, service: AgentAuthorizationService
+) -> None:
+    # No model grant at all: a Hermes agent runs on the organization's current Hermes model,
+    # which the chat route checks, so the model stored on the agent is not.
+    hermes = await _agent(db, test_org, test_user, "Finance analyst", kind="hermes", model_id="stale/model")
+    subject = AuthorizationSubject(test_user.id, test_org.id, "member")
+
+    turn = await service.require_chat_agent(db, subject, hermes.id)
+
+    assert turn.kind == "hermes" and turn.system_prompt == "Be useful"
+
+
+async def test_archived_agents_cannot_run_a_chat_turn(
     db: AsyncSession, test_org: Organization, test_user: User, service: AgentAuthorizationService
 ) -> None:
     db.add(_grant(test_org, test_user, "model", "provider/model-v1"))
     await db.commit()
-    hermes = await _agent(db, test_org, test_user, "Hermes node", kind="hermes")
     gone = await _agent(db, test_org, test_user, "Gone")
     subject = AuthorizationSubject(test_user.id, test_org.id, "member")
     from datetime import datetime, timezone
@@ -107,8 +144,6 @@ async def test_hermes_kind_and_archived_agents_cannot_run_a_chat_turn(
     gone.archived_at = datetime.now(timezone.utc)
     await db.commit()
 
-    with pytest.raises(ChatAgentUnsupported):
-        await service.require_chat_agent(db, subject, hermes.id)
     with pytest.raises(AgentDefinitionNotFound):
         await service.require_chat_agent(db, subject, gone.id)
     with pytest.raises(AgentDefinitionNotFound):

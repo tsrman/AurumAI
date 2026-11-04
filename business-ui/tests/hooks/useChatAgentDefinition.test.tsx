@@ -25,6 +25,7 @@ vi.mock("@/hooks/useChatAgentDefinitions", () => ({
   useChatAgentDefinitions: () => ({
     data: [
       { id: "def-1", name: "Procedures assistant", description: "Answers from procedures", modelId: "agent-model" },
+      { id: "def-hermes", name: "Finance analyst", description: "Works on files", modelId: "hermes-model", kind: "hermes" },
     ],
   }),
 }));
@@ -72,7 +73,7 @@ test("signed in, the shell offers the ordinary chat and the administrator's agen
   }
   render(React.createElement(wrapper("general"), null, <Agents />));
 
-  expect(screen.getByTestId("names").textContent).toBe("General assistant|Procedures assistant");
+  expect(screen.getByTestId("names").textContent).toBe("General assistant|Procedures assistant|Finance analyst");
 });
 
 test("a turn on an administrator's agent names it in the request", async () => {
@@ -123,4 +124,28 @@ test("the model picker shows the agent's model instead of offering a choice", ()
   expect(screen.getByText("agent-model")).toBeInTheDocument();
   expect(screen.getByLabelText("The model is set by the agent: agent-model")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Choose a model" })).not.toBeInTheDocument();
+});
+
+test("a Hermes agent of the administrator is marked as such in the shell", () => {
+  function Flags() {
+    const { agents } = useAppShell();
+    return <span data-testid="flags">{agents.map((agent) => `${agent.name}:${agent.hermes ? "hermes" : "-"}`).join("|")}</span>;
+  }
+  render(React.createElement(wrapper("general"), null, <Flags />));
+
+  expect(screen.getByTestId("flags").textContent).toBe("General assistant:-|Procedures assistant:-|Finance analyst:hermes");
+});
+
+test("a turn on a Hermes agent names it and carries the attached files", async () => {
+  const streamChat = await mockConversation();
+  const { result } = renderHook(() => useChat(), { wrapper: wrapper("def-hermes") });
+
+  act(() => result.current.send("plan it", undefined, undefined, undefined, [
+    { fileId: "file-1", name: "plan.xlsx", contentType: "application/octet-stream", sizeBytes: 10 },
+  ]));
+
+  await waitFor(() => expect(streamChat).toHaveBeenCalled());
+  const options = vi.mocked(streamChat).mock.calls[0][0];
+  expect(options.agentDefinitionId).toBe("def-hermes");
+  expect(options.messages[0].fileIds).toEqual(["file-1"]);
 });

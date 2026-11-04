@@ -1274,6 +1274,12 @@ class ConversationWorkflow:
                     "parent_workflow_id": info.workflow_id,
                     "parent_task_queue": info.task_queue,
                     "deadline_seconds": settings.hermes_turn_deadline_seconds,
+                    # An administrator's Hermes agent: its instructions lead this run.
+                    **(
+                        {"agent_instructions": str(message["agent"].get("system_prompt") or "")}
+                        if isinstance(message.get("agent"), dict) and message["agent"].get("system_prompt")
+                        else {}
+                    ),
                 },
             ),
             start_to_close_timeout=timedelta(seconds=30),

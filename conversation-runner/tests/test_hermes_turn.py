@@ -130,6 +130,18 @@ async def test_a_hermes_turn_is_handed_over_and_its_answer_persisted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_hermes_agents_instructions_go_to_the_session_and_a_plain_turn_sends_none() -> None:
+    agent = {"id": "agent-1", "name": "Analyst", "system_prompt": "You are the finance analyst."}
+    with_agent, plain = Session({"status": "completed", "output": "ok"}), Session({"status": "completed", "output": "ok"})
+
+    await _turn(with_agent, _message(agent=agent))
+    await _turn(plain, _message())
+
+    assert with_agent.turns[0]["agent_instructions"] == "You are the finance analyst."
+    assert "agent_instructions" not in plain.turns[0]
+
+
+@pytest.mark.asyncio
 async def test_a_failed_hermes_turn_ends_with_a_reason_and_no_answer() -> None:
     session = Session({"status": "failed", "error": "hermes_capacity_exhausted"})
 

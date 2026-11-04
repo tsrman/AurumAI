@@ -610,3 +610,23 @@ async def test_a_failed_write_is_the_users_reason_unless_the_sandbox_must_be_rep
         await ActivityEnvironment().run(hermes_activities.hermes_sync_inputs, "t", SESSION)
 
     assert raised.value.type == expected
+
+
+@pytest.mark.asyncio
+async def test_an_agents_instructions_travel_with_its_run_and_only_then(http) -> None:
+    router = http(
+        {
+            ("POST", f"/hermes/sandboxes/{SESSION}/runs"): _stream(
+                {"type": "started", "run_id": "run_1"},
+                {"type": "result", "run_id": "run_1", "status": "completed", "output": "done", "usage": {}},
+            )
+        }
+    )
+
+    await ActivityEnvironment().run(
+        hermes_activities.hermes_run_turn, SESSION, "turn-1", "conv", "hi", [], "", "", "You are the finance analyst."
+    )
+    await ActivityEnvironment().run(hermes_activities.hermes_run_turn, SESSION, "turn-2", "conv", "hi", [])
+
+    assert router.requests[0][2]["agent_instructions"] == "You are the finance analyst."
+    assert "agent_instructions" not in router.requests[1][2]

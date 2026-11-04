@@ -40,9 +40,9 @@ Paths below are relative to the plane's host. The business routes are mounted un
 
 | Method and path | Purpose | Needs |
 |---|---|---|
-| `GET /v1/chat/agent-definitions` | The administrator's agents the user may chat with now: granted, active, ordinary (not Hermes-kind), on a model the user may use | `chat.send` |
+| `GET /v1/chat/agent-definitions` | The administrator's agents the user may chat with now: granted, active, on a model the user may use; Hermes-kind agents (`kind: "hermes"`) only where a Hermes turn would be accepted | `chat.send` |
 | `GET /v1/chat/agents` | Agents the user may chat with (Hermes only if a Hermes turn would be accepted) | `chat.send` |
-| `POST /v1/chat/stream` | Send a message and stream the answer (SSE); `agent: "hermes"` selects Hermes Agent; `agentDefinitionId` runs the turn on an administrator's agent (its model, instructions, skills and knowledge bases; only one of `agent`, `agentDefinitionId` and `workflowId` may be given). A missing, archived or ungranted agent is 404, one whose dependencies the user cannot use is 403, a Hermes-kind agent is 422 | `chat.send` |
+| `POST /v1/chat/stream` | Send a message and stream the answer (SSE); `agent: "hermes"` selects Hermes Agent; `agentDefinitionId` runs the turn on an administrator's agent (its model, instructions, skills and knowledge bases; only one of `agent`, `agentDefinitionId` and `workflowId` may be given). A missing, archived or ungranted agent is 404, one whose dependencies the user cannot use is 403. A Hermes-kind agent runs a Hermes turn (files allowed, images refused) on the organization's Hermes model with the agent's instructions; the conversation's workspace belongs to the first Hermes agent that ran in it, another one is 409 | `chat.send` |
 | `POST /v1/chat/completions` | Completion route that the conversation runner calls with its session token; also accepts a user token | `chat.send` |
 | `POST /v1/chat/{id}/cancel` | Cancel the answer in progress | owner |
 | `GET /v1/conversations`, `POST /v1/conversations` | List and create | `chat.send` |

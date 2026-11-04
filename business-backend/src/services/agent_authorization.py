@@ -32,13 +32,6 @@ class AgentDependencyAccessDenied(Exception):
 
 
 @dataclass(frozen=True, slots=True)
-class ChatAgentUnsupported(Exception):
-    """The agent cannot run a chat turn (Hermes-kind agents are workflow nodes only)."""
-
-    kind: str
-
-
-@dataclass(frozen=True, slots=True)
 class ChatAgentTurn:
     """What a chat turn takes from an agent, resolved fresh for each turn."""
 
@@ -52,6 +45,9 @@ class ChatAgentTurn:
     web_enabled: bool = True
     images_enabled: bool = True
     ask_user_enabled: bool = True
+    # "hermes": an administrator's Hermes Agent, whose turn runs on the organization's
+    # Hermes model with these instructions.
+    kind: str = "agent"
 
 
 class AgentAuthorizationService:
@@ -236,9 +232,20 @@ class AgentAuthorizationService:
         agent_id: UUID,
     ) -> ChatAgentTurn:
         """The agent a user may chat with now: granted, active, its dependencies accessible."""
-        agent = await self.require_executable(session, subject, agent_id)
-        if agent.kind != "agent":
-            raise ChatAgentUnsupported(agent.kind)
+        agent = await self._repository.get_accessible(session, subject, agent_id, AccessPermission.READ)
+        if agent is None or agent.archived_at is not None:
+            raise AgentDefinitionNotFound(agent_id)
+        if agent.kind == "agent":
+            await self.require_dependencies(
+                session,
+                subject,
+                agent_id=agent.id,
+                model_id=agent.model_id,
+                skill_ids=agent.skill_ids,
+                knowledge_base_ids=agent.knowledge_base_ids,
+            )
+        # A Hermes agent has no skills or knowledge bases of its own and runs on the
+        # organization's current Hermes model, which the chat route checks.
         bases = {}
         if agent.knowledge_base_ids:
             rows = await session.execute(
@@ -261,6 +268,7 @@ class AgentAuthorizationService:
             web_enabled=agent.web_enabled,
             images_enabled=agent.images_enabled,
             ask_user_enabled=agent.ask_user_enabled,
+            kind=agent.kind,
         )
 
 
