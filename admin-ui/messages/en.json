@@ -101,7 +101,7 @@
       "kind_agent": "Agent",
       "kind_agent_hint": "A model with instructions, skills, knowledge bases and built-in capabilities. Used in chat and as a workflow node.",
       "kind_hermes": "Hermes Agent",
-      "kind_hermes_hint": "Runs in a workspace of its own with the platform's tools and its own skills; the instructions become its prompt. Used as a workflow node.",
+      "kind_hermes_hint": "Runs in a workspace of its own with the platform's tools and its own skills; the instructions become its prompt. Used in chat and as a workflow node.",
       "capabilities": "Built-in capabilities",
       "capabilitiesHint": "What a chat turn on this agent may use. The platform's switches and the user's rights still apply; an agent never gets more than the user may do.",
       "web": "Web search and reading pages",

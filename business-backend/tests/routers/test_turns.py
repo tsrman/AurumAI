@@ -318,6 +318,7 @@ async def test_server_rejects_new_turn_before_message_or_runtime_start() -> None
         last_message_at=None,
         temperature=None,
         agent_definition_id=None,
+        hermes_agent_definition_id=None,
     )
     user = UserInfo(user_id=str(user_id), org_id=str(org_id), role="member")
     session = MagicMock()

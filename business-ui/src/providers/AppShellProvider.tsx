@@ -83,6 +83,7 @@ function agentFromDefinition(definition: ChatAgentDefinition): Agent {
     capabilities: [],
     suggestions: [],
     model: definition.modelId,
+    ...(definition.kind === "hermes" ? { hermes: true } : {}),
   };
 }
 

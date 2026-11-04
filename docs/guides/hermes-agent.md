@@ -16,9 +16,11 @@ design and its reasoning in the [design document](../HERMES_AGENT.md).
   matplotlib, openpyxl, python-pptx, python-docx, pypdf), Node.js 24 with npm, a
   headless Chromium and Playwright.
 - **Work on your files.** Files you attach appear in `/workspace/inputs/` in its
-  sandbox, with stable numbered names.
-- **Hand files back.** Charts, spreadsheets, documents, presentations and archives
-  appear in the answer as downloads; pictures show under the answer.
+  sandbox, with stable numbered names. The platform tells Hermes this on every turn,
+  together with the list of the files that came with the message.
+- **Hand files back.** Hermes saves what it makes for you in `/workspace/outputs/` and
+  attaches it; charts, spreadsheets, documents, presentations and archives appear in the
+  answer as downloads, pictures show under the answer.
 - **Use platform tools** through a bridge: knowledge search, web search and read,
   image generation and editing, skills it is granted, and questions to you.
 - **Look at pictures** when the organization marks its model as taking images.
@@ -102,8 +104,16 @@ Everything is in the Admin app.
     within the deployment's maximum; a mode above the maximum is shown as such and refused.
 - **Users → Groups.** Grant `agents.hermes` to the people who should have it. Nobody
   has it by default.
-- **Workflows and Agents.** A Hermes Agent can be a workflow node ("Hermes Agent
-  (workflow nodes)" kind) and runs on the organization's Hermes model.
+- **Workflows and Agents.** An administrator can create **Hermes Agents** of their own
+  (the "Hermes Agent" type in the agent wizard): the instructions you write become the
+  agent's role, and the platform adds its own rules about the sandbox before them. A Hermes
+  Agent runs on the organization's Hermes model, is chosen in chat like any other agent
+  (given to people through its **Access** action, and only to those who also have
+  `agents.hermes`) and can be a workflow node.
+  - A conversation's workspace belongs to the first Hermes Agent that ran in it; choosing
+    another Hermes Agent in the same conversation is refused, start a new conversation.
+  - Its internet access is the organization's mode; models, skills and knowledge bases are
+    not set per agent yet.
 
 If the page says Hermes is switched off on this deployment, `HERMES_ENABLED` is not set.
 

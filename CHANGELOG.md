@@ -18,6 +18,13 @@
   agents keep working). They narrow what the platform's switches and the user's rights already
   allow, never widen it. The admin UI creates and edits agents in a step-by-step wizard (type,
   basics, instructions, tools and knowledge, capabilities, review).
+- **Hermes Agents of the administrator in chat.** A Hermes-kind agent is chosen in chat like any
+  other: its instructions follow the platform's own rules about the sandbox (files in
+  `/workspace/inputs`, results in `/workspace/outputs`, attached with `attach_file`), and it runs on
+  the organization's Hermes model. The conversation's workspace belongs to the first Hermes agent that
+  ran in it. The platform's sandbox rules now name the outputs folder. Roll out business-backend,
+  conversation-runner, tool-worker and skill-executor together; an older skill-executor refuses the
+  agent's instructions field.
 - **Agents in chat.** The sidebar and the agent picker list the agents an administrator created
   and granted, in place of the built-in demo agents, and a chat turn can run on one:
   `agentDefinitionId` in `POST /v1/chat/stream`, `GET /v1/chat/agent-definitions`. The turn takes

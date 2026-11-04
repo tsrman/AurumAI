@@ -15,7 +15,6 @@ from src.services.agent_authorization import (
     AgentDefinitionNotFound,
     AgentDependencyAccessDenied,
     ChatAgentTurn,
-    ChatAgentUnsupported,
 )
 from tests.routers.test_chat_hermes import _stream
 from tests.routers.test_chat_workflow_runtime import _fixture, _image_stream_patches
@@ -39,6 +38,7 @@ def _agent(**overrides):  # noqa: ANN003, ANN202
         "web_enabled": True,
         "images_enabled": True,
         "ask_user_enabled": True,
+        "kind": "agent",
     }
     values.update(overrides)
     return ChatAgentTurn(**values)
@@ -143,7 +143,6 @@ async def test_a_plain_turn_clears_the_conversations_agent() -> None:
     [
         (AgentDefinitionNotFound(AGENT_ID), 404),  # missing, archived or not granted
         (AgentDependencyAccessDenied(AGENT_ID), 403),
-        (ChatAgentUnsupported("hermes"), 422),
     ],
 )
 async def test_an_agent_the_user_may_not_use_is_refused_before_the_turn_starts(error, status) -> None:  # noqa: ANN001
@@ -210,3 +209,125 @@ async def test_an_agent_never_widens_what_the_platform_or_the_user_allows(monkey
 
     payload = signal.call_args.args[2]
     assert not any(payload[flag] for flag in ("web_tools_enabled", "image_generation_enabled", "image_editing_enabled"))
+
+
+def _hermes_patches(conv, pubsub, signal, **overrides):  # noqa: ANN001, ANN003, ANN202
+    extra = {
+        "hermes_capabilities": patch.object(chat, "require_hermes_capabilities", AsyncMock()),
+        "hermes_model": patch.object(chat, "organization_hermes_model", AsyncMock(return_value="hermes-model")),
+
+        **overrides,
+    }
+    resolver = AsyncMock(
+        return_value=_agent(
+            kind="hermes",
+            name="Finance analyst",
+            system_prompt="You are the finance analyst.",
+            allowed_skill_ids=[],
+            knowledge_bases=[],
+        )
+    )
+    return _patches(conv, pubsub, signal, resolver=resolver, **extra)
+
+
+async def test_a_hermes_agent_turn_runs_hermes_on_the_organizations_model_with_the_agents_instructions(monkeypatch) -> None:
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
+    monkeypatch.setattr(chat.settings, "USER_QUESTIONS_ENABLED", True)
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+
+    mocks, error = await _stream(conv, user, session, _request(conv), _hermes_patches(conv, pubsub, signal))
+
+    assert error is None
+    mocks["classify"].assert_not_awaited()
+    # The organization's current Hermes model, not the one stored on the agent.
+    assert mocks["allowed"].call_args.args[2] == "hermes-model"
+    payload = signal.call_args.args[2]
+    assert payload["hermes"] is True and payload["model"] == "hermes-model"
+    assert payload["agent"]["system_prompt"] == "You are the finance analyst."
+    assert payload["user_questions_enabled"] is True
+    assert not any(payload[flag] for flag in ("web_tools_enabled", "image_generation_enabled", "image_editing_enabled"))
+    assert conv.agent_definition_id == AGENT_ID
+
+
+@pytest.mark.parametrize(
+    ("case", "status"),
+    [("switch_off", 404), ("no_capability", 403), ("no_model", 409)],
+)
+async def test_a_hermes_agent_needs_hermes_to_be_on_allowed_and_set_up(monkeypatch, case, status) -> None:  # noqa: ANN001
+    from src.services.hermes_access import HermesAccessDenied
+
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", case != "switch_off")
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock()
+    overrides = {}
+    if case == "no_capability":
+        overrides["hermes_capabilities"] = patch.object(
+            chat, "require_hermes_capabilities", AsyncMock(side_effect=HermesAccessDenied("hermes_access_denied"))
+        )
+    if case == "no_model":
+        overrides["hermes_model"] = patch.object(chat, "organization_hermes_model", AsyncMock(return_value=None))
+
+    mocks, error = await _stream(conv, user, session, _request(conv), _hermes_patches(conv, pubsub, signal, **overrides))
+
+    assert error is not None and error.status_code == status
+    mocks["begin"].assert_not_awaited()
+
+
+async def test_a_hermes_agent_does_not_take_images(monkeypatch) -> None:
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
+    conv, user, session, pubsub = _fixture()
+    request = ChatRequest(
+        conversation_id=str(conv.id),
+        messages=[{"role": "user", "content": "look", "imageIds": [str(uuid.uuid4())]}],
+        model="composer-model",
+        agentDefinitionId=AGENT_ID,
+    )
+
+    mocks, error = await _stream(conv, user, session, request, _hermes_patches(conv, pubsub, AsyncMock()))
+
+    assert error is not None and error.status_code == 422
+    mocks["begin"].assert_not_awaited()
+
+
+async def test_a_conversation_with_a_hermes_agents_workspace_keeps_that_agent(monkeypatch) -> None:
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
+    conv, user, session, pubsub = _fixture()
+    conv.hermes_agent_definition_id = uuid.uuid4()  # another agent holds this conversation's workspace
+    signal = AsyncMock()
+
+    mocks, error = await _stream(conv, user, session, _request(conv), _hermes_patches(conv, pubsub, signal))
+
+    assert error is not None and error.status_code == 409
+    mocks["begin"].assert_not_awaited()
+    signal.assert_not_awaited()
+
+
+async def test_the_first_hermes_agent_turn_claims_the_workspace_and_later_plain_turns_keep_the_claim(monkeypatch) -> None:
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+
+    await _stream(conv, user, session, _request(conv), _hermes_patches(conv, pubsub, signal))
+    assert conv.hermes_agent_definition_id == AGENT_ID
+
+    plain = ChatRequest(conversation_id=str(conv.id), messages=[{"role": "user", "content": "hi"}], model="m")
+    await _stream(conv, user, session, plain, _patches(conv, pubsub, signal))
+
+    assert conv.agent_definition_id is None  # the picker is back on the plain chat
+    assert conv.hermes_agent_definition_id == AGENT_ID  # but the workspace still belongs to the agent
+
+
+def test_a_bound_agent_takes_precedence_over_the_generic_hermes_in_the_conversation_view() -> None:
+    from datetime import datetime, timezone
+
+    conv = SimpleNamespace(
+        id=uuid.uuid4(), title="t", model="m", status="active", last_message_at=None,
+        created_at=datetime.now(timezone.utc), temperature=None, agent_definition_id=AGENT_ID,
+    )
+
+    bound = chat._conv_response(conv, None, hermes=True)
+    plain = chat._conv_response(SimpleNamespace(**{**conv.__dict__, "agent_definition_id": None}), None, hermes=True)
+
+    assert (bound.agent, bound.agentDefinitionId) == (None, str(AGENT_ID))
+    assert (plain.agent, plain.agentDefinitionId) == ("hermes", None)

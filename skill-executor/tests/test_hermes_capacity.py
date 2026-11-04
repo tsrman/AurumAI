@@ -324,6 +324,39 @@ async def test_every_run_carries_the_sandbox_instructions(make, monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_an_agents_own_instructions_follow_the_platforms_notes_on_every_run(make, monkeypatch) -> None:
+    import io as _io
+    import tarfile as _tarfile
+
+    from src.hermes_runtime import SANDBOX_INSTRUCTIONS
+
+    sandboxes, daemon, _, _ = make()
+    await _create(sandboxes, 1)
+
+    async def stream(sandbox: Any, cmd: list[str]):  # noqa: ANN202
+        yield {"type": "result"}
+
+    monkeypatch.setattr(sandboxes, "_stream", stream)
+
+    [
+        line
+        async for line in sandboxes.run(
+            _session(1),
+            {"key": "k", "input": "i", "session_id": "c", "agent_instructions": "You are the finance analyst."},
+        )
+    ]
+
+    [(_, archive)] = daemon.container_map[resource_name(_session(1))].archives[-1:]
+    with _tarfile.open(fileobj=_io.BytesIO(archive)) as unpacked:
+        [member] = [item for item in unpacked.getmembers() if item.isfile()]
+        request = json.loads(unpacked.extractfile(member).read())
+    # The platform's rules (where files are, where results go) come first and cannot be replaced.
+    assert request["instructions"].startswith(SANDBOX_INSTRUCTIONS)
+    assert request["instructions"].endswith("You are the finance analyst.")
+    assert "agent_instructions" not in request
+
+
+@pytest.mark.asyncio
 async def test_a_clarify_answer_reaches_the_relay_through_a_file(make, monkeypatch) -> None:
     sandboxes, daemon, _, _ = make()
     await _create(sandboxes, 1)

@@ -47,7 +47,6 @@ from src.services.agent_authorization import (
     AgentDefinitionNotFound,
     AgentDependencyAccessDenied,
     ChatAgentTurn,
-    ChatAgentUnsupported,
     agent_authorization_service,
 )
 from src.repositories.agent_definition_repository import agent_definition_repository
@@ -150,7 +149,8 @@ def _conv_response(
         lastMessageAt=conv.last_message_at.isoformat() if conv.last_message_at else None,
         createdAt=conv.created_at.isoformat(),
         temperature=resolve_temperature(conv.temperature, org_default_temperature),
-        agent="hermes" if hermes else None,
+        # A bound agent of the administrator's takes precedence over the generic Hermes.
+        agent="hermes" if hermes and conv.agent_definition_id is None else None,
         agentDefinitionId=str(conv.agent_definition_id) if conv.agent_definition_id else None,
     )
 
@@ -575,10 +575,6 @@ async def _chat_agent(session: AsyncSession, user: UserInfo, agent_id: uuid.UUID
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Agent dependencies are not accessible"
         ) from None
-    except ChatAgentUnsupported:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="This agent cannot be used in chat"
-        ) from None
 
 
 class ChatAgentDefinition(BaseModel):
@@ -586,6 +582,8 @@ class ChatAgentDefinition(BaseModel):
     name: str
     description: str | None = None
     modelId: str
+    # "hermes": runs in a Hermes sandbox (files, previews), on the organization's Hermes model.
+    kind: Literal["agent", "hermes"] = "agent"
 
 
 @router.get("/chat/agent-definitions", response_model=ApiResponse[list[ChatAgentDefinition]])
@@ -595,20 +593,35 @@ async def chat_agent_definitions(
 ) -> ApiResponse[list[ChatAgentDefinition]]:
     """The administrator's agents the composer offers: those a chat turn would accept now."""
     subject = authorization_subject(user)
+    # Hermes agents are offered where a Hermes turn would be accepted now.
+    hermes_model: str | None = None
+    try:
+        hermes_model = await _hermes_model(session, user)
+        await ensure_model_allowed(session, user.org_id, hermes_model, user_id=user.user_id, role=user.role)
+    except HTTPException:
+        hermes_model = None
     offered: list[ChatAgentDefinition] = []
     for agent in await agent_definition_repository.list_accessible(session, subject):
-        if agent.kind != "agent":
-            continue
-        try:
-            await agent_authorization_service.require_executable(session, subject, agent.id)
-            await ensure_model_allowed(
-                session, user.org_id, agent.model_id, user_id=user.user_id, role=user.role
-            )
-        except (AgentDefinitionNotFound, AgentDependencyAccessDenied, HTTPException):
-            continue
+        if agent.kind == "hermes":
+            if hermes_model is None:
+                continue
+            model_id = hermes_model
+        else:
+            try:
+                await agent_authorization_service.require_executable(session, subject, agent.id)
+                await ensure_model_allowed(
+                    session, user.org_id, agent.model_id, user_id=user.user_id, role=user.role
+                )
+            except (AgentDefinitionNotFound, AgentDependencyAccessDenied, HTTPException):
+                continue
+            model_id = agent.model_id
         offered.append(
             ChatAgentDefinition(
-                id=str(agent.id), name=agent.name, description=agent.description, modelId=agent.model_id
+                id=str(agent.id),
+                name=agent.name,
+                description=agent.description,
+                modelId=model_id,
+                kind="hermes" if agent.kind == "hermes" else "agent",
             )
         )
     return ApiResponse(data=offered, meta=_meta())
@@ -666,12 +679,22 @@ async def chat_stream(
 
     conv = await _get_owned_conversation(session, conversation_id, user, write=True)
     upload_ids = user_message.image_ids
-    hermes = request.agent == "hermes"
     turn_model = request.model
     chat_agent: ChatAgentTurn | None = None
     if request.agent_definition_id is not None:
         chat_agent = await _chat_agent(session, user, request.agent_definition_id)
         turn_model = chat_agent.model_id
+    # An administrator's Hermes agent runs the Hermes turn, on top of its own instructions.
+    hermes = request.agent == "hermes" or (chat_agent is not None and chat_agent.kind == "hermes")
+    if chat_agent is not None and chat_agent.kind == "hermes":
+        # The conversation's workspace belongs to the first Hermes agent that ran in it.
+        if conv.hermes_agent_definition_id not in (None, chat_agent.id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This conversation's workspace belongs to another agent",
+            )
+        if conv.hermes_agent_definition_id is None:
+            conv.hermes_agent_definition_id = chat_agent.id
     wanted_agent_id = chat_agent.id if chat_agent else None
     if conv.agent_definition_id != wanted_agent_id:
         conv.agent_definition_id = wanted_agent_id

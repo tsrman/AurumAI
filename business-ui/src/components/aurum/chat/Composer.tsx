@@ -82,7 +82,8 @@ export function Composer({
   const isDisabled = Boolean(disabled || blockedByActiveTurn);
   const { agents, myAgents, activeAgentId, conversations, models, activeModelId } = useAppShell();
   // An administrator's agent runs on its own model, whatever the picker says.
-  const agentModelId = [...agents, ...myAgents].find((item) => item.id === activeAgentId && item.kind === "definition")?.model;
+  const activeDefinition = [...agents, ...myAgents].find((item) => item.id === activeAgentId && item.kind === "definition");
+  const agentModelId = activeDefinition?.model;
   const visionModel = Boolean(models.find((model) => model.id === (agentModelId ?? activeModelId))?.vision);
   // An agent stays chosen for the conversation, whose workspace it keeps,
   // also after a reload: the conversation names it. A workflow is chosen for
@@ -108,7 +109,10 @@ export function Composer({
   const agent = mode.kind === "agent" ? mode.agent : undefined;
   // A workflow's agents use their own models; the backend inlines images
   // only for those marked as vision models. Hermes takes no images yet.
-  const imagesAllowed = !agent && (visionModel || Boolean(workflowId));
+  // An administrator's Hermes agent is a Hermes turn too (files, no images), unless a
+  // workflow is chosen for the turn.
+  const definitionHermes = Boolean(activeDefinition?.hermes) && !workflowId;
+  const imagesAllowed = !agent && !definitionHermes && (visionModel || Boolean(workflowId));
   const { isAuthenticated } = useAuth();
   const [text, setText] = useState("");
   const [settingsConversationId, setSettingsConversationId] = useState<
@@ -122,7 +126,7 @@ export function Composer({
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   // Files for Hermes Agent's workspace, waiting for the next message.
   const [pendingFiles, setPendingFiles] = useState<AttachedFile[]>([]);
-  const hermes = agent === "hermes";
+  const hermes = agent === "hermes" || definitionHermes;
   const previewUrlsRef = useRef<string[]>([]);
   useEffect(() => {
     const urls = previewUrlsRef.current;

@@ -104,6 +104,9 @@ class RunRequest(BaseModel):
     input: str = Field(min_length=1, max_length=1_000_000)
     session_id: str = Field(min_length=1, max_length=255)
     conversation_history: list[dict[str, Any]] | None = None
+    # The agent's own instructions (an administrator's Hermes agent), added after the
+    # platform's notes on the sandbox for this run only.
+    agent_instructions: str | None = Field(default=None, max_length=50_000)
 
 
 class MemoryFiles(BaseModel):

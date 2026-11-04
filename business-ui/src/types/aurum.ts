@@ -12,6 +12,8 @@ export interface Agent {
   capabilities: string[];
   suggestions: string[];
   model?: string;
+  // An administrator's Hermes agent: runs in a Hermes sandbox (files in and out, previews).
+  hermes?: boolean;
   prompt?: string;
   tools?: string[];
   bases?: string[];

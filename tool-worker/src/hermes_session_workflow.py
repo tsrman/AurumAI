@@ -64,6 +64,8 @@ class HermesTurn:
     workflow_phase: str | None = None
     workflow_node_key: str | None = None
     publish_progress: bool = True
+    # An administrator's Hermes agent: its instructions for this turn's run.
+    agent_instructions: str = ""
 
 
 def _key(turn: HermesTurn) -> str:
@@ -290,6 +292,8 @@ class HermesSessionWorkflow:
                 # Without an organization the worker publishes no progress.
                 start.org_id if turn.publish_progress else "",
                 turn.parent_workflow_id,
+                # Only an agent's turn carries them, so other turns' activity inputs are unchanged.
+                *([turn.agent_instructions] if turn.agent_instructions else []),
             ),
             # The deadline covers every attempt, not each one.
             schedule_to_close_timeout=timedelta(seconds=turn.deadline_seconds),

@@ -185,6 +185,7 @@ async def hermes_run_turn(
     history: list[dict[str, Any]],
     org_id: str = "",
     parent_workflow_id: str = "",
+    agent_instructions: str = "",
 ) -> dict[str, Any]:
     """Run (or, on a retry, attach to) the turn's Hermes run and return its
     outcome with the tool cards it showed, forwarding its questions to the
@@ -204,7 +205,7 @@ async def hermes_run_turn(
     try:
         async with keepalive(progress):
             return await _follow_run(
-                session_id, turn_id, conversation_id, text, history, progress, questions, started
+                session_id, turn_id, conversation_id, text, history, progress, questions, started, agent_instructions
             )
     except asyncio.CancelledError:
         if started:
@@ -226,8 +227,11 @@ async def _follow_run(
     progress: TurnProgress,
     questions: ParentQuestions,
     started: list[str],
+    agent_instructions: str = "",
 ) -> dict[str, Any]:
     body = {"key": turn_id, "input": text, "session_id": conversation_id, "conversation_history": history}
+    if agent_instructions:
+        body["agent_instructions"] = agent_instructions
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None)) as client:
         async with client.stream(
             "POST", f"{settings.skill_executor_url}/hermes/sandboxes/{session_id}/runs", json=body

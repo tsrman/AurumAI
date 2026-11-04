@@ -55,6 +55,7 @@ class FakeConversation:
 class Fakes:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.instructions: list[str] = []
         self.run_errors: list[str] = []
         self.prepare_error: str | None = None
         self.hydrate_fails = False
@@ -93,8 +94,10 @@ class Fakes:
             history: list[Any],
             org_id: str,
             parent_workflow_id: str,
+            agent_instructions: str = "",
         ) -> dict[str, Any]:
             self.calls.append(f"run:{turn_id}:{text}:{len(history)}")
+            self.instructions.append(agent_instructions)
             # A workflow node's turn publishes no chat progress.
             assert org_id == ("" if turn_id.startswith("node-") else "org-1")
             if self.run_errors:
@@ -233,6 +236,19 @@ async def test_a_turn_is_prepared_bound_run_and_unbound() -> None:
         "save_skills",
         "unbind",
     ]
+
+
+@pytest.mark.asyncio
+async def test_an_agents_instructions_reach_the_run_and_a_plain_turn_sends_none() -> None:
+    fakes = Fakes()
+    async with await WorkflowEnvironment.start_time_skipping() as env, _stack(env, fakes) as client:
+        parent, handle = await _parent(client, 2)
+        await _hand_off(client, parent, _turn(parent, "turn-1", agent_instructions="You are the finance analyst."))
+        await _hand_off(client, parent, _turn(parent, "turn-2"))
+
+        await handle.result()
+
+    assert fakes.instructions == ["You are the finance analyst.", ""]
 
 
 @pytest.mark.asyncio

@@ -244,7 +244,7 @@ def test_generated_config_tells_hermes_about_its_sandbox() -> None:
     config = hermes_config(Settings(), model="m", token=TOKEN, api_key="k")
 
     assert config["agent"]["system_prompt"] == SANDBOX_INSTRUCTIONS
-    for fact in ("/workspace/inputs", "attach_file", "README.md", "/usr/bin/chromium-headless-shell", "127.0.0.1", "share_preview"):
+    for fact in ("/workspace/inputs", "/workspace/outputs", "attach_file", "README.md", "/usr/bin/chromium-headless-shell", "127.0.0.1", "share_preview"):
         assert fact in SANDBOX_INSTRUCTIONS
     # The token never reaches the model's prompt.
     assert TOKEN not in SANDBOX_INSTRUCTIONS
@@ -485,3 +485,16 @@ async def test_creation_is_refused_until_the_daemon_passes_the_checks(monkeypatc
     daemon.api_version = "1.56"
     with pytest.raises(HermesSandboxError, match="guard_missing"):
         await _create(sandboxes)
+
+
+def test_a_run_request_may_carry_an_agents_instructions_and_nothing_else_unknown() -> None:
+    from pydantic import ValidationError
+
+    from src.hermes_routes import RunRequest
+
+    request = RunRequest(key="k", input="i", session_id="c", agent_instructions="Be the analyst")
+    assert request.model_dump(exclude_none=True)["agent_instructions"] == "Be the analyst"
+    with pytest.raises(ValidationError):
+        RunRequest(key="k", input="i", session_id="c", unknown="x")
+    with pytest.raises(ValidationError):
+        RunRequest(key="k", input="i", session_id="c", agent_instructions="x" * 50_001)

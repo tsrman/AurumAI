@@ -138,6 +138,11 @@ When an action is refused, the message says why and names the workflows involved
 - *Appears in history*: the agent took part in a past run or an archived workflow; archive it.
 - *In a running workflow*: wait for the run to finish or cancel it.
 
+A **Hermes Agent** can be chosen in chat too: its instructions become its role in its
+sandbox (the platform's own rules about where files come in and go out always come first),
+and it runs on the organization's Hermes model. Give it to people with **Access**; they
+also need the `agents.hermes` capability. See [Hermes Agent](hermes-agent.md#administration).
+
 Agent kinds include ordinary agents and, when Hermes Agent is on, an agent that runs on
 Hermes (usable as a workflow node, marked with a **Hermes Agent** badge).
 

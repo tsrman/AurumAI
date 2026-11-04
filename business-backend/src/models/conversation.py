@@ -53,3 +53,17 @@ class Conversation(OrgScopedModel):
         else:
             extra["agent_definition_id"] = str(value)
         self.extra = extra
+
+    @property
+    def hermes_agent_definition_id(self) -> uuid.UUID | None:
+        """The administrator's Hermes agent whose workspace this conversation holds. Set on its
+        first Hermes agent turn and never cleared: the workspace belongs to that agent."""
+        raw = (self.extra or {}).get("hermes_agent_definition_id")
+        try:
+            return uuid.UUID(str(raw)) if raw else None
+        except ValueError:
+            return None
+
+    @hermes_agent_definition_id.setter
+    def hermes_agent_definition_id(self, value: uuid.UUID) -> None:
+        self.extra = {**(self.extra or {}), "hermes_agent_definition_id": str(value)}

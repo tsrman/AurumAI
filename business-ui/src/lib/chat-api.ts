@@ -63,6 +63,8 @@ export interface ChatAgentDefinition {
   name: string;
   description?: string | null;
   modelId: string;
+  // "hermes": runs in a Hermes sandbox on the organization's Hermes model.
+  kind?: "agent" | "hermes";
 }
 
 export async function getChatAgentDefinitions(): Promise<ChatAgentDefinition[]> {

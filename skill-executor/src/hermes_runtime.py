@@ -89,9 +89,11 @@ _CHUNK = 64 * 1024
 # organization chooses.
 SANDBOX_INSTRUCTIONS = """\
 You work in an isolated sandbox. Your working directory is /workspace, kept between turns.
-- Files the user gives you are in /workspace/inputs (read-only).
-- To give the user a file, save it under /workspace and call the attach_file tool with its \
-absolute path. Pictures (PNG, JPEG, WebP) show below your answer; other files are offered \
+- Files the user gives you are in /workspace/inputs (read-only); the turn's message lists \
+the ones that came with it.
+- Put what you make for the user in /workspace/outputs (create the folder if it is missing) \
+and keep drafts and scratch files elsewhere under /workspace. To give the user a file, call \
+the attach_file tool with its absolute path, preferably under /workspace/outputs. Pictures (PNG, JPEG, WebP) show below your answer; other files are offered \
 for download. Give a project as one ZIP with a README.md on how to install and run it, \
 without node_modules, virtual environments or build output.
 - To look at a picture (one the user gave or one you made), call vision_analyze with its \
@@ -555,7 +557,13 @@ class HermesSandboxes:
         if sandbox.workspace_full:
             raise HermesSandboxError("hermes_workspace_full")
         key = hashlib.sha256(str(request["key"]).encode()).hexdigest()
-        request = {**request, "instructions": SANDBOX_INSTRUCTIONS}
+        # The platform's notes always lead; an agent's own instructions follow them and
+        # cannot replace them.
+        agent_instructions = request.pop("agent_instructions", None)
+        instructions = SANDBOX_INSTRUCTIONS
+        if isinstance(agent_instructions, str) and agent_instructions.strip():
+            instructions = f"{SANDBOX_INSTRUCTIONS}\n{agent_instructions.strip()}"
+        request = {**request, "instructions": instructions}
         await self._put_archive(sandbox, _tar({f".aurum/requests/{key}.json": json.dumps(request).encode()}))
         self.touch(session_id)
         async for line in self._stream(sandbox, ["hermes-relay", "run", f"/workspace/.aurum/requests/{key}.json"]):
