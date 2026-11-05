@@ -48,6 +48,8 @@ class ChatAgentTurn:
     # "hermes": an administrator's Hermes Agent, whose turn runs on the organization's
     # Hermes model with these instructions.
     kind: str = "agent"
+    # A Hermes agent that picks its own model; None runs it on the organization's.
+    hermes_model: str | None = None
 
 
 class AgentAuthorizationService:
@@ -255,6 +257,19 @@ class AgentAuthorizationService:
                 )
             )
             bases = {row.id: row.name for row in rows}
+            if agent.kind == "hermes":
+                # Only what this user may read is named to the agent.
+                bases = {
+                    base_id: name
+                    for base_id, name in bases.items()
+                    if await self._authorization.can_access(
+                        session,
+                        subject,
+                        ResourceRef(ResourceType.KNOWLEDGE_BASE, str(base_id)),
+                        AccessPermission.READ,
+                        resource_org_id=subject.org_id,
+                    )
+                }
         return ChatAgentTurn(
             id=agent.id,
             name=agent.name,
@@ -269,6 +284,7 @@ class AgentAuthorizationService:
             images_enabled=agent.images_enabled,
             ask_user_enabled=agent.ask_user_enabled,
             kind=agent.kind,
+            hermes_model=agent.model_id if agent.kind == "hermes" and not agent.use_org_hermes_model else None,
         )
 
 

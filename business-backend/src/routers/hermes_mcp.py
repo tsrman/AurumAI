@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.auth import UserInfo
 from src.core.authorization_dependencies import authorization_subject
 from src.core.hermes_auth import get_hermes_db_session, get_hermes_session_user, require_hermes_enabled
+from src.services.hermes_agent_settings import agent_settings_of_session
 from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
 from src.services.hermes_mcp import TOOL_NAMES, BridgeToolError, call_tool, listed_tools
 from src.services.hermes_sessions import authorize_token
@@ -97,7 +98,8 @@ async def hermes_mcp(
     subject = authorization_subject(user)
     try:
         await require_hermes_capabilities(session, subject)
-        await authorize_token(session, subject, user.raw_claims, require_turn=False)
+        row = await authorize_token(session, subject, user.raw_claims, require_turn=False)
+        listed_for = await agent_settings_of_session(session, subject, row) if method == "tools/list" else None
     except HermesAccessDenied as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": exc.code}) from None
     if method == "initialize":
@@ -112,7 +114,7 @@ async def hermes_mcp(
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": listed_tools()}
+        result = {"tools": listed_tools(listed_for)}
     else:
         return _error(request_id, -32601, "Method not found")
     return _reply(request_id, {"result": result})

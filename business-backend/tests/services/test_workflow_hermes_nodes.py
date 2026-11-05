@@ -126,7 +126,9 @@ async def test_hermes_never_supervises_a_workflow(db, hermes_org, test_user) -> 
     assert refused.value.code == "hermes_supervisor"
 
 
-def test_a_hermes_agent_definition_takes_no_skills_or_knowledge_bases() -> None:
+def test_hermes_settings_belong_to_a_hermes_agent_definition() -> None:
+    skill = uuid4()
+    hermes = AgentDefinitionCreate(name="H", model_id="m", system_prompt="p", kind="hermes", skill_ids=[skill])
+    assert hermes.kind == "hermes" and hermes.skill_ids == [skill]
     with pytest.raises(ValidationError):
-        AgentDefinitionCreate(name="H", model_id="m", system_prompt="p", kind="hermes", skill_ids=[uuid4()])
-    assert AgentDefinitionCreate(name="H", model_id="m", system_prompt="p", kind="hermes").kind == "hermes"
+        AgentDefinitionCreate(name="A", model_id="m", system_prompt="p", hermes_egress_mode="none")

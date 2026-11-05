@@ -148,3 +148,43 @@ async def test_archived_agents_cannot_run_a_chat_turn(
         await service.require_chat_agent(db, subject, gone.id)
     with pytest.raises(AgentDefinitionNotFound):
         await service.require_chat_agent(db, subject, uuid.uuid4())
+
+
+async def test_a_hermes_agent_names_only_the_knowledge_bases_the_user_may_read(
+    db: AsyncSession, test_org: Organization, test_user: User, service: AgentAuthorizationService
+) -> None:
+    from src.routers.chat import _hermes_instructions
+
+    readable, hidden = KnowledgeBase(org_id=test_org.id, name="Procedures"), KnowledgeBase(org_id=test_org.id, name="Secret")
+    db.add_all([readable, hidden])
+    await db.flush()
+    db.add(_grant(test_org, test_user, "knowledge_base", str(readable.id)))
+    await db.commit()
+    hermes = await _agent(
+        db,
+        test_org,
+        test_user,
+        "Finance analyst",
+        kind="hermes",
+        knowledge_base_ids=[readable.id, hidden.id],
+        ask_user_enabled=False,
+    )
+    subject = AuthorizationSubject(test_user.id, test_org.id, "member")
+
+    turn = await service.require_chat_agent(db, subject, hermes.id)
+    instructions = _hermes_instructions(turn)
+
+    assert turn.knowledge_bases == [{"id": str(readable.id), "name": "Procedures"}]
+    assert str(readable.id) in instructions and "Secret" not in instructions
+    assert "cannot ask the user" in instructions
+
+
+async def test_a_hermes_agent_with_its_own_model_carries_it(
+    db: AsyncSession, test_org: Organization, test_user: User, service: AgentAuthorizationService
+) -> None:
+    own = await _agent(db, test_org, test_user, "Own", kind="hermes", model_id="own/model", use_org_hermes_model=False)
+    shared = await _agent(db, test_org, test_user, "Shared", kind="hermes", model_id="stale/model")
+    subject = AuthorizationSubject(test_user.id, test_org.id, "member")
+
+    assert (await service.require_chat_agent(db, subject, own.id)).hermes_model == "own/model"
+    assert (await service.require_chat_agent(db, subject, shared.id)).hermes_model is None

@@ -33,6 +33,7 @@ from src.services.completion_stream import (
     quota_exceeded_exception,
 )
 from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
+from src.services.hermes_agent_settings import agent_settings_of_session
 from src.services.hermes_completions import HermesRequestError, gateway_messages, has_images
 from src.services.hermes_sessions import authorize_token
 from src.services.image_uploads import vision_enabled
@@ -60,8 +61,11 @@ async def hermes_chat_completions(
     try:
         await require_hermes_capabilities(session, subject)
         hermes_session = await authorize_token(session, subject, user.raw_claims)
+        agent = await agent_settings_of_session(session, subject, hermes_session)
     except HermesAccessDenied as exc:
         _denied(exc)
+    # An agent with its own model decides it: the sandbox cannot pick another.
+    model = agent.model_id if agent is not None and agent.model_id else request.model
     # Read before the commit below expires the row.
     hermes_session_id = hermes_session.id
     correlation: dict[str, Any] = {
@@ -70,10 +74,10 @@ async def hermes_chat_completions(
         "workflow_node_key": hermes_session.workflow_node_key,
     }
     await ensure_model_allowed(
-        session, user.org_id, request.model, user_id=user.user_id, role=user.role
+        session, user.org_id, model, user_id=user.user_id, role=user.role
     )
     vision = has_images(request.messages) and await vision_enabled(
-        session, subject.org_id, request.model
+        session, subject.org_id, model
     )
     try:
         messages = gateway_messages(request.messages, vision=vision)
@@ -85,7 +89,7 @@ async def hermes_chat_completions(
     # runner route; the active turn keeps the conversation from being archived.
     await session.commit()
     llm_request: dict[str, Any] = {
-        "model": request.model,
+        "model": model,
         "messages": messages,
         **request.gateway_fields(),
         "stream": True,
@@ -97,7 +101,7 @@ async def hermes_chat_completions(
             subject.org_id,
             subject.user_id,
             conversation_id,
-            request.model,
+            model,
             request_id,
             workflow_run_id=correlation["workflow_run_id"],
             workflow_phase=correlation["workflow_phase"],
@@ -111,7 +115,7 @@ async def hermes_chat_completions(
         generation = langfuse.generation(
             trace_id=str(conversation_id),
             name="hermes_chat_completions",
-            model=request.model,
+            model=model,
             input={"messages": sanitize_native_messages(messages)},
             model_parameters={
                 "temperature": request.temperature,
@@ -127,7 +131,7 @@ async def hermes_chat_completions(
         quota=quota,
         org_id=subject.org_id,
         request_id=request_id,
-        model=request.model,
+        model=model,
         generation=generation,
         log=logger,
         # The sandbox is the agent's: the provider's text and addresses stay in our logs.
@@ -136,7 +140,7 @@ async def hermes_chat_completions(
     if request.stream:
         return create_streaming_response(events)
     try:
-        completion = await collect_completion(events, model=request.model, request_id=request_id)
+        completion = await collect_completion(events, model=model, request_id=request_id)
     except UpstreamCompletionError as exc:
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,

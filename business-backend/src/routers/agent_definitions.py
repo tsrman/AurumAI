@@ -1,4 +1,4 @@
-from typing import Literal, cast
+from typing import Any, Literal, cast
 import uuid
 from datetime import datetime, timezone
 from uuid import UUID
@@ -67,6 +67,9 @@ def _response(agent: AgentDefinition, *, can_write: bool) -> AgentDefinitionResp
         webEnabled=agent.web_enabled,
         imagesEnabled=agent.images_enabled,
         askUserEnabled=agent.ask_user_enabled,
+        hermesEgressMode=cast(Any, agent.hermes_egress_mode),
+        useOrgHermesModel=agent.use_org_hermes_model,
+        hermesSkillsScope=cast(Any, agent.hermes_skills_scope),
         archivedAt=agent.archived_at,
         canWrite=can_write,
         createdAt=agent.created_at,
@@ -274,10 +277,13 @@ async def update_agent_definition(
     assert model_id is not None
     assert skill_ids is not None
     assert knowledge_base_ids is not None
-    if agent.kind == "hermes" and (skill_ids or knowledge_base_ids):
+    if agent.kind != "hermes" and any(
+        field in data.model_fields_set
+        for field in ("hermes_egress_mode", "use_org_hermes_model", "hermes_skills_scope")
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="A Hermes Agent definition takes no skills or knowledge bases",
+            detail="Hermes settings apply only to a Hermes Agent definition",
         )
     await _require_dependency_access(
         agent_authorization_service,

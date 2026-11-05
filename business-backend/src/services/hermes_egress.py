@@ -94,11 +94,16 @@ async def set_organization_hermes_model(
 
 
 async def effective_egress_mode(
-    session: AsyncSession, subject: AuthorizationSubject
+    session: AsyncSession,
+    subject: AuthorizationSubject,
+    agent_mode: str | None = None,
 ) -> EgressMode:
+    """The organization's mode under the deployment maximum, lowered (never raised) by the agent's."""
     mode = _lowest(
         await organization_egress_mode(session, subject.org_id), settings.HERMES_EGRESS_MAX_MODE
     )
+    if agent_mode in EGRESS_MODES:
+        mode = _lowest(mode, cast(EgressMode, agent_mode))
     if mode == "public" and not await authorization_service.has_capability(
         session, subject, Capability.WEB_ACCESS
     ):

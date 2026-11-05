@@ -1,4 +1,4 @@
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from src.models.agent_definition import AgentDefinition
@@ -44,6 +44,9 @@ def build_template_snapshot(
                 web_enabled=agent.web_enabled is not False,
                 images_enabled=agent.images_enabled is not False,
                 ask_user_enabled=agent.ask_user_enabled is not False,
+                hermes_egress_mode=cast(Any, agent.hermes_egress_mode),
+                use_org_hermes_model=agent.use_org_hermes_model is not False,
+                hermes_skills_scope=cast(Any, agent.hermes_skills_scope or "all"),
             )
             for agent in sorted_agents
         ],

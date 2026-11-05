@@ -206,6 +206,9 @@ def test_snapshot_serializes_only_camel_case_configuration(template_snapshot) ->
                 "webEnabled": True,
                 "imagesEnabled": True,
                 "askUserEnabled": True,
+                "hermesEgressMode": None,
+                "useOrgHermesModel": True,
+                "hermesSkillsScope": "all",
             }
         ],
         "nodes": [
