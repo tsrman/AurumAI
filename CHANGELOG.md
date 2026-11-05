@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## v0.0.5 (2026-11-05)
+
+Agents of the administrator become first-class in chat: chosen in the sidebar, created in a wizard, archived
+instead of deleted, with Hermes agents that carry their own model, skills, knowledge bases and internet mode.
 
 ### User interface
 
@@ -59,11 +62,16 @@
 
 ### Upgrade notes
 
-- Migrations `20261106_agent_archive` (`archived_at`, `archived_by`) and
-  `20261107_agent_capabilities` (`web_enabled`, `images_enabled`, `ask_user_enabled`, default true)
-  extend `agent_definitions`.
-- Roll out business-backend and conversation-runner together with business-ui: an agent turn
-  signals the runner a new `agent` field, which an older runner ignores.
+- Three migrations extend `agent_definitions`: `20261106_agent_archive` (`archived_at`, `archived_by`),
+  `20261107_agent_capabilities` (`web_enabled`, `images_enabled`, `ask_user_enabled`, default true) and
+  `20261108_hermes_agent_settings` (`hermes_egress_mode`, `use_org_hermes_model`, `hermes_skills_scope`;
+  it also drops the check that kept Hermes agents free of tools and knowledge bases). Existing agents
+  keep working: every new column has a default that preserves today's behaviour.
+- Roll out business-backend, conversation-runner, tool-worker and skill-executor together with
+  business-ui and admin-ui: an agent turn signals the runner a new `agent` field, a Hermes agent's
+  instructions need a skill-executor that accepts them, and the wizard needs the new admin API fields.
+  An older runner ignores the agent, and an older skill-executor refuses the instructions field.
+- A Hermes agent with its own model is offered only to users who may use that model.
 
 ## v0.0.4 (2026-11-01)
 
