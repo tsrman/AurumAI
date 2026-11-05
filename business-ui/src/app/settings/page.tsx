@@ -9,6 +9,9 @@ import {
 import { useModels } from "@/hooks/useModels";
 import { useAuth } from "@/providers/AuthProvider";
 import { useTranslations } from "next-intl";
+import { Button } from "@/components/primitives/Button";
+import { Toggle } from "@/components/primitives/Toggle";
+import { SettingsCard } from "@/components/aurum/settings/SettingsCard";
 import { HermesMemorySection } from "@/components/aurum/settings/HermesMemorySection";
 import { HermesSkillDraftsSection } from "@/components/aurum/settings/HermesSkillDraftsSection";
 
@@ -48,89 +51,94 @@ export default function SettingsPage() {
   // without this, a cold-loaded /settings briefly rendered the form with
   // no data instead of a loading state.
   if (!isAuthenticated || isLoading || modelsLoading) {
-    return <div className="p-8">{t("loading")}</div>;
+    return <div className="p-8 text-sm text-aurum-text-3">{t("loading")}</div>;
   }
 
+  const toggles = [
+    { key: "enter_to_send", label: t("sendOnEnter") },
+    { key: "show_timestamps", label: t("showTimestamps") },
+    { key: "sidebar_collapsed", label: t("collapseSidebar") },
+  ] as const;
+
   return (
-    <div className="mx-auto max-w-xl p-8">
-      <h1 className="mb-6 text-2xl font-semibold">{t("title")}</h1>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label htmlFor="default-model" className="mb-1 block text-sm font-medium">
-            {t("defaultModel")}
-          </label>
-          <select
-            id="default-model"
-            value={storedModel}
-            onChange={(e) =>
-              setEdits({
-                ...edits,
-                default_model: e.target.value || null,
-              })
-            }
-            className="w-full rounded-md border px-3 py-2"
-          >
-            <option value="">
-              {t("organizationDefault")}
-              {form.organization_default_model
-                ? ` (${form.organization_default_model})`
-                : ""}
-            </option>
-            {storedModelIsMissing ? (
-              <option value={storedModel}>{t("unavailableModel", { model: storedModel })}</option>
-            ) : null}
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id}
-              </option>
-            ))}
-          </select>
+    <div className="flex h-full flex-1 flex-col">
+      <header className="border-b border-aurum-border-soft bg-aurum-surface px-6 py-4">
+        <h1 className="text-base font-semibold text-aurum-text">{t("title")}</h1>
+      </header>
+      <main className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="mx-auto w-full max-w-2xl space-y-6">
+          <form onSubmit={handleSubmit}>
+            <SettingsCard>
+              <div>
+                <label
+                  htmlFor="default-model"
+                  className="mb-1.5 block text-sm font-medium text-aurum-text-2"
+                >
+                  {t("defaultModel")}
+                </label>
+                <select
+                  id="default-model"
+                  value={storedModel}
+                  onChange={(e) =>
+                    setEdits({
+                      ...edits,
+                      default_model: e.target.value || null,
+                    })
+                  }
+                  className="w-full rounded-input border border-aurum-border bg-aurum-surface px-3 py-2 text-sm text-aurum-text outline-none transition focus:border-aurum-accent focus:ring-2 focus:ring-aurum-accent/20"
+                >
+                  <option value="">
+                    {t("organizationDefault")}
+                    {form.organization_default_model
+                      ? ` (${form.organization_default_model})`
+                      : ""}
+                  </option>
+                  {storedModelIsMissing ? (
+                    <option value={storedModel}>{t("unavailableModel", { model: storedModel })}</option>
+                  ) : null}
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <ul className="divide-y divide-aurum-border-soft">
+                {toggles.map(({ key, label }) => (
+                  <li key={key} className="flex items-center justify-between gap-4 py-3">
+                    <span id={`setting-${key}`} className="text-sm text-aurum-text">
+                      {label}
+                    </span>
+                    <Toggle
+                      aria-labelledby={`setting-${key}`}
+                      checked={!!form[key]}
+                      onChange={(value) => setEdits({ ...edits, [key]: value })}
+                    />
+                  </li>
+                ))}
+              </ul>
+
+              <div className="flex items-center gap-4">
+                <Button
+                  type="submit"
+                  disabled={update.isPending || Object.keys(edits).length === 0}
+                >
+                  {update.isPending ? t("saving") : t("save")}
+                </Button>
+                {update.isSuccess && (
+                  <p role="status" className="text-sm text-aurum-ok-fg">{t("saved")}</p>
+                )}
+                {update.isError && (
+                  <p role="alert" className="text-sm text-aurum-err-fg">{t("saveFailed")}</p>
+                )}
+              </div>
+            </SettingsCard>
+          </form>
+          <HermesMemorySection />
+          <HermesSkillDraftsSection />
         </div>
-
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={!!form.enter_to_send}
-            onChange={(e) => setEdits({ ...edits, enter_to_send: e.target.checked })}
-          />
-          <span className="text-sm">{t("sendOnEnter")}</span>
-        </label>
-
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={!!form.show_timestamps}
-            onChange={(e) => setEdits({ ...edits, show_timestamps: e.target.checked })}
-          />
-          <span className="text-sm">{t("showTimestamps")}</span>
-        </label>
-
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={!!form.sidebar_collapsed}
-            onChange={(e) => setEdits({ ...edits, sidebar_collapsed: e.target.checked })}
-          />
-          <span className="text-sm">{t("collapseSidebar")}</span>
-        </label>
-
-        <button
-          type="submit"
-          disabled={update.isPending || Object.keys(edits).length === 0}
-          className="rounded-md bg-primary-600 px-4 py-2 text-white disabled:opacity-50"
-        >
-          {update.isPending ? t("saving") : t("save")}
-        </button>
-
-        {update.isSuccess && (
-          <p className="text-sm text-green-600">{t("saved")}</p>
-        )}
-        {update.isError && (
-          <p className="text-sm text-red-600">{t("saveFailed")}</p>
-        )}
-      </form>
-      <HermesMemorySection />
-      <HermesSkillDraftsSection />
+      </main>
     </div>
   );
 }

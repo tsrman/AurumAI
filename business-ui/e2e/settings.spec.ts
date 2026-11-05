@@ -16,9 +16,9 @@ test.describe("Settings", () => {
 
     const wasChecked = await timestampsCheckbox.isChecked();
     if (wasChecked) {
-      await timestampsCheckbox.uncheck();
+      await timestampsCheckbox.uncheck({ force: true });
     } else {
-      await timestampsCheckbox.check();
+      await timestampsCheckbox.check({ force: true });
     }
 
     await page.getByRole("button", { name: /save/i }).click();
@@ -32,9 +32,9 @@ test.describe("Settings", () => {
     // Restore original value so the test is idempotent across runs.
     const checkboxAfter = page.getByLabel("Show message times");
     if (wasChecked) {
-      await checkboxAfter.check();
+      await checkboxAfter.check({ force: true });
     } else {
-      await checkboxAfter.uncheck();
+      await checkboxAfter.uncheck({ force: true });
     }
     await page.getByRole("button", { name: /save/i }).click();
     await expect(page.getByText("Settings saved")).toBeVisible();

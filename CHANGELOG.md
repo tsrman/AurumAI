@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### User interface
+
+- **Settings page in the design system.** The member settings page (`/settings`) and its Hermes
+  memory and skills sections now use the shared cards, toggles and buttons instead of bare browser
+  controls. The guide's screenshots were retaken on the current stack (real agents in the sidebar,
+  the redesigned settings page).
+
 ### Agents
 
 - **Hermes agents in workflows follow their settings.** A workflow node keeps its agent's own model
