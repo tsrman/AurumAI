@@ -666,6 +666,13 @@ export interface OrganizationHermesSettings {
   model: string | null;
 }
 
+/** Whether a model answers with native tool calls, which Hermes Agent needs; null: unknown. */
+export async function checkHermesModel(model: string) {
+  return (await api.post("admin/settings/hermes/model-check", { json: { model } })).json<
+    ApiResponse<{ model: string; toolCalls: boolean | null }>
+  >();
+}
+
 export async function getOrganizationHermesSettings() {
   return (await api.get("admin/settings/hermes")).json<
     ApiResponse<OrganizationHermesSettings>

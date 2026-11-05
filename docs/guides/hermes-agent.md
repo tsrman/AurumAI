@@ -123,8 +123,12 @@ Everything is in the Admin app.
     named in the agent's instructions and searched with `knowledge_search`; without a base id
     the search covers the files attached to the conversation.
   - The web, image and question switches work as for an ordinary agent: a switched-off tool is
-    neither offered nor accepted by the platform. In a workflow, the agent's tools and internet
-    mode apply, but the question switch does not yet.
+    neither offered nor accepted by the platform. They apply in workflows too: a node's tools,
+    internet mode, own model and question switch come from its agent (a question it may not ask
+    is answered "skip" so the run goes on).
+  - **Check tool calling** in the wizard sends one tiny request to the chosen model and tells
+    you whether it answers with native tool calls. A model that does not cannot use Hermes's
+    tools. The check is a diagnostic for administrators and is not billed to a conversation.
 
 If the page says Hermes is switched off on this deployment, `HERMES_ENABLED` is not set.
 

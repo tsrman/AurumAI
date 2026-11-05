@@ -63,3 +63,42 @@ async def test_the_model_must_be_granted_and_can_be_cleared(db, test_org, monkey
     assert mode_only["model"] == "granted-model" and mode_only["egressMode"] == "none"
     assert cleared["model"] is None
     assert checked == ["other", "granted-model"]
+
+
+async def test_a_model_is_checked_for_native_tool_calls(db, test_org, monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    from src.services import hermes_model_probe
+
+    async def allowed(session, org_id, model, **_):  # noqa: ANN001, ANN003, ANN202
+        if model == "not-granted":
+            raise HTTPException(status_code=403, detail="Model not allowed")
+
+    def scripted(chunks):  # noqa: ANN001, ANN202
+        async def stream_chat(request, **_):  # noqa: ANN001, ANN003, ANN202
+            assert request["tool_choice"]["function"]["name"] == "ping"
+            if isinstance(chunks, Exception):
+                raise chunks
+            for chunk in chunks:
+                yield chunk
+
+        return stream_chat
+
+    monkeypatch.setattr(admin_hermes, "ensure_model_allowed", allowed)
+    call = '{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"ping"}}]}}]}'
+    text = '{"choices":[{"delta":{"content":"ping"}}]}'
+
+    async def check(model: str, chunks) -> httpx.Response:  # noqa: ANN001
+        monkeypatch.setattr(hermes_model_probe.llm_client, "stream_chat", scripted(chunks))
+        async with httpx.AsyncClient(transport=ASGITransport(app=_app(db, test_org.id)), base_url="http://t") as client:
+            return await client.post("/v1/admin/settings/hermes/model-check", json={"model": model})
+
+    with_calls = await check("good", [text, call])
+    without = await check("plain", [text])
+    unreachable = await check("down", RuntimeError("402"))
+    refused = await check("not-granted", [call])
+
+    assert with_calls.json()["data"] == {"model": "good", "toolCalls": True}
+    assert without.json()["data"]["toolCalls"] is False
+    assert unreachable.json()["data"]["toolCalls"] is None
+    assert refused.status_code == 403

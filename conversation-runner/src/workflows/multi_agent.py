@@ -157,6 +157,7 @@ def _agent_snapshot(raw: dict[str, Any]) -> AgentExecutionSnapshot:
             for item in knowledge_bases
         ),
         kind=str(raw.get("kind") or "agent"),
+        ask_user_enabled=raw.get("askUserEnabled") is not False,
     )
 
 

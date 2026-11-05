@@ -216,6 +216,8 @@ class WorkflowRunService:
                 # Hermes runs in the conversation's sandbox, on the
                 # organization's Hermes model, for users who may use it.
                 model = await self._hermes_model(session, subject)
+                if not agent.use_org_hermes_model:
+                    model = agent.model_id
             try:
                 await self._resource_authorization.require_access(
                     session,
@@ -250,6 +252,7 @@ class WorkflowRunService:
                 name=agent.name,
                 model=model,
                 kind=cast(Literal["agent", "hermes"], agent.kind),
+                ask_user_enabled=agent.ask_user_enabled,
                 system_prompt=agent.system_prompt,
                 temperature=resolve_temperature(agent.temperature, org_default_temperature),
                 allowed_skill_ids=tuple(agent.skill_ids),

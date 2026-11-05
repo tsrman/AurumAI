@@ -131,7 +131,11 @@
       "egress_packages": "Package registries only",
       "egress_packages_hint": "Install packages; no other sites.",
       "egress_public": "Public internet",
-      "egress_public_hint": "Needs the web access right of the user and an organization mode that allows it."
+      "egress_public_hint": "Needs the web access right of the user and an organization mode that allows it.",
+      "checkModel": "Check tool calling",
+      "checkModelOk": "The model answers with native tool calls.",
+      "checkModelNo": "This model did not call a tool. Hermes cannot use its tools with it; choose another model.",
+      "checkModelUnknown": "The check could not be completed (the gateway did not answer). Try again later."
     }
   },
   "access": {

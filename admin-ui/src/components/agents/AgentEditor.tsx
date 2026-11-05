@@ -1,5 +1,6 @@
 "use client";
 
+import { checkHermesModel } from "@/lib/api";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -43,6 +44,7 @@ export function AgentEditor({ agent }: { agent?: AgentDefinition }) {
               skills={editor.skills}
               knowledgeBases={editor.knowledgeBases}
               hermesModel={editor.hermesModel}
+              checkModel={async (model) => (await checkHermesModel(model)).data.toolCalls}
               kindLocked={agent !== undefined}
               isValid={editor.isValid}
               save={editor.save}

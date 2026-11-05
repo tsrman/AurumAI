@@ -27,6 +27,7 @@ from src.models.user import User
 from src.routers.hermes_skill_drafts import SkillDraftView, draft_error
 from src.schemas.common import ApiResponse, Meta
 from src.services import hermes_skill_drafts
+from src.services.hermes_model_probe import supports_tool_calls
 from src.services.hermes_egress import (
     EgressModeAboveMaximum,
     organization_egress_mode,
@@ -55,6 +56,20 @@ class HermesSettingsUpdate(BaseModel):
 
     egress_mode: Mode | None = Field(default=None, alias="egressMode")
     model: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class ModelCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1, max_length=255)
+
+
+class ModelCheckResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    model: str
+    # None: the gateway did not answer, so nothing is known.
+    tool_calls: bool | None = Field(serialization_alias="toolCalls")
 
 
 def _meta() -> Meta:
@@ -105,6 +120,23 @@ async def update_hermes_settings(
         await set_organization_hermes_model(session, org_id, data.model)
     await session.commit()
     return ApiResponse(data=await _response(session, org_id), meta=_meta())
+
+
+@router.post("/settings/hermes/model-check", response_model=ApiResponse[ModelCheckResponse])
+async def check_hermes_model(
+    data: ModelCheckRequest,
+    user: UserInfo = Depends(require_org_admin),
+    org_id: UUID = Depends(get_current_org_id),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[ModelCheckResponse]:
+    """Whether a model answers with native tool calls (which Hermes Agent needs)."""
+    await ensure_model_allowed(session, str(org_id), data.model, user_id=user.user_id, role=user.role)
+    # Release the transaction before the gateway call.
+    await session.commit()
+    return ApiResponse(
+        data=ModelCheckResponse(model=data.model, tool_calls=await supports_tool_calls(data.model)),
+        meta=_meta(),
+    )
 
 
 DraftStatus = Literal["pending", "approved", "rejected"]
