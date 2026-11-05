@@ -216,6 +216,10 @@ export interface AgentDefinition {
   webEnabled?: boolean;
   imagesEnabled?: boolean;
   askUserEnabled?: boolean;
+  // Hermes only: null follows the organization's internet mode; a value can only lower it.
+  hermesEgressMode?: "none" | "packages" | "public" | null;
+  useOrgHermesModel?: boolean;
+  hermesSkillsScope?: "all" | "selected";
   // Set when archived: hidden from pickers and refused for new use; history stays.
   archivedAt?: string | null;
   canWrite: boolean;
@@ -238,6 +242,9 @@ export interface AgentDefinitionCreate {
   webEnabled?: boolean;
   imagesEnabled?: boolean;
   askUserEnabled?: boolean;
+  hermesEgressMode?: "none" | "packages" | "public" | null;
+  useOrgHermesModel?: boolean;
+  hermesSkillsScope?: "all" | "selected";
 }
 
 export type ResourceType =

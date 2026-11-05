@@ -4,6 +4,11 @@
 
 ### Agents
 
+- **Configurable Hermes agents.** A Hermes agent can use a model of its own, lower the internet
+  mode of its workspace, take only selected skills, carry knowledge bases (searched by id with
+  `knowledge_search`) and switch web search, images and questions off. The MCP bridge, the egress
+  guard and the model route resolve the agent of each session live and fail closed when it is
+  archived or gone. The wizard in the admin UI sets all of it; workflow templates carry the settings.
 - **Archiving agents.** An agent that a workflow or a run ever referred to cannot be deleted, so it
   can now be archived: hidden from lists and pickers, refused for new use (`/execution`, workflows,
   runs), history intact, and restorable. `POST /v1/agent-definitions/{id}/archive` and `/unarchive`;

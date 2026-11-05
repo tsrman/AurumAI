@@ -30,6 +30,9 @@ const DEFAULT_CONSTRUCTOR: ConstructorState = {
   webEnabled: true,
   imagesEnabled: true,
   askUserEnabled: true,
+  hermesEgressMode: null,
+  useOrgHermesModel: true,
+  hermesSkillsScope: "all",
 };
 
 export function AppShellProvider({ children }: { children?: React.ReactNode }) {

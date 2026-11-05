@@ -21,6 +21,9 @@ const STATE: ConstructorState = {
   webEnabled: true,
   imagesEnabled: true,
   askUserEnabled: true,
+    hermesEgressMode: null,
+    useOrgHermesModel: true,
+    hermesSkillsScope: "all" as const,
 };
 
 describe("AgentWizard", () => {
@@ -112,12 +115,40 @@ describe("AgentWizard", () => {
     expect(toggleBase).toHaveBeenCalledWith(knowledgeBases[0].id);
   });
 
-  it("a Hermes Agent has no tools or capabilities steps and runs on the Hermes model", () => {
-    expect(wizardSteps("hermes", false)).toEqual(["kind", "basics", "instructions", "review"]);
+  it("a Hermes Agent has the same steps and runs on the Hermes model by default", () => {
+    expect(wizardSteps("hermes", false)).toEqual(wizardSteps("agent", false));
     renderWizard({ ...STATE, kind: "hermes" }, { hermesModel: "hermes-model" });
     next();
     expect(screen.getByText("Runs on the organization's Hermes model: hermes-model")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Capabilities/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use the organization's Hermes model/ }));
+    expect(setField).toHaveBeenCalledWith("useOrgHermesModel", false);
+  });
+
+  it("a Hermes Agent lists its skills only when it takes selected ones", () => {
+    const hermes = { ...STATE, kind: "hermes" as const };
+    const { unmount } = renderWizard(hermes, { hermesModel: "hermes-model" });
+    next();
+    next();
+    next();
+    expect(screen.getByRole("radio", { name: /All skills the user may run/ })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Web search" })).not.toBeInTheDocument();
+    unmount();
+
+    renderWizard({ ...hermes, hermesSkillsScope: "selected" }, { hermesModel: "hermes-model" });
+    next();
+    next();
+    next();
+    expect(screen.getByRole("checkbox", { name: "Web search" })).toBeInTheDocument();
+  });
+
+  it("a Hermes Agent can lower the internet mode", () => {
+    renderWizard({ ...STATE, kind: "hermes" }, { hermesModel: "hermes-model" });
+    next();
+    next();
+    next();
+    next();
+    fireEvent.click(screen.getByRole("radio", { name: /^None/ }));
+    expect(setField).toHaveBeenCalledWith("hermesEgressMode", "none");
   });
 
   it("an existing agent skips the type step and can be saved from any step", () => {

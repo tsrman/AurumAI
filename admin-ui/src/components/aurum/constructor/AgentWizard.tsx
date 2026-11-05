@@ -45,7 +45,7 @@ const card = "rounded-card border border-aurum-border bg-aurum-surface p-4 shado
 export function wizardSteps(kind: ConstructorState["kind"], kindLocked: boolean): Step[] {
   const steps: Step[] = kindLocked ? [] : ["kind"];
   steps.push("basics", "instructions");
-  if (kind === "agent") steps.push("tools", "capabilities");
+  steps.push("tools", "capabilities");
   steps.push("review");
   return steps;
 }
@@ -79,7 +79,9 @@ export function AgentWizard({
 
   const stepReady: Record<Step, boolean> = {
     kind: true,
-    basics: state.name.trim().length > 0 && (hermes ? Boolean(hermesModel) : state.model.length > 0),
+    basics:
+      state.name.trim().length > 0 &&
+      (hermes && state.useOrgHermesModel ? Boolean(hermesModel) : state.model.length > 0),
     instructions: state.prompt.trim().length > 0,
     tools: true,
     capabilities: true,
@@ -154,11 +156,27 @@ export function AgentWizard({
           <section className={card}>
             <p className="mb-3 text-sm font-medium text-aurum-text-2">{t("model")}</p>
             {hermes ? (
+              <label className="mb-3 flex items-start gap-2 text-sm text-aurum-text-2">
+                <input
+                  type="checkbox"
+                  checked={state.useOrgHermesModel}
+                  onChange={(event) => setField("useOrgHermesModel", event.target.checked)}
+                />
+                <span>
+                  {w("useOrgModel")}
+                  <span className="block text-xs text-aurum-text-3">{w("useOrgModelHint")}</span>
+                </span>
+              </label>
+            ) : null}
+            {hermes && state.useOrgHermesModel ? (
               <p className="text-sm text-aurum-text-2">
                 {hermesModel ? t("hermesModel", { model: hermesModel }) : t("hermesModelUnset")}
               </p>
             ) : (
-              <ModelPickerField value={state.model} options={models} onChange={(modelId) => setField("model", modelId)} />
+              <>
+                <ModelPickerField value={state.model} options={models} onChange={(modelId) => setField("model", modelId)} />
+                {hermes ? <p className="mt-2 text-xs text-aurum-text-3">{w("ownModelHint")}</p> : null}
+              </>
             )}
           </section>
         </>
@@ -191,15 +209,36 @@ export function AgentWizard({
 
       {step === "tools" ? (
         <>
-          <section className={card}>
-            <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{t("tools")}</h3>
-            <div className="space-y-4">
-              {skills.length === 0 ? <p className="text-xs text-aurum-text-3">{t("noTools")}</p> : null}
-              {skills.map((skill) => (
-                <ToolToggle key={skill.id} name={skill.name} description={skill.description ?? ""} checked={state.tools[skill.id] ?? false} onChange={() => toggleTool(skill.id)} />
+          {hermes ? (
+            <section className={card}>
+              <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{w("skillsScope")}</h3>
+              {(["all", "selected"] as const).map((scope) => (
+                <label key={scope} className="mb-2 flex cursor-pointer items-start gap-3 text-sm text-aurum-text">
+                  <input
+                    type="radio"
+                    name="skills-scope"
+                    checked={state.hermesSkillsScope === scope}
+                    onChange={() => setField("hermesSkillsScope", scope)}
+                  />
+                  <span>
+                    <span className="font-medium">{w(`skills_${scope}`)}</span>
+                    <span className="block text-xs text-aurum-text-3">{w(`skills_${scope}_hint`)}</span>
+                  </span>
+                </label>
               ))}
-            </div>
-          </section>
+            </section>
+          ) : null}
+          {hermes && state.hermesSkillsScope === "all" ? null : (
+            <section className={card}>
+              <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{t("tools")}</h3>
+              <div className="space-y-4">
+                {skills.length === 0 ? <p className="text-xs text-aurum-text-3">{t("noTools")}</p> : null}
+                {skills.map((skill) => (
+                  <ToolToggle key={skill.id} name={skill.name} description={skill.description ?? ""} checked={state.tools[skill.id] ?? false} onChange={() => toggleTool(skill.id)} />
+                ))}
+              </div>
+            </section>
+          )}
           <section className={card}>
             <h3 className="mb-3 text-sm font-medium text-aurum-text-2">{t("knowledgeBases")}</h3>
             <div className="space-y-4">
@@ -221,6 +260,26 @@ export function AgentWizard({
             {capability("imagesEnabled", w("images"), w("imagesHint"))}
             {capability("askUserEnabled", w("askUser"), w("askUserHint"))}
           </div>
+          {hermes ? (
+            <div className="mt-5 border-t border-aurum-border pt-4">
+              <p className="text-sm font-medium text-aurum-text">{w("egress")}</p>
+              <p className="mb-3 text-xs text-aurum-text-3">{w("egressHint")}</p>
+              {([null, "none", "packages", "public"] as const).map((mode) => (
+                <label key={mode ?? "org"} className="mb-2 flex cursor-pointer items-start gap-3 text-sm text-aurum-text">
+                  <input
+                    type="radio"
+                    name="egress-mode"
+                    checked={state.hermesEgressMode === mode}
+                    onChange={() => setField("hermesEgressMode", mode)}
+                  />
+                  <span>
+                    <span className="font-medium">{w(`egress_${mode ?? "org"}`)}</span>
+                    <span className="block text-xs text-aurum-text-3">{w(`egress_${mode ?? "org"}_hint`)}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -230,11 +289,16 @@ export function AgentWizard({
           <dl className="space-y-2 text-sm">
             <div><dt className="text-xs text-aurum-text-3">{t("kind")}</dt><dd>{w(`kind_${state.kind}`)}</dd></div>
             <div><dt className="text-xs text-aurum-text-3">{t("name")}</dt><dd>{state.name || "—"}</dd></div>
-            <div><dt className="text-xs text-aurum-text-3">{t("model")}</dt><dd>{hermes ? (hermesModel ?? "—") : state.model || "—"}</dd></div>
-            {hermes ? null : (
-              <>
-                <div><dt className="text-xs text-aurum-text-3">{t("tools")}</dt><dd>{Object.values(state.tools).filter(Boolean).length}</dd></div>
+            <div><dt className="text-xs text-aurum-text-3">{t("model")}</dt><dd>{hermes && state.useOrgHermesModel ? (hermesModel ?? "—") : state.model || "—"}</dd></div>
+            <>
+                <div>
+                  <dt className="text-xs text-aurum-text-3">{t("tools")}</dt>
+                  <dd>{hermes && state.hermesSkillsScope === "all" ? w("skills_all") : Object.values(state.tools).filter(Boolean).length}</dd>
+                </div>
                 <div><dt className="text-xs text-aurum-text-3">{t("knowledgeBases")}</dt><dd>{Object.values(state.bases).filter(Boolean).length}</dd></div>
+                {hermes ? (
+                  <div><dt className="text-xs text-aurum-text-3">{w("egress")}</dt><dd>{w(`egress_${state.hermesEgressMode ?? "org"}`)}</dd></div>
+                ) : null}
                 <div>
                   <dt className="text-xs text-aurum-text-3">{w("capabilities")}</dt>
                   <dd>
@@ -245,8 +309,7 @@ export function AgentWizard({
                     ].filter(Boolean).join(", ") || w("none")}
                   </dd>
                 </div>
-              </>
-            )}
+            </>
           </dl>
         </section>
       ) : null}

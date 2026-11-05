@@ -53,6 +53,9 @@ const state: ConstructorState = {
   webEnabled: true,
   imagesEnabled: true,
   askUserEnabled: true,
+    hermesEgressMode: null,
+    useOrgHermesModel: true,
+    hermesSkillsScope: "all" as const,
 };
 
 function Wrapper({ children }: { children: React.ReactNode }) {
@@ -125,7 +128,7 @@ test("save persists canonical model, skill and knowledge-base IDs", async () => 
   expect(mocks.push).toHaveBeenCalledWith("/admin/agents");
 });
 
-test("a Hermes Agent is saved on the organization's Hermes model without tools", async () => {
+test("a Hermes Agent on all skills is saved on the organization's Hermes model without its own skills", async () => {
   const { result } = renderHook(() => useAgentConstructor(), { wrapper: Wrapper });
   act(() => result.current.setField("kind", "hermes"));
 
@@ -133,8 +136,12 @@ test("a Hermes Agent is saved on the organization's Hermes model without tools",
     await result.current.save();
   });
 
-  // The tools chosen before switching the type are not sent.
+  // Skills are not sent while the agent takes every skill the user may run.
   expect(mocks.createAgentDefinition).toHaveBeenCalledWith(
-    expect.objectContaining({ kind: "hermes", modelId: "hermes-model", skillIds: [], knowledgeBaseIds: [] })
+    expect.objectContaining({ kind: "hermes", modelId: "hermes-model",
+      skillIds: [],
+      useOrgHermesModel: true,
+      hermesSkillsScope: "all",
+    })
   );
 });
