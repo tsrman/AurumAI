@@ -21,7 +21,7 @@ Detailed fresh verification belongs in the release report and CI.
 - Optional background identity synchronization, monthly payload partitions and
   verified operator-only Parquet archive/export/restore.
 - Admin UI in the chat app's shell: users and groups (default and per-group
-  permissions, read-only Keycloak membership), agents (create, edit, delete),
+  permissions, read-only Keycloak membership), agents (a creation wizard, per-agent capability switches, archive and restore; chosen in chat),
   skills, workflows, knowledge bases, models and usage analytics, with access
   configured from each resource.
 - Image generation and editing in chat through an OpenAI-compatible Images API,
