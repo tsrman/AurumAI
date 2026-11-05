@@ -29,6 +29,9 @@ function stateFromAgent(agent: AgentDefinition): ConstructorState {
     webEnabled: agent.webEnabled ?? true,
     imagesEnabled: agent.imagesEnabled ?? true,
     askUserEnabled: agent.askUserEnabled ?? true,
+    hermesEgressMode: agent.hermesEgressMode ?? null,
+    useOrgHermesModel: agent.useOrgHermesModel ?? true,
+    hermesSkillsScope: agent.hermesSkillsScope ?? "all",
   };
 }
 
@@ -123,7 +126,11 @@ export function useAgentConstructor(agent?: AgentDefinition) {
 
   const isValid = useMemo(() => {
     if (state.kind === "hermes") {
-      return state.name.trim().length > 0 && state.prompt.trim().length > 0 && Boolean(hermesModel);
+      return (
+        state.name.trim().length > 0 &&
+        state.prompt.trim().length > 0 &&
+        (state.useOrgHermesModel ? Boolean(hermesModel) : state.model.length > 0)
+      );
     }
     return (
       state.name.trim().length > 0 &&
@@ -133,22 +140,26 @@ export function useAgentConstructor(agent?: AgentDefinition) {
       (models.some((model) => model.id === state.model) ||
         (agent !== undefined && state.model === agent.modelId))
     );
-  }, [state.kind, state.name, state.prompt, state.model, models, agent, hermesModel]);
+  }, [state.kind, state.name, state.prompt, state.model, state.useOrgHermesModel, models, agent, hermesModel]);
 
   const save = useCallback(async (): Promise<boolean> => {
     if (!isValid) return false;
 
     const hermes = state.kind === "hermes";
-    // Hermes brings the platform's tools and its own skills.
-    const skillIds = hermes ? [] : Object.keys(state.tools).filter((id) => state.tools[id]);
-    const knowledgeBaseIds = hermes ? [] : Object.keys(state.bases).filter((id) => state.bases[id]);
+    // Hermes on all skills keeps none of its own; the user's access decides.
+    const skillIds =
+      hermes && state.hermesSkillsScope === "all"
+        ? []
+        : Object.keys(state.tools).filter((id) => state.tools[id]);
+    const knowledgeBaseIds = Object.keys(state.bases).filter((id) => state.bases[id]);
     setIsSaving(true);
     setSaveError(null);
     try {
       const payload = {
         name: state.name.trim(),
         description: state.description.trim(),
-        modelId: hermes ? (hermesModel ?? state.model) : state.model,
+        // A Hermes agent on the organization's model keeps a placeholder: the organization's decides.
+        modelId: hermes && state.useOrgHermesModel ? (hermesModel ?? state.model) : state.model,
         systemPrompt: state.prompt.trim(),
         temperature: state.temperature,
         skillIds,
@@ -157,8 +168,15 @@ export function useAgentConstructor(agent?: AgentDefinition) {
         imagesEnabled: state.imagesEnabled,
         askUserEnabled: state.askUserEnabled,
       };
-      if (agent) await updateAgentDefinition(agent.id, payload);
-      else await createAgentDefinition({ ...payload, kind: state.kind });
+      const hermesSettings = hermes
+        ? {
+            hermesEgressMode: state.hermesEgressMode,
+            useOrgHermesModel: state.useOrgHermesModel,
+            hermesSkillsScope: state.hermesSkillsScope,
+          }
+        : {};
+      if (agent) await updateAgentDefinition(agent.id, { ...payload, ...hermesSettings });
+      else await createAgentDefinition({ ...payload, ...hermesSettings, kind: state.kind });
       void queryClient.invalidateQueries({ queryKey: ["agent-definitions"] });
       router.push("/admin/agents");
       return true;

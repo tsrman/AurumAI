@@ -113,7 +113,25 @@
       "review": "Check the agent",
       "none": "None",
       "back": "Back",
-      "next": "Next"
+      "next": "Next",
+      "useOrgModel": "Use the organization's Hermes model",
+      "useOrgModelHint": "Off: this agent runs on a model you choose. It must support native tool calling; otherwise Hermes cannot use its tools.",
+      "ownModelHint": "Users who may not use this model cannot choose the agent.",
+      "skillsScope": "Platform skills",
+      "skills_all": "All skills the user may run",
+      "skills_all_hint": "The agent can list and run every skill the user has access to.",
+      "skills_selected": "Only the selected skills",
+      "skills_selected_hint": "The agent sees and runs only the skills chosen below (the user still needs access to them).",
+      "egress": "Internet access of the workspace",
+      "egressHint": "Can only lower the organization's mode. Web search and page reading stay governed by the switch above and the user's rights.",
+      "egress_org": "As the organization",
+      "egress_org_hint": "Follow the organization's mode.",
+      "egress_none": "None",
+      "egress_none_hint": "No network from the workspace.",
+      "egress_packages": "Package registries only",
+      "egress_packages_hint": "Install packages; no other sites.",
+      "egress_public": "Public internet",
+      "egress_public_hint": "Needs the web access right of the user and an organization mode that allows it."
     }
   },
   "access": {

@@ -112,8 +112,19 @@ Everything is in the Admin app.
   `agents.hermes`) and can be a workflow node.
   - A conversation's workspace belongs to the first Hermes Agent that ran in it; choosing
     another Hermes Agent in the same conversation is refused, start a new conversation.
-  - Its internet access is the organization's mode; models, skills and knowledge bases are
-    not set per agent yet.
+  - It follows the organization's internet mode unless the wizard lowers it (**None**,
+    **Package registries only**); an agent can never raise it above the organization's mode or
+    the operator's maximum. **Public internet** still needs the person's web access right.
+  - By default it runs on the organization's Hermes model. Turn that off to give it a model of
+    its own, which must support native tool calling; the sandbox cannot pick another model.
+    People who may not use that model cannot choose the agent.
+  - **Skills:** every platform skill the person may run (default), or only those you select.
+  - **Knowledge bases:** the ones you select, restricted to what the person may read. They are
+    named in the agent's instructions and searched with `knowledge_search`; without a base id
+    the search covers the files attached to the conversation.
+  - The web, image and question switches work as for an ordinary agent: a switched-off tool is
+    neither offered nor accepted by the platform. In a workflow, the agent's tools and internet
+    mode apply, but the question switch does not yet.
 
 If the page says Hermes is switched off on this deployment, `HERMES_ENABLED` is not set.
 

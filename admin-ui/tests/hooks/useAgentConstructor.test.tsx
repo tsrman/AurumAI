@@ -54,6 +54,9 @@ const DEFAULT_STATE: ConstructorState = {
   webEnabled: true,
   imagesEnabled: true,
   askUserEnabled: true,
+    hermesEgressMode: null,
+    useOrgHermesModel: true,
+    hermesSkillsScope: "all" as const,
 };
 
 let initialState: ConstructorState = DEFAULT_STATE;

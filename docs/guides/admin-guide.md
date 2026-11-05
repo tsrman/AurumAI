@@ -108,13 +108,15 @@ saved from any of them):
 1. **Type.** An ordinary **Agent**, or a **Hermes Agent** (a workflow node that runs in a
    workspace of its own). The type is fixed once the agent exists.
 2. **Basics.** Name, description and the model (a Hermes Agent runs on the organization's
-   Hermes model).
+   Hermes model unless you give it a model of its own).
 3. **Instructions.** The system prompt and the temperature (or inherit the organization's).
 4. **Tools and knowledge.** The skills and knowledge bases the agent may use, and nothing
-   else.
+   else. A Hermes Agent chooses between all the skills the person may run and only the
+   selected ones.
 5. **Capabilities.** Three built-in capabilities, each on its own switch: **web search and
    reading pages**, **image generation and editing** and **questions to the user**. All are on
-   for a new agent.
+   for a new agent. A Hermes Agent also sets the internet access of its workspace here, which
+   can only lower the organization's mode.
 6. **Review** and create.
 
 The capability switches only narrow what a chat turn on the agent may use. The platform's
@@ -140,7 +142,7 @@ When an action is refused, the message says why and names the workflows involved
 
 A **Hermes Agent** can be chosen in chat too: its instructions become its role in its
 sandbox (the platform's own rules about where files come in and go out always come first),
-and it runs on the organization's Hermes model. Give it to people with **Access**; they
+and it runs on the organization's Hermes model unless it has one of its own. Give it to people with **Access**; they
 also need the `agents.hermes` capability. See [Hermes Agent](hermes-agent.md#administration).
 
 Agent kinds include ordinary agents and, when Hermes Agent is on, an agent that runs on

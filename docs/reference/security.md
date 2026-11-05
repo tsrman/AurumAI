@@ -63,6 +63,14 @@ Hermes runs model-chosen commands, so its boundary is stricter than the others:
   mounts no service-account token.
 - **Egress is a mode**, `none`, `packages` or `public`, chosen by the organization within
   the operator's maximum (`HERMES_EGRESS_MAX_MODE`). Choose the lowest that does the job.
+  A Hermes agent definition may lower it further for its own sessions, never raise it; the
+  guard resolves the agent of each token live, and a session whose agent is archived or gone
+  is denied.
+- **A Hermes agent narrows the platform bridge.** Its web and image switches hide and refuse
+  those tools, selected skills limit what it can list and run, and its knowledge bases are the
+  only ones `knowledge_search` reaches by id. Each call is checked against the agent at call
+  time, not only when Hermes lists the tools. An agent's own model replaces the model the
+  sandbox asks for.
 - **No provider credentials** reach the sandbox: only a session token that names a person.
   Model calls go through the backend's route, which applies grants and quota.
 - **Resource caps:** CPU, memory, process and disk limits per sandbox; at most 16

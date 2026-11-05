@@ -148,4 +148,10 @@ export interface ConstructorState {
   webEnabled: boolean;
   imagesEnabled: boolean;
   askUserEnabled: boolean;
+  // Hermes only. null follows the organization's internet mode; a value can only lower it.
+  hermesEgressMode: "none" | "packages" | "public" | null;
+  // Hermes only. Off: the agent uses `model` instead of the organization's Hermes model.
+  useOrgHermesModel: boolean;
+  // Hermes only. "all": every skill the user may run; "selected": only `tools`.
+  hermesSkillsScope: "all" | "selected";
 }
