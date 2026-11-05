@@ -227,3 +227,4 @@ Details: [security model](../reference/security.md#hermes-agent).
 | It cannot reach a website | Mode is not **Public internet** |
 | Pictures are ignored | The model is not marked as accepting images (Models → Images) |
 | *Open prototype* does nothing | Previews are off, the wildcard DNS or TLS is wrong, or the service secrets differ |
+| Every turn fails with `hermes_run_failed` after the backend was recreated | The egress guard resolves the backend's address once, when it starts; restart `hermes-egress-guard` and `hermes-egress` after recreating the backend |
