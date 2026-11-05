@@ -132,3 +132,19 @@ def test_hermes_settings_belong_to_a_hermes_agent_definition() -> None:
     assert hermes.kind == "hermes" and hermes.skill_ids == [skill]
     with pytest.raises(ValidationError):
         AgentDefinitionCreate(name="A", model_id="m", system_prompt="p", hermes_egress_mode="none")
+
+
+async def test_a_hermes_node_carries_its_agents_question_switch_and_own_model(db, hermes_org, test_user) -> None:
+    definition, conversation, message, turn_id = await _hermes_graph(db, hermes_org, test_user)
+    worker = await db.get(AgentDefinition, (await _node_agent_id(db, definition.id)))
+    worker.ask_user_enabled = False
+    worker.use_org_hermes_model = False
+    worker.model_id = "provider/model-v1"
+    await db.commit()
+
+    run = await run_service().create_authorized_run(
+        db, _admin(hermes_org, test_user), definition.id, conversation.id, turn_id, message.id
+    )
+
+    [node] = run.execution_snapshot["nodes"]
+    assert (node["agent"]["askUserEnabled"], node["agent"]["model"]) == (False, "provider/model-v1")

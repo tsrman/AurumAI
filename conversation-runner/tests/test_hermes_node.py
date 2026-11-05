@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 import pytest
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
@@ -131,3 +131,71 @@ async def test_a_cancelled_node_stops_its_hermes_turn() -> None:
     await _node(session, cancel=True)
 
     assert session.cancelled == [KEY]
+
+
+@workflow.defn(name="FakeNodeHermesSession")
+class FakeNodeSession:
+    """Takes the answer as the conversation's session workflow would and finishes the node with it."""
+
+    def __init__(self) -> None:
+        self.answers: list[dict[str, Any]] = []
+
+    @workflow.signal(name="hermes_answer_question")
+    def answer(self, answer: dict[str, Any]) -> None:
+        self.answers.append(answer)
+
+    @workflow.run
+    async def run(self, parent: str) -> None:
+        await workflow.wait_condition(lambda: bool(self.answers))
+        await workflow.get_external_workflow_handle(parent).signal(
+            "hermes_turn_result", {"turn_id": KEY, "status": "completed", "output": f"answer={self.answers[0]['answer']}"}
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("agent_allows", "asked"), [(False, 0), (True, 1)])
+async def test_an_agent_that_may_not_ask_has_its_hermes_question_skipped(agent_allows: bool, asked: int) -> None:
+    from dataclasses import replace
+
+    from src.workflows.activities import hermes_session_id
+
+    questions: list[Any] = []
+    session = Session(None)
+    prompt = {
+        "turn_id": KEY,
+        "run_id": "r1",
+        "prompt_id": "p1",
+        "execution_generation": 1,
+        "text": "Which city?",
+        "choices": ["Paris"],
+        "multi_select": False,
+    }
+
+    @activity.defn(name="hand_off_hermes_turn")
+    async def hand_off(turn: dict[str, Any]) -> None:
+        handle = activity.client().get_workflow_handle(turn["parent_workflow_id"])
+        await handle.signal("hermes_question", prompt)
+
+    @activity.defn(name="create_user_question")
+    async def create_question(*args: Any) -> dict[str, Any]:
+        questions.append(args)
+        raise RuntimeError("stop")
+
+    activities = [a for a in session.activities() if a.__temporal_activity_definition.name != "hand_off_hermes_turn"]
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="test-tq",
+            workflows=[AgentWorkflow, FakeNodeSession],
+            activities=[*activities, hand_off, create_question],
+        ):
+            await env.client.start_workflow(
+                FakeNodeSession.run, "run-9:node:build", id=hermes_session_id("conv-1"), task_queue="test-tq"
+            )
+            base = _input(user_questions_enabled=True)
+            node = replace(base, agent=replace(base.agent, ask_user_enabled=agent_allows))
+            handle = await env.client.start_workflow(AgentWorkflow.run, node, id="run-9:node:build", task_queue="test-tq")
+            answer = await handle.result()
+
+    assert bool(questions) == bool(asked)
+    assert answer == "answer=skip"

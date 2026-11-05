@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { AgentWizard, wizardSteps } from "@/components/aurum/constructor/AgentWizard";
 import { knowledgeBases, models } from "@/lib/mock-data";
@@ -164,5 +164,18 @@ describe("AgentWizard", () => {
   it("shows a save error", () => {
     renderWizard(STATE, { saveError: "Dependency access denied" });
     expect(screen.getByText("Dependency access denied")).toBeInTheDocument();
+  });
+
+  it("checks whether a Hermes agent's own model calls tools", async () => {
+    const checkModel = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    renderWizard({ ...STATE, kind: "hermes", useOrgHermesModel: false }, { checkModel, hermesModel: "hermes-model" });
+    next();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check tool calling" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("did not call a tool");
+    expect(checkModel).toHaveBeenCalledWith("pro");
+
+    fireEvent.click(screen.getByRole("button", { name: "Check tool calling" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("native tool calls"));
   });
 });

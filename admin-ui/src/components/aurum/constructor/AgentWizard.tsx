@@ -26,6 +26,8 @@ export interface AgentWizardProps {
   knowledgeBases: KnowledgeBase[];
   /** The organization's Hermes model; null when Hermes has none. */
   hermesModel?: string | null;
+  /** Whether a model answers with native tool calls (null: unknown); offered for a Hermes agent's own model. */
+  checkModel?: (model: string) => Promise<boolean | null>;
   /** The type is fixed once the agent exists. */
   kindLocked?: boolean;
   isValid: boolean;
@@ -60,6 +62,7 @@ export function AgentWizard({
   skills,
   knowledgeBases,
   hermesModel = null,
+  checkModel,
   kindLocked = false,
   isValid,
   save,
@@ -76,6 +79,17 @@ export function AgentWizard({
   const index = Math.max(steps.indexOf(current), 0);
   const step = steps[index];
   const editing = kindLocked;
+  const [modelCheck, setModelCheck] = useState<{ model: string; result: boolean | null | "failed" | "running" } | null>(null);
+  const runModelCheck = async () => {
+    if (!checkModel) return;
+    const model = state.model;
+    setModelCheck({ model, result: "running" });
+    try {
+      setModelCheck({ model, result: await checkModel(model) });
+    } catch {
+      setModelCheck({ model, result: "failed" });
+    }
+  };
 
   const stepReady: Record<Step, boolean> = {
     kind: true,
@@ -176,6 +190,22 @@ export function AgentWizard({
               <>
                 <ModelPickerField value={state.model} options={models} onChange={(modelId) => setField("model", modelId)} />
                 {hermes ? <p className="mt-2 text-xs text-aurum-text-3">{w("ownModelHint")}</p> : null}
+                {hermes && checkModel ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <Button variant="secondary" onClick={() => void runModelCheck()} disabled={!state.model || modelCheck?.result === "running"}>
+                      {w("checkModel")}
+                    </Button>
+                    {modelCheck && modelCheck.model === state.model && modelCheck.result !== "running" ? (
+                      <span role="status" className={`text-xs ${modelCheck.result === true ? "text-aurum-text-2" : "text-aurum-err-fg"}`}>
+                        {modelCheck.result === true
+                          ? w("checkModelOk")
+                          : modelCheck.result === false
+                            ? w("checkModelNo")
+                            : w("checkModelUnknown")}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             )}
           </section>

@@ -181,6 +181,8 @@ class WorkflowAgentSnapshot(WorkflowSchema):
     # "hermes": the node runs on Hermes Agent, on the organization's Hermes
     # model at the run's start.
     kind: Literal["agent", "hermes"] = "agent"
+    # The agent's switch for questions to the user; the run's own switch still applies.
+    ask_user_enabled: bool = True
 
 
 class WorkflowSnapshotNode(WorkflowSchema):

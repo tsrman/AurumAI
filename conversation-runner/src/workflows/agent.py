@@ -74,6 +74,8 @@ class AgentExecutionSnapshot:
     knowledge_bases: tuple[dict[str, str], ...] = ()
     # "hermes": the node runs on Hermes Agent (docs/HERMES_AGENT.md, phase 6).
     kind: str = "agent"
+    # The agent's own switch for questions to the user (the run's switch still applies).
+    ask_user_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -768,7 +770,9 @@ class AgentWorkflow:
                     retry_policy=_ACTIVITY_RETRY_POLICY,
                 )
                 raise ApplicationError("hermes_turn_timeout", type="hermes_turn_timeout", non_retryable=True)
-            await questions.step(conversation_id, execution, input.user_questions_enabled)
+            await questions.step(
+                conversation_id, execution, input.user_questions_enabled and input.agent.ask_user_enabled
+            )
             if key in self._hermes_results:
                 break
             slice_seconds = (

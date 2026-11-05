@@ -4,6 +4,9 @@
 
 ### Agents
 
+- **Hermes agents in workflows follow their settings.** A workflow node keeps its agent's own model
+  and question switch (a question it may not ask is answered "skip"). The wizard can check that a
+  chosen model answers with native tool calls (`POST /v1/admin/settings/hermes/model-check`).
 - **Configurable Hermes agents.** A Hermes agent can use a model of its own, lower the internet
   mode of its workspace, take only selected skills, carry knowledge bases (searched by id with
   `knowledge_search`) and switch web search, images and questions off. The MCP bridge, the egress
