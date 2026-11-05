@@ -194,6 +194,9 @@ class WorkflowTemplateService:
                     web_enabled=config.web_enabled,
                     images_enabled=config.images_enabled,
                     ask_user_enabled=config.ask_user_enabled,
+                    hermes_egress_mode=config.hermes_egress_mode,
+                    use_org_hermes_model=config.use_org_hermes_model,
+                    hermes_skills_scope=config.hermes_skills_scope,
                 )
             )
             agent_ids[config.key] = new_id

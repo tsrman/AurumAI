@@ -60,6 +60,9 @@ class AgentDefinitionRepository:
             web_enabled=data.web_enabled,
             images_enabled=data.images_enabled,
             ask_user_enabled=data.ask_user_enabled,
+            hermes_egress_mode=data.hermes_egress_mode,
+            use_org_hermes_model=data.use_org_hermes_model,
+            hermes_skills_scope=data.hermes_skills_scope,
         )
         session.add(agent)
         await session.flush()
@@ -171,6 +174,9 @@ class AgentDefinitionRepository:
             "web_enabled",
             "images_enabled",
             "ask_user_enabled",
+            "hermes_egress_mode",
+            "use_org_hermes_model",
+            "hermes_skills_scope",
         ):
             if field in data.model_fields_set:
                 setattr(agent, field, getattr(data, field))

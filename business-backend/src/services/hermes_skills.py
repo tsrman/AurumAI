@@ -101,8 +101,15 @@ def _runnable(skill: Skill) -> bool:
     return skill.type in SKILL_TYPES and skill.owning_conversation_id is None
 
 
-async def list_skills(session: AsyncSession, subject: AuthorizationSubject) -> dict[str, Any]:
-    """Ids, descriptions and input schemas only: never endpoints or credentials."""
+async def list_skills(
+    session: AsyncSession,
+    subject: AuthorizationSubject,
+    allowed: frozenset[UUID] | None = None,
+) -> dict[str, Any]:
+    """Ids, descriptions and input schemas only: never endpoints or credentials.
+
+    `allowed` narrows the list to an agent's own skills; None offers every skill the user may run.
+    """
     skills = await skill_registry.list_accessible_skills(session, subject, LIST_LIMIT, 0)
     return {
         "skills": [
@@ -115,7 +122,7 @@ async def list_skills(session: AsyncSession, subject: AuthorizationSubject) -> d
                 else {"type": "object"},
             }
             for skill in skills
-            if _runnable(skill)
+            if _runnable(skill) and (allowed is None or skill.id in allowed)
         ]
     }
 
@@ -129,12 +136,14 @@ async def run_skill(
     generation: int,
     invocation: UUID,
     client: Client | None = None,
+    allowed: frozenset[UUID] | None = None,
 ) -> dict[str, Any]:
     """The skill's output, bounded; raises SkillToolError."""
     skill = await skill_registry.get_skill(session, str(request.skill_id))
     if (
         skill is None
         or not _runnable(skill)
+        or (allowed is not None and skill.id not in allowed)
         or not await authorization_service.can_access(
             session,
             subject,

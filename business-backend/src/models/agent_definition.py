@@ -49,6 +49,12 @@ class AgentDefinition(BaseModel):
     web_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     images_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     ask_user_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    # Hermes-kind settings. NULL egress mode follows the organization; a value can
+    # only lower it. The agent's own model applies only when use_org_hermes_model
+    # is off. Skills are all the user may run, or only skill_ids.
+    hermes_egress_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    use_org_hermes_model: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    hermes_skills_scope: Mapped[str] = mapped_column(String(16), nullable=False, default="all", server_default="all")
     # An archived agent is hidden and refused for new use; what refers to it
     # (workflow nodes, runs) stays intact. NULL means active.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -77,8 +83,12 @@ class AgentDefinition(BaseModel):
         ),
         CheckConstraint("kind IN ('agent', 'hermes')", name="ck_agent_definitions_kind"),
         CheckConstraint(
-            "kind = 'agent' OR (cardinality(skill_ids) = 0 AND cardinality(knowledge_base_ids) = 0)",
-            name="ck_agent_definitions_hermes_tools",
+            "hermes_egress_mode IS NULL OR hermes_egress_mode IN ('none', 'packages', 'public')",
+            name="ck_agent_definitions_hermes_egress_mode",
+        ),
+        CheckConstraint(
+            "hermes_skills_scope IN ('all', 'selected')",
+            name="ck_agent_definitions_hermes_skills_scope",
         ),
         UniqueConstraint("org_id", "name", name="uq_agent_definitions_org_name"),
         UniqueConstraint("org_id", "id", name="uq_agent_definitions_org_id_id"),

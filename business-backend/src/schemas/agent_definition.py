@@ -7,6 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic.alias_generators import to_camel
 
 
+HermesEgressMode = Literal["none", "packages", "public"]
+HermesSkillsScope = Literal["all", "selected"]
+
+
 class _AgentDefinitionFields(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
@@ -56,10 +60,18 @@ class AgentDefinitionCreate(_AgentDefinitionFields):
     images_enabled: bool = True
     ask_user_enabled: bool = True
 
+    hermes_egress_mode: HermesEgressMode | None = None
+    use_org_hermes_model: bool = True
+    hermes_skills_scope: HermesSkillsScope = "all"
+
     @model_validator(mode="after")
-    def hermes_has_no_tools(self) -> "AgentDefinitionCreate":
-        if self.kind == "hermes" and (self.skill_ids or self.knowledge_base_ids):
-            raise ValueError("a Hermes Agent definition takes no skills or knowledge bases")
+    def hermes_settings_only_for_hermes(self) -> "AgentDefinitionCreate":
+        if self.kind != "hermes" and (
+            self.hermes_egress_mode is not None
+            or not self.use_org_hermes_model
+            or self.hermes_skills_scope != "all"
+        ):
+            raise ValueError("Hermes settings apply only to a Hermes Agent definition")
         return self
 
 
@@ -74,8 +86,12 @@ class AgentDefinitionUpdate(_AgentDefinitionFields):
     web_enabled: bool | None = None
     images_enabled: bool | None = None
     ask_user_enabled: bool | None = None
+    # null clears the egress mode back to the organization's.
+    hermes_egress_mode: HermesEgressMode | None = None
+    use_org_hermes_model: bool | None = None
+    hermes_skills_scope: HermesSkillsScope | None = None
 
-    @field_validator("web_enabled", "images_enabled", "ask_user_enabled")
+    @field_validator("web_enabled", "images_enabled", "ask_user_enabled", "use_org_hermes_model", "hermes_skills_scope")
     @classmethod
     def reject_null_switch(cls, value: bool | None) -> bool | None:
         if value is None:
@@ -99,6 +115,9 @@ class AgentDefinitionResponse(BaseModel):
     webEnabled: bool = True
     imagesEnabled: bool = True
     askUserEnabled: bool = True
+    hermesEgressMode: HermesEgressMode | None = None
+    useOrgHermesModel: bool = True
+    hermesSkillsScope: HermesSkillsScope = "all"
     archivedAt: datetime | None = None
     canWrite: bool
     createdAt: datetime

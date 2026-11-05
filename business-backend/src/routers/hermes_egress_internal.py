@@ -21,6 +21,7 @@ from src.core.authorization_dependencies import authorization_subject
 from src.core.config import settings
 from src.core.hermes_auth import hermes_db_session, hermes_session_user, require_hermes_enabled
 from src.services.hermes_access import HermesAccessDenied, require_hermes_capabilities
+from src.services.hermes_agent_settings import agent_settings_of_session
 from src.services.hermes_egress import effective_egress_mode
 from src.services.hermes_sessions import authorize_token
 
@@ -67,7 +68,11 @@ async def authorize_egress(
                 row = await authorize_token(session, subject, user.raw_claims)
             except HermesAccessDenied as exc:
                 return _deny(exc.code)
-            mode = await effective_egress_mode(session, subject)
+            try:
+                agent = await agent_settings_of_session(session, subject, row)
+            except HermesAccessDenied as exc:
+                return _deny(exc.code)
+            mode = await effective_egress_mode(session, subject, agent.egress_mode if agent else None)
             return {
                 "allow": True,
                 "mode": mode,

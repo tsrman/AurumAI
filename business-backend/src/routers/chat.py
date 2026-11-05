@@ -542,6 +542,20 @@ async def _hermes_model(session: AsyncSession, user: UserInfo) -> str:
     return model
 
 
+def _hermes_instructions(agent: ChatAgentTurn) -> str:
+    """The agent's instructions, with what it may consult and what it may not ask."""
+    parts = [agent.system_prompt]
+    if agent.knowledge_bases:
+        listing = "\n".join(f"- {base['name']}: knowledgeBaseId {base['id']}" for base in agent.knowledge_bases)
+        parts.append(
+            "Knowledge bases you may search with knowledge_search, by passing knowledgeBaseId "
+            "(without it the search covers the files attached to this conversation):\n" + listing
+        )
+    if not agent.ask_user_enabled:
+        parts.append("You cannot ask the user questions: decide with reasonable assumptions and state them.")
+    return "\n\n".join(parts)
+
+
 class ChatAgent(BaseModel):
     id: Literal["hermes"]
 
@@ -606,6 +620,14 @@ async def chat_agent_definitions(
             if hermes_model is None:
                 continue
             model_id = hermes_model
+            if not agent.use_org_hermes_model:
+                try:
+                    await ensure_model_allowed(
+                        session, user.org_id, agent.model_id, user_id=user.user_id, role=user.role
+                    )
+                except HTTPException:
+                    continue
+                model_id = agent.model_id
         else:
             try:
                 await agent_authorization_service.require_executable(session, subject, agent.id)
@@ -700,6 +722,12 @@ async def chat_stream(
         conv.agent_definition_id = wanted_agent_id
     if hermes:
         turn_model = await _hermes_model(session, user)
+        if chat_agent is not None and chat_agent.hermes_model:
+            # The agent chose its own model; the user must still be allowed to use it.
+            await ensure_model_allowed(
+                session, user.org_id, chat_agent.hermes_model, user_id=user.user_id, role=user.role
+            )
+            turn_model = chat_agent.hermes_model
         if upload_ids:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -968,7 +996,7 @@ async def chat_stream(
             signal_payload["agent"] = {
                 "id": str(chat_agent.id),
                 "name": chat_agent.name,
-                "system_prompt": chat_agent.system_prompt,
+                "system_prompt": _hermes_instructions(chat_agent) if hermes else chat_agent.system_prompt,
                 "allowed_skill_ids": chat_agent.allowed_skill_ids,
                 "knowledge_bases": chat_agent.knowledge_bases,
             }

@@ -28,6 +28,8 @@ from src.repositories.knowledge_base_repository import knowledge_base_repository
 from src.schemas.image_tools import EditImageRequest, GenerateImageRequest
 from src.schemas.web_tools import WebReadRequest, WebSearchRequest
 from src.services import hermes_files, hermes_previews, hermes_skills
+from src.services.hermes_agent_settings import HermesAgentSettings, agent_settings_of_session
+from src.services.hermes_access import HermesAccessDenied
 from src.services.hermes_previews import PreviewError, SharePreviewRequest
 from src.services.hermes_files import AttachFileRequest, FileToolError
 from src.services.hermes_skills import ListSkillsRequest, RunSkillRequest, SkillToolError
@@ -64,10 +66,13 @@ class BridgeToolError(Exception):
 
 
 class KnowledgeSearchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     query: str = Field(min_length=1, max_length=2000, strict=True)
     limit: int = Field(default=5, ge=1, le=10, strict=True)
+    # One of the agent's own knowledge bases, named in its instructions; without
+    # it the search covers the files attached to this conversation.
+    knowledge_base_id: UUID | None = Field(default=None, alias="knowledgeBaseId")
 
     @field_validator("query")
     @classmethod
@@ -168,8 +173,23 @@ TOOL_NAMES = frozenset(tool.name for tool in TOOLS)
 _BY_NAME = {tool.name: tool for tool in TOOLS}
 
 
-def listed_tools() -> list[dict[str, Any]]:
-    return [tool.listing() for tool in TOOLS if tool.enabled()]
+_WEB_TOOLS = frozenset({"web_search", "web_read"})
+_IMAGE_TOOLS = frozenset({"generate_image", "edit_image"})
+
+
+def _agent_allows(tool: BridgeTool, agent: HermesAgentSettings | None) -> str | None:
+    """The refusal code when the session's agent switched this tool off."""
+    if agent is None:
+        return None
+    if tool.name in _WEB_TOOLS and not agent.web_enabled:
+        return "web_disabled"
+    if tool.name in _IMAGE_TOOLS and not agent.images_enabled:
+        return "image_disabled"
+    return None
+
+
+def listed_tools(agent: HermesAgentSettings | None = None) -> list[dict[str, Any]]:
+    return [tool.listing() for tool in TOOLS if tool.enabled() and _agent_allows(tool, agent) is None]
 
 
 def invocation_id(session_id: UUID, request_id: str | int, name: str, arguments: dict[str, Any]) -> UUID:
@@ -202,6 +222,14 @@ async def call_tool(
     if not tool.enabled():
         raise BridgeToolError(tool.disabled_code)
     try:
+        agent = await agent_settings_of_session(session, subject, row)
+    except HermesAccessDenied as exc:
+        raise BridgeToolError(exc.code) from None
+    refused = _agent_allows(tool, agent)
+    if refused is not None:
+        raise BridgeToolError(refused)
+    skills = frozenset(agent.skill_ids) if agent is not None and agent.skills_scope == "selected" else None
+    try:
         parsed = tool.arguments.model_validate(arguments)
     except ValidationError:
         raise BridgeToolError("invalid_arguments") from None
@@ -209,11 +237,11 @@ async def call_tool(
     conversation_id, execution_id, session_id = row.conversation_id, row.active_execution_id, row.id
     assert execution_id is not None
     if isinstance(parsed, KnowledgeSearchRequest):
-        return await _knowledge_search(session, subject, conversation_id, parsed)
+        return await _knowledge_search(session, subject, conversation_id, parsed, agent)
     invocation = invocation_id(row.id, request_id, name, arguments)
     try:
         if isinstance(parsed, ListSkillsRequest):
-            return await hermes_skills.list_skills(session, subject)
+            return await hermes_skills.list_skills(session, subject, skills)
         if isinstance(parsed, RunSkillRequest):
             return await hermes_skills.run_skill(
                 session,
@@ -222,6 +250,7 @@ async def call_tool(
                 conversation_id=conversation_id,
                 generation=generation,
                 invocation=invocation,
+                allowed=skills,
             )
         if isinstance(parsed, SharePreviewRequest):
             return await hermes_previews.share_preview(session, subject, row, parsed)
@@ -280,14 +309,20 @@ async def _knowledge_search(
     subject: AuthorizationSubject,
     conversation_id: UUID,
     request: KnowledgeSearchRequest,
+    agent: HermesAgentSettings | None = None,
 ) -> dict[str, Any]:
-    """Only the conversation's own attachments, as for an ordinary chat agent."""
-    knowledge_base_id = await session.scalar(
-        select(KnowledgeBase.id).where(
-            KnowledgeBase.org_id == subject.org_id,
-            KnowledgeBase.owning_conversation_id == conversation_id,
+    """The conversation's own attachments, or one of the session agent's knowledge bases."""
+    if request.knowledge_base_id is not None:
+        if agent is None or request.knowledge_base_id not in agent.knowledge_base_ids:
+            raise BridgeToolError("knowledge_not_found")
+        knowledge_base_id: UUID | None = request.knowledge_base_id
+    else:
+        knowledge_base_id = await session.scalar(
+            select(KnowledgeBase.id).where(
+                KnowledgeBase.org_id == subject.org_id,
+                KnowledgeBase.owning_conversation_id == conversation_id,
+            )
         )
-    )
     if knowledge_base_id is None:
         return {"results": [], "warnings": ["No files are attached to this conversation."]}
     accessible = await knowledge_base_repository.get_accessible(
