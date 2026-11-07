@@ -14,6 +14,12 @@
 
 ### Documentation
 
+- **Operator runbooks.** Four new pages under `docs/operations/`: secrets and credentials
+  (an inventory, which are applied only once, how each is rotated), backup and recovery (a
+  dump and restore of all databases and roles, rehearsed on a second server), network
+  enforcement (what is enforced where and how to verify it after a change) and changing
+  models and providers. `CONFIGURATION.md` no longer names a shared Hermes sandbox network
+  that does not exist: each sandbox has a `/28` of its own.
 - **The documentation site is published by CI.** `scripts/build-docs-site.py` builds the pages of
   `docs/` (the same template as the published site, the current section marked in the navigation
   bar) and `.github/workflows/publish-docs.yml` publishes them to https://tsrman.github.io/aurumai/

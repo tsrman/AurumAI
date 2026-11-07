@@ -89,8 +89,10 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
   distinct from unit/Helm checks.
 - Stable external public-search acceptance and a mixed long real-provider dialogue
   with MCP, questions, web, complete REST history and reload.
-- Operator rollout hardening and operational documentation across deployment-specific
-  credentials, model revisions, network enforcement and backup/recovery.
+- Operator rollout hardening: the runbooks for credentials, model changes, network
+  enforcement and backup/recovery are written ([operations](docs/guides/operations.md));
+  a restore on your own hosts and versions, and deployment-specific accounts, certificates
+  and credentials, remain the operator's to rehearse and supply.
 - Removal of remaining upstream development-tool advisories when patches are available,
   and the major dependency upgrades Dependabot proposes (Node 26, zod 4, vitest 5,
   redis 8, mypy 2 and others) once each is migrated and tested.

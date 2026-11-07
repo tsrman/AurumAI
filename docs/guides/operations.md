@@ -53,14 +53,15 @@ content its version cannot carry.
 
 ## Backups
 
-Back up these; the stack's state is split across them:
+Back up these; the stack's state is split across them. The procedure, its order and a
+tested restore are in [backup and recovery](../operations/backup-recovery.md).
 
 | What | Why |
 |---|---|
 | PostgreSQL (`postgres_data`) | Conversations, authorization, settings, workflows |
 | MinIO (`minio_data`) | Uploads, images, files, Hermes workspace snapshots, archives |
 | `.env` and any secret store | Generated secrets; without them the data cannot be used |
-| Keycloak's database | Accounts, roles, clients |
+| Keycloak's data (in the `aurum_ai` database) | Accounts, roles, clients |
 | Milvus (`milvus_data`, `etcd_data`) | Knowledge-base vectors (rebuildable from documents) |
 
 `docker compose down` stops the stack and keeps volumes. `docker compose down -v` deletes
@@ -113,11 +114,14 @@ The [configuration reference](../CONFIGURATION.md) has every setting.
 | Knowledge search returns nothing | The documents may not be indexed yet; first model downloads take minutes |
 | Users get "quota exceeded" | The month's request or token limit is spent: see Analytics |
 | HTTP 429 | A user passed the per-minute rate limit |
-| Web search or read refuses | `WEB_ENABLED`, the `web` profile, secrets and the enforcement checks; never open outbound access to make it work |
+| Web search or read refuses | `WEB_ENABLED`, the `web` profile, secrets and the enforcement checks; never open outbound access to make it work ([network enforcement](../operations/network-enforcement.md)) |
+| A model vanished or a default shows as unavailable | The gateway no longer publishes the id: [changing models](../operations/model-changes.md) |
 | Hermes: see its table | [Hermes troubleshooting](hermes-agent.md#troubleshooting) |
 
 ## Security hygiene
 
-Rotate generated secrets deliberately and recreate both API planes afterwards. Keep the
-development accounts out of anything reachable by others. Report vulnerabilities as
+Rotate generated secrets deliberately; some are applied only once (the application
+database role, the Keycloak administrator) and need more than an edit of `.env`: see
+[secrets and credentials](../operations/secrets.md). Keep the development accounts out of
+anything reachable by others. Report vulnerabilities as
 described in [SECURITY.md](https://github.com/tsrman/AurumAI/blob/main/SECURITY.md).

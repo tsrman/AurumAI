@@ -134,7 +134,12 @@ ports bypass host firewalls.
 - Keep code execution, MCP and public web behind their opt-in policies. Do not open
   outbound network access to make a failing check pass.
 - Decide deliberately whether Langfuse captures full prompts and documents.
-- Back up PostgreSQL, MinIO and the `.env` secrets (see [operations](operations.md)).
+- Back up PostgreSQL, MinIO and the `.env` secrets, and rehearse a restore
+  ([backup and recovery](../operations/backup-recovery.md)).
+- Check that no secret in `.env` is empty, because Compose falls back to publicly known
+  defaults, and know how each is rotated ([secrets](../operations/secrets.md)).
+- Know which network boundaries you rely on and how to verify them after a change
+  ([network enforcement](../operations/network-enforcement.md)).
 
 ## Kubernetes with Helm
 
