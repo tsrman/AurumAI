@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The sign-in page showed the app's sidebar with the built-in demo agents, a dead "New chat" and a
+  spinning history to a visitor who had not signed in. The sidebar now appears only for a signed-in
+  user. The sign-in and `example-compare` screenshots in the guide are retaken (the second one was
+  taken while the answer was still streaming, so its table showed as raw text).
+
 ## v0.0.5 (2026-11-05)
 
 Agents of the administrator become first-class in chat: chosen in the sidebar, created in a wizard, archived
