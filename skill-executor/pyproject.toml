@@ -5,7 +5,7 @@ version = "0.1.0"
 description = "Ephemeral sandbox container executor for code skills"
 requires-python = ">=3.12,<4.0.0"
 dependencies = [
-    "fastapi>=0.141.0,<0.144.0",
+    "fastapi>=0.141.0,<0.163.0",
     "uvicorn>=0.34.0,<0.55.0",
     # The preview stream is a WebSocket route; uvicorn serves it only with this.
     "websockets>=15.0,<17.0",
