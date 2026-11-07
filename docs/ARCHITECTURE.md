@@ -81,7 +81,7 @@ must not silently publish an incomplete conversation.
 Browser APIs validate Keycloak issuer/signature/audience. Business and admin clients
 have different audiences (`business-ui` and `admin-ui`); one plane's token is not
 accepted by the other. `org_admin` is the administrative role; membership is owned
-by Keycloak, while capabilities/resource grants are owned by the platform.
+by Keycloak plus the people an administrator adds by hand, while capabilities/resource grants are owned by the platform.
 
 Capabilities govern operations. Resource grants govern specific models, skills,
 knowledge bases, agent/workflow resources as appropriate. Access is default-deny;

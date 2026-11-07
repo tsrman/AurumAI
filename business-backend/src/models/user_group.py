@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, PrimaryKeyConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, PrimaryKeyConstraint, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from src.core.database import Base
@@ -21,6 +21,13 @@ class UserGroup(Base):
         index=True,
     )
 
+    # "identity": owned by sign-in synchronization with the Keycloak `groups`
+    # claim. "manual": added by an administrator; synchronization never touches it.
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="identity", server_default="identity"
+    )
+
     __table_args__ = (
         PrimaryKeyConstraint("user_id", "group_id"),
+        CheckConstraint("source IN ('identity', 'manual')", name="ck_user_groups_source"),
     )

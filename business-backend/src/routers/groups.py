@@ -2,20 +2,25 @@ import uuid
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import UserInfo
 from src.core.authorization_dependencies import require_org_admin
 from src.core.dependencies import get_org_db_session
+from src.core.logging import logger
 from src.models.group import Group
+from src.models.user import User
 from src.models.user_group import UserGroup
 from src.repositories.group_repository import group_repository
-from src.schemas.common import ApiResponse, Meta
+from src.schemas.common import ApiResponse, Meta, Pagination
 from src.schemas.group import (
     GroupCreateRequest,
+    GroupMemberResponse,
+    GroupMembersAddRequest,
+    GroupMembersAddResponse,
     GroupResponse,
     GroupUpdateRequest,
 )
@@ -164,3 +169,161 @@ async def delete_group(
         )
     await session.delete(group)
     await session.commit()
+
+
+async def _own_group(session: AsyncSession, group_id: str, org_id: UUID) -> Group:
+    group = await group_repository.get(session, group_id)
+    if group is None or group.org_id != org_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return group
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+@router.get("/{group_id}/members")
+async def list_group_members(
+    group_id: str,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None, max_length=200),
+    user: UserInfo = Depends(require_org_admin),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[list[GroupMemberResponse]]:
+    org_id = _require_org_id(user)
+    group = await _own_group(session, group_id, org_id)
+    predicates = [UserGroup.group_id == group.id, User.org_id == org_id]
+    needle = (search or "").strip()
+    if needle:
+        pattern = f"%{_escape_like(needle)}%"
+        predicates.append(
+            or_(
+                User.email.ilike(pattern, escape="\\"),
+                User.full_name.ilike(pattern, escape="\\"),
+            )
+        )
+    total = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(UserGroup)
+            .join(User, User.id == UserGroup.user_id)
+            .where(*predicates)
+        )
+        or 0
+    )
+    rows = (
+        await session.execute(
+            select(User, UserGroup.source)
+            .join(UserGroup, UserGroup.user_id == User.id)
+            .where(*predicates)
+            .order_by(func.lower(func.coalesce(User.full_name, User.email)), User.id)
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+    return ApiResponse(
+        data=[
+            GroupMemberResponse(
+                id=str(member.id),
+                email=member.email,
+                fullName=member.full_name,
+                role=member.role or "member",
+                status=member.status or "active",
+                source=source,
+            )
+            for member, source in rows
+        ],
+        meta=_meta(),
+        pagination=Pagination(hasMore=offset + len(rows) < total, total=total),
+    )
+
+
+@router.post("/{group_id}/members")
+async def add_group_members(
+    group_id: str,
+    data: GroupMembersAddRequest,
+    user: UserInfo = Depends(require_org_admin),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> ApiResponse[GroupMembersAddResponse]:
+    org_id = _require_org_id(user)
+    group = await _own_group(session, group_id, org_id)
+    wanted = set(data.userIds)
+    found = set(
+        (
+            await session.scalars(
+                select(User.id).where(User.id.in_(wanted), User.org_id == org_id)
+            )
+        ).all()
+    )
+    if found != wanted:
+        # A foreign or unknown id is refused as a whole; nothing is added.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    already = set(
+        (
+            await session.scalars(
+                select(UserGroup.user_id).where(
+                    UserGroup.group_id == group.id, UserGroup.user_id.in_(wanted)
+                )
+            )
+        ).all()
+    )
+    new_ids = wanted - already
+    session.add_all(
+        UserGroup(user_id=user_id, group_id=group.id, source="manual") for user_id in new_ids
+    )
+    await session.commit()
+    if new_ids:
+        logger.info(
+            "group_members_added",
+            actor_id=user.user_id,
+            org_id=str(org_id),
+            group_id=str(group.id),
+            user_ids=sorted(str(user_id) for user_id in new_ids),
+        )
+    return ApiResponse(
+        data=GroupMembersAddResponse(added=len(new_ids), alreadyMembers=len(already)),
+        meta=_meta(),
+    )
+
+
+@router.delete("/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_group_member(
+    group_id: str,
+    user_id: UUID,
+    user: UserInfo = Depends(require_org_admin),
+    session: AsyncSession = Depends(get_org_db_session),
+) -> None:
+    org_id = _require_org_id(user)
+    group = await _own_group(session, group_id, org_id)
+    membership = await session.scalar(
+        select(UserGroup)
+        .join(User, User.id == UserGroup.user_id)
+        .where(
+            UserGroup.group_id == group.id,
+            UserGroup.user_id == user_id,
+            User.org_id == org_id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+    if membership.source != "manual":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Manage synchronized memberships in Keycloak",
+        )
+    await session.execute(
+        delete(UserGroup).where(
+            UserGroup.group_id == group.id,
+            UserGroup.user_id == user_id,
+            UserGroup.source == "manual",
+        )
+    )
+    await session.commit()
+    logger.info(
+        "group_member_removed",
+        actor_id=user.user_id,
+        org_id=str(org_id),
+        group_id=str(group.id),
+        user_id=str(user_id),
+    )

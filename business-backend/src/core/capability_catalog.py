@@ -69,7 +69,7 @@ CAPABILITY_CATALOG = CapabilityCatalog(
         CapabilityDefinition(
             Capability.ADMIN_USERS_WRITE,
             "Manage users",
-            "Manage organization user settings outside Keycloak group membership.",
+            "Manage organization user settings and the people added to groups by hand.",
         ),
         CapabilityDefinition(
             Capability.AGENTS_HERMES,

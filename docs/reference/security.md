@@ -10,7 +10,8 @@ operator. The deployment-specific procedures are in
 - **Keycloak** authenticates people (OpenID Connect). The platform stores no passwords.
 - Two browser audiences, one per plane: a chat token does not open the Admin API.
 - The `org_admin` role lives in Keycloak. Group membership comes from the signed
-  `groups` claim.
+  `groups` claim, plus the people an administrator adds by hand (sign-in never
+  touches those).
 - Runners, tool workers and Hermes sandboxes use **session tokens** that carry identity
   only, have their own audience, and are valid only while their conversation, turn or
   session is open. No other route accepts a Hermes token.

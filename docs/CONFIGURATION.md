@@ -439,9 +439,12 @@ Groups synchronized from Keycloak are managed in Keycloak. Admin UI disables loc
 deletion for these groups, and the API rejects it: deleting only the local copy
 would allow synchronization to recreate it with a new identity. Groups created
 locally and not yet synchronized can still be deleted in Admin UI.
-Group membership always comes from the Keycloak `groups` claim at sign-in: a group
-created locally with the same name as a Keycloak group picks up its members, and
-the Members tab of the group dialog shows them read-only.
+Group membership has two sources. The Keycloak `groups` claim is applied at every
+sign-in: a group created locally with the same name as a Keycloak group picks up its
+members, and these memberships are read-only in Admin UI. Administrators can also
+add people to any group by hand (Members tab, **Add people**); those memberships
+stay until removed there and sign-in never adds or removes them. A person named by
+the claim and also added by hand keeps the manual membership.
 
 `APP_IDENTITY_SYNC_ENABLED=false` is the default. Install/verify the signed complete-
 groups mapper on both clients, apply migrations and start the maintenance worker/

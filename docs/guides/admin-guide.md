@@ -17,10 +17,10 @@ has three groups:
 
 ![The Users page](../assets/screenshots/admin-users.png)
 
-Roles, accounts and group membership live in **Keycloak**
-(`http://localhost:8080` locally). The Admin app shows them after a person signs in
-but does not edit them. Membership is synchronised from the `groups` claim on every
-sign-in, so change it in Keycloak.
+Roles and accounts live in **Keycloak** (`http://localhost:8080` locally). The Admin
+app shows them after a person signs in but does not edit them. Group membership has
+two sources: the `groups` claim, applied on every sign-in (change it in Keycloak),
+and people you add to a group by hand (see [Groups](#groups-and-default-permissions)).
 
 ## How access works
 
@@ -55,6 +55,13 @@ permissions** to set capabilities every member has, whatever their groups. Open 
 group to give its members more on top of those defaults. Turn a capability on only
 when you want everyone it covers to be able to add something other members then
 see (an agent, a skill, a knowledge base).
+
+The **Members** tab of a group shows who is in it and where each membership comes
+from. People from Keycloak are marked *Keycloak* and are managed there. Choose **Add
+people** to search the organization and add anyone by hand; these people are marked
+*Added here*, keep their place when they sign in again, and can be removed with
+**Remove**. A person Keycloak also puts in the group keeps the manual membership.
+Access changes at once.
 
 Before you save a change, the preview shows the effective result for a user or group.
 
