@@ -13,7 +13,7 @@ infrastructure, credential and isolation configuration.
 ## Start locally
 
 Requirements: Docker with Compose v2, Bash, OpenSSL, and sufficient memory/disk for
-container builds. Python 3.12/uv and Node 22/npm are needed for source development
+container builds. Python 3.12/uv and Node 24/npm are needed for source development
 and tests. Use Linux, macOS or WSL2 with a working Docker installation.
 
 ```bash

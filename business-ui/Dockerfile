@@ -1,6 +1,6 @@
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
-# Apply base-image security patches: node:22-alpine is rebuilt less often
+# Apply base-image security patches: node:24-alpine is rebuilt less often
 # than Alpine publishes system-package security fixes.
 RUN apk upgrade --no-cache
 
@@ -14,7 +14,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS runner
+FROM node:24-alpine AS runner
 
 ARG AURUMAI_SOURCE_URL=""
 ARG AURUMAI_REVISION=""
@@ -23,7 +23,7 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.revision="${AURUMAI_REVISION}"
 
 
-# Apply base-image security patches: node:22-alpine is rebuilt less often
+# Apply base-image security patches: node:24-alpine is rebuilt less often
 # than Alpine publishes system-package security fixes.
 RUN apk upgrade --no-cache
 
@@ -51,7 +51,7 @@ COPY --from=builder /app/.next/static ./.next/static
 
 EXPOSE 3000
 
-# node:22-alpine provides the unprivileged node user; the standalone server
+# node:24-alpine provides the unprivileged node user; the standalone server
 # only reads its files and does not need root privileges.
 USER node
 
