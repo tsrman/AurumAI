@@ -12,6 +12,7 @@ uses its own settings prefix. Do not copy every root variable into a service dot
 | `APP_SECRET_KEY` | Session signing secret; generate a strong persistent value |
 | `APP_DEBUG` | Development/mock/docs behavior; false for configured production |
 | `APP_DATABASE_URL` | Scoped runtime database connection |
+| `APP_DB_POOL_SIZE`, `APP_DB_MAX_OVERFLOW`, `APP_DB_POOL_TIMEOUT` | Connections one API process keeps (20), may add under load (40), and how many seconds a request waits for one (30); see [database connections](guides/operations.md#database-connections) |
 | `APP_MIGRATION_DATABASE_URL` | Separate privileged migration connection |
 | `APP_DATABASE_ROLE_PASSWORD` | Runtime role creation/configuration password |
 | `APP_REDIS_URL` | Redis connection, including configured auth |

@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
 
     DATABASE_URL: str = _INSECURE_DATABASE_URL
+    # Connections one API process may hold: DB_POOL_SIZE kept open, up to
+    # DB_MAX_OVERFLOW more under load, a request waiting at most DB_POOL_TIMEOUT
+    # seconds for one. Every process (and every replica) multiplies this against
+    # PostgreSQL's max_connections: see docs/guides/operations.md.
+    DB_POOL_SIZE: int = Field(default=20, ge=1)
+    DB_MAX_OVERFLOW: int = Field(default=40, ge=0)
+    DB_POOL_TIMEOUT: float = Field(default=30, gt=0)
     REDIS_URL: str = "redis://localhost:6379/0"
 
     RAG_API_URL: str = "http://rag-api:8110"

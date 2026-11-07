@@ -18,7 +18,12 @@ from src.schemas.chat import ChatRequest
 
 
 class _Session:
-    pass
+    def __init__(self) -> None:
+        self.rollbacks = 0
+        self.info: dict[str, str] = {}
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
 
 
 class _PubSub:
@@ -167,6 +172,70 @@ async def test_events_subscribe_before_snapshot_and_never_relay_hint_payload(
             "version": 2,
         },
     ]
+
+
+async def test_events_hold_no_database_connection_while_streaming(monkeypatch) -> None:
+    """A stream lives up to EVENT_SUBSCRIBE_TIMEOUT. The request's own session ends its
+    transaction before the first byte, and each later snapshot uses a short-lived
+    session, so an open stream pins no pooled connection."""
+    from src.routers import turns
+
+    org_id, user_id, conversation_id, turn_id, question_id = (uuid4() for _ in range(5))
+    request_session = _Session()
+    seen: list[tuple[str, _Session, int]] = []
+    fresh_sessions: list[_Session] = []
+    states = [
+        _state(turn_id, question_id),
+        _state(turn_id, question_id, turn_status="completed", turn_version=2),
+    ]
+
+    class Service:
+        async def get_turn_snapshot(self, session, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            seen.append(("snapshot", session, session.rollbacks))
+            return states.pop(0) if len(states) > 1 else states[0]
+
+    class Bus:
+        async def subscribe_channel(self, channel: str):
+            return _PubSub()
+
+        async def listen(self, pubsub, channel, timeout_seconds):  # noqa: ANN001
+            seen.append(("listen", request_session, request_session.rollbacks))
+            yield {"turn_id": str(turn_id), "type": "wake", "data": {}}
+
+    class FreshSession(_Session):
+        async def __aenter__(self) -> "FreshSession":
+            fresh_sessions.append(self)
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    async def db_override():
+        yield request_session
+
+    app = FastAPI()
+    app.include_router(turns.router, prefix="/v1")
+    app.dependency_overrides[get_current_user] = lambda: UserInfo(
+        user_id=str(user_id), org_id=str(org_id), role="member"
+    )
+    app.dependency_overrides[get_org_db_session] = db_override
+    monkeypatch.setattr(turns, "interaction_service", Service())
+    monkeypatch.setattr(turns, "event_bus", Bus())
+    monkeypatch.setattr(turns, "async_session", FreshSession)
+
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/v1/conversations/{conversation_id}/turns/{turn_id}/events")
+
+    assert response.status_code == 200
+    initial = seen[0]
+    assert initial[1] is request_session
+    # The stream starts only after the request's transaction has ended.
+    listen = next(entry for entry in seen if entry[0] == "listen")
+    assert listen[2] >= 1
+    reloads = [entry for entry in seen[1:] if entry[0] == "snapshot"]
+    assert reloads, "the hint must trigger a reload"
+    assert all(entry[1] is not request_session for entry in reloads)
+    assert fresh_sessions and all(s.info["org_id"] == str(org_id) for s in fresh_sessions)
 
 
 async def test_periodic_reconciliation_recovers_without_redis_notification(

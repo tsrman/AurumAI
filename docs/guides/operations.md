@@ -103,6 +103,32 @@ groups when they log in.
 
 The [configuration reference](../CONFIGURATION.md) has every setting.
 
+## Database connections
+
+Every API process may hold `APP_DB_POOL_SIZE + APP_DB_MAX_OVERFLOW` connections (20 + 40 by
+default), and PostgreSQL refuses new ones beyond `max_connections` (100 by default). The budget
+is the sum over everything that connects:
+
+```
+replicas x processes x (pool size + overflow)  +  RAG services  +  Temporal  +  Keycloak  +  Langfuse  <=  max_connections
+```
+
+On the Compose stack Temporal alone holds about 30. Raise `max_connections` (and give PostgreSQL
+the memory for it), lower the pool, or put a connection pooler in front before running several API
+replicas. A pooler in transaction mode is not tested with AurumAI here: the tenant context is set
+per transaction, which suits it, but check prepared statements and your driver settings first.
+
+A request that cannot get a connection within `APP_DB_POOL_TIMEOUT` seconds fails with a
+`QueuePool limit` timeout. To see who holds them:
+
+```sql
+SELECT state, count(*) FROM pg_stat_activity WHERE datname = 'aurum_ai' GROUP BY 1;
+```
+
+Connections should be `idle` between requests. Many `idle in transaction` ones mean a request is
+holding a transaction while it waits, which is a bug to report: the turn event stream used to do
+exactly this for every open chat.
+
 ## Troubleshooting
 
 | Symptom | What to check |
