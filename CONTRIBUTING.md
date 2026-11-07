@@ -23,7 +23,7 @@ same key in both files, never as a literal in `src/`.
 ## Development and checks
 
 Start with [QUICKSTART](QUICKSTART.md). Python services use Python 3.12 and uv;
-frontends use Node 22 and npm. Install dependencies with frozen locks. The
+frontends use Node 24 and npm. Install dependencies with frozen locks. The
 repository's maintenance checks use `cd scripts && npm ci`.
 
 Run the checks for each affected service and the relevant harness tests. See

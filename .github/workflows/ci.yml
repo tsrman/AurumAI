@@ -227,13 +227,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # node 22 to match both UI Dockerfiles (node:22-alpine) — CI should build
+      # node 24 to match both UI Dockerfiles (node:24-alpine) — CI should build
       # the bundle on the same major that ships it. Node 20 went end-of-life on
-      # 2026-04-30 and no longer gets security patches, hence 22 (LTS until
-      # 2027-04-30) rather than staying put.
+      # 2026-04-30, and 22 leaves maintenance on 2027-04-30; 24 is supported
+      # until 2028-04-30.
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: ${{ matrix.app }}/package-lock.json
 
@@ -292,7 +292,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
 
       - name: Install maintenance dependencies
         run: npm ci --ignore-scripts

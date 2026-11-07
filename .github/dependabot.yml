@@ -74,6 +74,9 @@ updates:
       # Changes the hook signatures used by business-ui/src/lib/api.ts.
       - dependency-name: "ky"
         versions: [">=2"]
+      # The types follow the Node major the images and CI run (24).
+      - dependency-name: "@types/node"
+        versions: [">=25"]
 
   # Application, infrastructure and reference-server Dockerfiles.
   - package-ecosystem: "docker"
@@ -106,6 +109,10 @@ updates:
       # native dependencies lack 3.14 wheels today.
       - dependency-name: "python"
         versions: [">=3.13"]
+      # Node moves by hand to the next LTS, together with the CI workflows and
+      # the @types/node rule above; odd-numbered releases are never LTS.
+      - dependency-name: "node"
+        versions: [">=25"]
 
   # CI workflow actions.
   - package-ecosystem: "github-actions"
