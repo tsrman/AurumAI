@@ -4,6 +4,14 @@
 
 ### Performance
 
+- **An organization's requests no longer queue on one row for long.** Every model request of an
+  organization updates the same monthly counter row, and the row stayed locked while the transaction
+  made several more round trips and then waited for the disk flush. The counter is now touched last,
+  by one statement that both checks the limits and counts the request (the limit stays exact), and
+  quota transactions do not wait for the flush. Measured on one organization with 24 parallel
+  connections: 158 → 685 requests per second, against about 1 000 for 24 separate organizations. The
+  one trade-off: if PostgreSQL itself crashes, the usage counts of the last fraction of a second
+  (about half a second) can be lost; the data is not corrupted.
 - **An open chat no longer holds a database connection.** The turn event stream
   (`GET /v1/conversations/{id}/turns/{id}/events`) kept the request's session, and so a pooled
   connection "idle in transaction", for as long as the stream was open, up to two minutes. One

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal, TypeVar
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -60,6 +60,17 @@ class QuotaExceededError(Exception):
 
 class QuotaInvariantError(Exception):
     pass
+
+
+async def _relax_durability(session: AsyncSession) -> None:
+    """Do not wait for the disk flush when this transaction commits.
+
+    Every request in an organization updates the same counter row, and a row lock is held until
+    commit, so the flush latency caps the whole organization's request rate. The transaction is
+    still atomic; only if PostgreSQL itself crashes can the last fraction of a second of counts
+    be lost, which a usage counter can afford. Call it first in the transaction.
+    """
+    await session.execute(text("SET LOCAL synchronous_commit = off"))
 
 
 def _period_bounds(now: datetime | None) -> tuple[date, date]:
@@ -153,6 +164,7 @@ class QuotaService:
             async with self._session_factory() as session:
                 session.info["org_id"] = str(org_id)
                 async with session.begin():
+                    await _relax_durability(session)
                     stale = (
                         await session.execute(
                             delete(LLMUsageEvent)
@@ -258,21 +270,7 @@ class QuotaService:
         async with self._session_factory() as session:
             session.info["org_id"] = str(org_id)
             async with session.begin():
-                await session.execute(
-                    insert(OrganizationUsageMonthly)
-                    .values(org_id=org_id, period_start=period_start)
-                    .on_conflict_do_nothing(
-                        index_elements=["org_id", "period_start"]
-                    )
-                )
-                aggregate = await session.get(
-                    OrganizationUsageMonthly,
-                    {"org_id": org_id, "period_start": period_start},
-                    with_for_update=True,
-                )
-                if aggregate is None:
-                    raise QuotaInvariantError("monthly quota aggregate is missing")
-
+                await _relax_durability(session)
                 existing = await session.scalar(
                     select(LLMUsageEvent).where(
                         LLMUsageEvent.org_id == org_id,
@@ -315,13 +313,13 @@ class QuotaService:
                 )
                 if organization is None:
                     raise QuotaInvariantError("quota organization is missing")
-                self._raise_if_exhausted(
-                    organization,
-                    aggregate.requests_used,
-                    aggregate.total_tokens,
-                    period_end,
+                await session.execute(
+                    insert(OrganizationUsageMonthly)
+                    .values(org_id=org_id, period_start=period_start)
+                    .on_conflict_do_nothing(
+                        index_elements=["org_id", "period_start"]
+                    )
                 )
-
                 session.add(
                     LLMUsageEvent(
                         org_id=org_id,
@@ -337,8 +335,53 @@ class QuotaService:
                         status=UsageEventStatus.RESERVED.value,
                     )
                 )
-                aggregate.requests_used += 1
-                aggregate.updated_at = _utc_now(None)
+                await session.flush()
+                # The counter row is touched last, by one statement that both checks the
+                # limits and counts the request, so it is locked for as short a time as
+                # possible and the limit stays exact.
+                counted = await session.execute(
+                    update(OrganizationUsageMonthly)
+                    .where(
+                        OrganizationUsageMonthly.org_id == org_id,
+                        OrganizationUsageMonthly.period_start == period_start,
+                        Organization.id == OrganizationUsageMonthly.org_id,
+                        or_(
+                            Organization.quota_requests.is_(None),
+                            OrganizationUsageMonthly.requests_used
+                            < Organization.quota_requests,
+                        ),
+                        or_(
+                            Organization.quota_tokens.is_(None),
+                            OrganizationUsageMonthly.total_tokens
+                            < Organization.quota_tokens,
+                        ),
+                    )
+                    .values(
+                        requests_used=OrganizationUsageMonthly.requests_used + 1,
+                        updated_at=_utc_now(None),
+                    )
+                    .returning(OrganizationUsageMonthly.requests_used)
+                )
+                if counted.first() is None:
+                    # Over a limit, or a cancel() freed a slot in between. Decide under the
+                    # row lock, which also serializes concurrent callers near the limit.
+                    aggregate = await session.get(
+                        OrganizationUsageMonthly,
+                        {"org_id": org_id, "period_start": period_start},
+                        with_for_update=True,
+                        populate_existing=True,
+                    )
+                    if aggregate is None:
+                        raise QuotaInvariantError("monthly quota aggregate is missing")
+                    await session.refresh(organization)
+                    self._raise_if_exhausted(
+                        organization,
+                        aggregate.requests_used,
+                        aggregate.total_tokens,
+                        period_end,
+                    )
+                    aggregate.requests_used += 1
+                    aggregate.updated_at = _utc_now(None)
 
         return UsageReservation(request_id=request_id, period_start=period_start)
 
@@ -355,6 +398,7 @@ class QuotaService:
             async with self._session_factory() as session:
                 session.info["org_id"] = str(org_id)
                 async with session.begin():
+                    await _relax_durability(session)
                     event = await session.scalar(
                         select(LLMUsageEvent)
                         .where(
@@ -386,26 +430,7 @@ class QuotaService:
             async with self._session_factory() as session:
                 session.info["org_id"] = str(org_id)
                 async with session.begin():
-                    existing = await session.scalar(
-                        select(LLMUsageEvent).where(
-                            LLMUsageEvent.org_id == org_id,
-                            LLMUsageEvent.request_id == request_id,
-                        )
-                    )
-                    if existing is None or existing.status != UsageEventStatus.RESERVED.value:
-                        return
-                    aggregate = await session.get(
-                        OrganizationUsageMonthly,
-                        {
-                            "org_id": org_id,
-                            "period_start": existing.period_start,
-                        },
-                        with_for_update=True,
-                    )
-                    if aggregate is None:
-                        raise QuotaInvariantError(
-                            "monthly quota aggregate is missing during cancel"
-                        )
+                    await _relax_durability(session)
                     event = await session.scalar(
                         select(LLMUsageEvent)
                         .where(
@@ -416,13 +441,27 @@ class QuotaService:
                     )
                     if event is None or event.status != UsageEventStatus.RESERVED.value:
                         return
-                    if aggregate.requests_used <= 0:
+                    period_start = event.period_start
+                    await session.delete(event)
+                    await session.flush()
+                    # The counter row last, as in reserve().
+                    released = await session.execute(
+                        update(OrganizationUsageMonthly)
+                        .where(
+                            OrganizationUsageMonthly.org_id == org_id,
+                            OrganizationUsageMonthly.period_start == period_start,
+                            OrganizationUsageMonthly.requests_used > 0,
+                        )
+                        .values(
+                            requests_used=OrganizationUsageMonthly.requests_used - 1,
+                            updated_at=_utc_now(None),
+                        )
+                        .returning(OrganizationUsageMonthly.requests_used)
+                    )
+                    if released.first() is None:
                         raise QuotaInvariantError(
                             "monthly request counter cannot be decremented"
                         )
-                    await session.delete(event)
-                    aggregate.requests_used -= 1
-                    aggregate.updated_at = _utc_now(None)
 
         await self._retry_transient(transition)
 
@@ -445,26 +484,7 @@ class QuotaService:
             async with self._session_factory() as session:
                 session.info["org_id"] = str(org_id)
                 async with session.begin():
-                    existing = await session.scalar(
-                        select(LLMUsageEvent).where(
-                            LLMUsageEvent.org_id == org_id,
-                            LLMUsageEvent.request_id == request_id,
-                        )
-                    )
-                    if existing is None:
-                        raise QuotaInvariantError("quota event is missing during completion")
-                    aggregate = await session.get(
-                        OrganizationUsageMonthly,
-                        {
-                            "org_id": org_id,
-                            "period_start": existing.period_start,
-                        },
-                        with_for_update=True,
-                    )
-                    if aggregate is None:
-                        raise QuotaInvariantError(
-                            "monthly quota aggregate is missing during completion"
-                        )
+                    await _relax_durability(session)
                     event = await session.scalar(
                         select(LLMUsageEvent)
                         .where(
@@ -474,7 +494,7 @@ class QuotaService:
                         .with_for_update()
                     )
                     if event is None:
-                        raise QuotaInvariantError("quota event disappeared during completion")
+                        raise QuotaInvariantError("quota event is missing during completion")
                     if event.status == UsageEventStatus.COMPLETED.value:
                         recorded = (
                             event.prompt_tokens,
@@ -496,10 +516,29 @@ class QuotaService:
                     event.completion_tokens = completion_tokens
                     event.total_tokens = total_tokens
                     event.completed_at = completed_at
-                    aggregate.prompt_tokens += prompt_tokens
-                    aggregate.completion_tokens += completion_tokens
-                    aggregate.total_tokens += total_tokens
-                    aggregate.updated_at = _utc_now(None)
+                    await session.flush()
+                    # The counter row last, as in reserve().
+                    added = await session.execute(
+                        update(OrganizationUsageMonthly)
+                        .where(
+                            OrganizationUsageMonthly.org_id == org_id,
+                            OrganizationUsageMonthly.period_start == event.period_start,
+                        )
+                        .values(
+                            prompt_tokens=OrganizationUsageMonthly.prompt_tokens
+                            + prompt_tokens,
+                            completion_tokens=OrganizationUsageMonthly.completion_tokens
+                            + completion_tokens,
+                            total_tokens=OrganizationUsageMonthly.total_tokens
+                            + total_tokens,
+                            updated_at=_utc_now(None),
+                        )
+                        .returning(OrganizationUsageMonthly.org_id)
+                    )
+                    if added.first() is None:
+                        raise QuotaInvariantError(
+                            "monthly quota aggregate is missing during completion"
+                        )
 
         await self._retry_transient(transition)
 
