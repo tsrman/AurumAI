@@ -78,3 +78,26 @@ publishes only `sha-<commit>`. Authentication uses the workflow's own
 Packages created by the first run are private on GitHub. Make each one public in
 its package settings if the images should be pullable anonymously. Deploy the
 chart with `image.registry=ghcr.io/<owner>` and `image.tag=<version>`.
+
+## Documentation site
+
+The pages of `docs/` are published at https://tsrman.github.io/aurumai/ by
+`.github/workflows/publish-docs.yml` whenever a `vX.Y.Z` tag is pushed (a prerelease such as
+`v1.2.0-rc.1` is not published). The workflow builds the site with
+`scripts/build-docs-site.py` and replaces the `aurumai/` folder of the
+`<owner>.github.io` repository with it in one commit.
+
+Build the site locally to see what a release will publish (the output directory must be empty):
+
+```bash
+uv run --script scripts/build-docs-site.py --source docs --output /tmp/aurumai-site
+```
+
+Pushing to the other repository needs a token. Create a fine-grained personal access token
+with **Contents: read and write** on the `<owner>.github.io` repository only, and store it as the
+repository secret `DOCS_SITE_TOKEN`. Without it the workflow still builds the site, which
+proves the documentation builds, and says that nothing was published. A manual run of the
+workflow builds the site and publishes it only when `publish` is ticked.
+
+`docs/superpowers` (design notes) is not published. A new page is published when its Markdown
+file is under `docs/`; to mark its section in the navigation bar, add it to `CURRENT` in the script.

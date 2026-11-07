@@ -1,0 +1,90 @@
+name: publish docs
+
+# Builds the documentation site from docs/ (scripts/build-docs-site.py) and
+# publishes it to https://tsrman.github.io/aurumai/ when a release is tagged:
+# the pages replace the `aurumai/` folder of the <owner>.github.io repository
+# and are committed there. Prereleases (v1.2.0-rc.1) are not published.
+#
+# Pushing to another repository needs a token. Create a fine-grained personal
+# access token with "Contents: read and write" on the <owner>.github.io
+# repository only and store it as the repository secret DOCS_SITE_TOKEN. Without
+# the secret the site is still built (it proves the docs build) and the run
+# says that nothing was published.
+#
+# A manual run builds the site and publishes only with `publish` ticked.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the built site (otherwise only build it)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-docs
+  cancel-in-progress: false
+
+jobs:
+  docs:
+    name: build and publish the docs site
+    runs-on: ubuntu-latest
+    env:
+      SITE_REPOSITORY: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
+      SITE_BRANCH: master
+      SITE_FOLDER: aurumai
+      HAS_TOKEN: ${{ secrets.DOCS_SITE_TOKEN != '' }}
+      PUBLISH: ${{ github.event_name == 'push' && !contains(github.ref_name, '-') || inputs.publish == true }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.12.7'
+
+      - name: Build the site
+        run: uv run --script scripts/build-docs-site.py --source docs --output "$RUNNER_TEMP/site"
+
+      - name: Say why nothing is published
+        if: env.PUBLISH != 'true' || env.HAS_TOKEN != 'true'
+        run: |
+          if [ "$PUBLISH" != "true" ]; then
+            echo "::notice::Built only: this run is not a release tag (or a manual run without 'publish')."
+          else
+            echo "::warning::The site was built but not published: the repository secret DOCS_SITE_TOKEN is not set (see the header of .github/workflows/publish-docs.yml)."
+          fi
+
+      - name: Check out the site repository
+        if: env.PUBLISH == 'true' && env.HAS_TOKEN == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SITE_REPOSITORY }}
+          ref: ${{ env.SITE_BRANCH }}
+          token: ${{ secrets.DOCS_SITE_TOKEN }}
+          path: site-repository
+
+      - name: Publish
+        if: env.PUBLISH == 'true' && env.HAS_TOKEN == 'true'
+        working-directory: site-repository
+        run: |
+          mkdir -p "$SITE_FOLDER"
+          rsync -a --delete "$RUNNER_TEMP/site/" "$SITE_FOLDER/"
+          git add -A "$SITE_FOLDER"
+          if git diff --cached --quiet; then
+            echo "The site is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "aurum: documentation for ${GITHUB_REF_NAME} (automated)"
+          for attempt in 1 2 3; do
+            git push origin "HEAD:${SITE_BRANCH}" && exit 0
+            git pull -q --rebase origin "${SITE_BRANCH}"
+          done
+          echo "::error::Could not push to ${SITE_REPOSITORY}."
+          exit 1
