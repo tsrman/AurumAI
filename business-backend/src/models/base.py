@@ -26,3 +26,15 @@ class OrgScopedModel(BaseModel):
     __abstract__ = True
 
     org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+
+
+class OrgScopedLeadingIndexModel(BaseModel):
+    """Like OrgScopedModel, for tables whose own composite indexes already lead with org_id.
+
+    A separate index on org_id alone would repeat the start of those and only add to the cost
+    of every write on a table that is written a lot.
+    """
+
+    __abstract__ = True
+
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)

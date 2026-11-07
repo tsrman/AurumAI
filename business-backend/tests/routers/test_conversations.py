@@ -363,7 +363,14 @@ async def test_message_history_paginates_all_52_rows_without_gaps(
 ):
     from src.models.message import Message
 
-    conv = Conversation(org_id=test_org.id, user_id=test_user.id, title="Long", model="test")
+    # A conversation begins before its first message.
+    conv = Conversation(
+        org_id=test_org.id,
+        user_id=test_user.id,
+        title="Long",
+        model="test",
+        created_at=datetime.datetime(2025, 12, 31, tzinfo=datetime.timezone.utc),
+    )
     db.add(conv)
     await db.flush()
     expected = []

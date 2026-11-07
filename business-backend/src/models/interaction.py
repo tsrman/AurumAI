@@ -13,15 +13,16 @@ from sqlalchemy import String, Text, UniqueConstraint, text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.models.base import OrgScopedModel
+from src.models.base import OrgScopedLeadingIndexModel, OrgScopedModel
 
 # Register referenced tables even when a worker/CLI imports this module alone.
 from src.models import agent_definition, conversation, user, workflow_run  # noqa: F401
 
 
-class InteractionTurn(OrgScopedModel):
+class InteractionTurn(OrgScopedLeadingIndexModel):
     __tablename__ = "interaction_turns"
     __table_args__ = (
+        Index("ix_interaction_turns_conversation", "org_id", "conversation_id"),
         UniqueConstraint("org_id", "id", name="uq_interaction_turn_org_id"),
         ForeignKeyConstraint(
             ["org_id", "conversation_id", "owner_id"],
@@ -113,7 +114,7 @@ class InteractionExecution(OrgScopedModel):
     iteration: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
 
 
-class ToolOperation(OrgScopedModel):
+class ToolOperation(OrgScopedLeadingIndexModel):
     __tablename__ = "tool_operations"
     __table_args__ = (
         UniqueConstraint(

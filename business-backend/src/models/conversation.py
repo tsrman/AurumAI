@@ -8,10 +8,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from src.models import data_identity  # noqa: F401
-from src.models.base import OrgScopedModel
+from src.models.base import OrgScopedLeadingIndexModel
 
 
-class Conversation(OrgScopedModel):
+class Conversation(OrgScopedLeadingIndexModel):
     __tablename__ = "conversations"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True, server_default=func.now())
     __table_args__ = (

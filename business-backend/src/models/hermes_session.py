@@ -16,15 +16,16 @@ from sqlalchemy import UniqueConstraint, text as sql_text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.models.base import OrgScopedModel
+from src.models.base import OrgScopedLeadingIndexModel
 
 # Register the referenced tables for isolated metadata imports.
 from src.models import data_identity, interaction, workflow_run  # noqa: F401
 
 
-class HermesSession(OrgScopedModel):
+class HermesSession(OrgScopedLeadingIndexModel):
     __tablename__ = "hermes_sessions"
     __table_args__ = (
+        Index("ix_hermes_sessions_conversation", "org_id", "conversation_id"),
         UniqueConstraint("org_id", "id", name="uq_hermes_session_org_id"),
         ForeignKeyConstraint(
             ["org_id", "conversation_id", "user_id"],

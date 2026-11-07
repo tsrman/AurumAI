@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import BigInteger, String
+from sqlalchemy import BigInteger, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,15 @@ class FileMetadata(OrgScopedModel):
     """
 
     __tablename__ = "file_metadata"
+    __table_args__ = (
+        # Deleting a conversation looks up the files it owns.
+        Index(
+            "ix_file_metadata_conversation",
+            "org_id",
+            "owning_conversation_id",
+            postgresql_where=text("owning_conversation_id IS NOT NULL"),
+        ),
+    )
 
     owning_conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 

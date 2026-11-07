@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 from uuid import UUID
-from sqlalchemy import DateTime, ForeignKeyConstraint, String, Integer
+from sqlalchemy import DateTime, ForeignKeyConstraint, Index, String, Integer
 from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from src.models.base import OrgScopedModel
@@ -12,6 +12,7 @@ from src.models.base import OrgScopedModel
 class ArchiveJob(OrgScopedModel):
     __tablename__ = "archive_jobs"
     __table_args__ = (
+        Index("ix_archive_jobs_conversation", "org_id", "conversation_id"),
         ForeignKeyConstraint(
             ["org_id", "conversation_id"],
             ["conversation_identities.org_id", "conversation_identities.id"],
