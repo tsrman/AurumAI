@@ -1,12 +1,32 @@
+from datetime import datetime, timedelta
 from typing import Any, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, select, tuple_
+from sqlalchemy import and_, case, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.message import Message
 from src.models.data_identity import ConversationIdentity, MessageIdentity
 from src.repositories.base import BaseRepository
+
+
+# A message is never older than its conversation. The day of slack costs at most one more
+# monthly partition and absorbs any clock difference between writers.
+_HISTORY_SLACK = timedelta(days=1)
+
+
+async def _history_lower_bound(session: AsyncSession, conversation_id: str) -> datetime | None:
+    """Earliest `messages.created_at` a conversation can have, for partition pruning.
+
+    `messages` is partitioned by month and nothing in a conversation-scoped query says which
+    months, so without this bound every read probes every partition ever created.
+    """
+    began = await session.scalar(
+        select(ConversationIdentity.created_at).where(
+            ConversationIdentity.id == UUID(conversation_id)
+        )
+    )
+    return None if began is None else began - _HISTORY_SLACK
 
 
 class MessageRepository(BaseRepository[Message]):
@@ -58,6 +78,10 @@ class MessageRepository(BaseRepository[Message]):
         )
         # Compute turn order over the whole conversation before applying the
         # cursor. Filtering first would change window minima at page boundaries.
+        lower_bound = await _history_lower_bound(session, conversation_id)
+        in_conversation = [Message.conversation_id == conversation_id]
+        if lower_bound is not None:
+            in_conversation.append(Message.created_at >= lower_bound)
         ordered = (
             select(
                 Message.id,
@@ -66,7 +90,7 @@ class MessageRepository(BaseRepository[Message]):
                 turn_key.label("turn_key"),
                 role_order.label("role_order"),
             )
-            .where(Message.conversation_id == conversation_id)
+            .where(*in_conversation)
             .cte("ordered_messages")
         )
         ordering = (
@@ -76,7 +100,16 @@ class MessageRepository(BaseRepository[Message]):
             ordered.c.created_at,
             ordered.c.id,
         )
-        stmt = select(Message).join(ordered, Message.id == ordered.c.id).order_by(*ordering)
+        # Joined on the whole primary key: with `created_at` the join reaches only the
+        # partition each row lives in, not every partition's index.
+        stmt = (
+            select(Message)
+            .join(
+                ordered,
+                and_(Message.id == ordered.c.id, Message.created_at == ordered.c.created_at),
+            )
+            .order_by(*ordering)
+        )
         if cursor is not None:
             # Resolve the anchor only inside this conversation. A missing/deleted
             # or foreign message must not silently restart pagination.
@@ -201,11 +234,14 @@ class MessageRepository(BaseRepository[Message]):
             return None
         from src.services.conversation_lifecycle import lock_active_conversation
         await lock_active_conversation(session, owner_org, UUID(conversation_id))
+        lower_bound = await _history_lower_bound(session, conversation_id)
         stmt = select(Message).where(
             Message.conversation_id == conversation_id,
             Message.turn_id == turn_id,
             Message.role == role,
         )
+        if lower_bound is not None:
+            stmt = stmt.where(Message.created_at >= lower_bound)
         result = await session.execute(stmt)
         message = result.scalar_one_or_none()
         if message is None:

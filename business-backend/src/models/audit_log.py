@@ -8,10 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from src.models import data_identity  # noqa: F401
 
-from src.models.base import OrgScopedModel
+from src.models.base import OrgScopedLeadingIndexModel
 
 
-class AuditLog(OrgScopedModel):
+class AuditLog(OrgScopedLeadingIndexModel):
     """Record who changed what through mutating requests.
 
     Request bodies are intentionally excluded: these routes also carry MCP

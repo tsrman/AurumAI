@@ -77,6 +77,10 @@ async def test_record_lands_in_the_database_and_is_org_scoped():
                 f"/v1/skills/{skill_id}", headers={"user-agent": "pytest-audit"}
             )
     assert response.status_code == 200
+    # The row is written in the background, after the response.
+    from src.middleware.audit import drain_pending_audit
+
+    await drain_pending_audit()
 
     role_engine = create_async_engine(_runtime_db_url(), poolclass=NullPool)
     app_sessions = async_sessionmaker(role_engine, expire_on_commit=False)

@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
+    Index,
     String,
     UniqueConstraint,
     text,
@@ -16,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.models.base import OrgScopedModel
+from src.models.base import OrgScopedLeadingIndexModel, OrgScopedModel
 
 
 class ConversationOperation(OrgScopedModel):
@@ -43,9 +44,10 @@ class ConversationOperation(OrgScopedModel):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class ConversationExecution(OrgScopedModel):
+class ConversationExecution(OrgScopedLeadingIndexModel):
     __tablename__ = "conversation_executions"
     __table_args__ = (
+        Index("ix_conversation_executions_conversation", "org_id", "conversation_id"),
         ForeignKeyConstraint(
             ["org_id", "conversation_id"],
             ["conversation_identities.org_id", "conversation_identities.id"],

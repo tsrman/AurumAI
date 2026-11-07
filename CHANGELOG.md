@@ -4,6 +4,27 @@
 
 ### Performance
 
+- **Reading a conversation's messages no longer probes every month.** `messages` is partitioned
+  by month and a conversation-scoped query carried no hint about which months, so each read touched
+  every partition ever created: planning alone took 8 ms at 46 partitions and grows with every month.
+  The history read now starts at the conversation's creation (a message is never older than its
+  conversation) and joins its rows by the whole primary key: 0.2 ms to plan and 0.07 ms to run in the
+  same test.
+- **Deleting a conversation no longer scans five tables.** `interaction_turns`,
+  `conversation_executions`, `hermes_sessions`, `archive_jobs` and `file_metadata` had no index for
+  the lookup the delete makes (migration `20261111_cascade_lookup_indexes`). The same migration drops
+  six single-column `org_id` indexes that another index on the table already covered
+  (`interaction_turns`, `conversation_executions`, `hermes_sessions`, `tool_operations`,
+  `conversations`, `audit_logs`), which lowers the cost of every write to them. Index builds block
+  writes to their table; upgrade a large installation in a quiet period.
+- **The audit row is written after the response.** A mutating request used to wait for a second pooled
+  connection, an `INSERT` and a commit before the client got anything, including before a chat stream
+  started. The write now runs in the background, at most 200 at a time (beyond that the request waits
+  for its own write; no row is dropped), and is finished at shutdown.
+- **The Compose PostgreSQL starts with room for the stack.** `max_connections=200`,
+  `shared_buffers=256MB`, `effective_cache_size=1GB` (PostgreSQL's defaults are 100 and 128MB), set with
+  `POSTGRES_MAX_CONNECTIONS`, `POSTGRES_SHARED_BUFFERS` and `POSTGRES_EFFECTIVE_CACHE_SIZE`. Recreate the
+  `postgres` container to apply them.
 - **An organization's requests no longer queue on one row for long.** Every model request of an
   organization updates the same monthly counter row, and the row stayed locked while the transaction
   made several more round trips and then waited for the disk flush. The counter is now touched last,

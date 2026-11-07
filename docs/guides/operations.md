@@ -113,9 +113,12 @@ is the sum over everything that connects:
 replicas x processes x (pool size + overflow)  +  RAG services  +  Temporal  +  Keycloak  +  Langfuse  <=  max_connections
 ```
 
-On the Compose stack Temporal alone holds about 30. Raise `max_connections` (and give PostgreSQL
-the memory for it), lower the pool, or put a connection pooler in front before running several API
-replicas. A pooler in transaction mode is not tested with AurumAI here: the tenant context is set
+On the Compose stack Temporal alone holds about 30, so the stack starts PostgreSQL with
+`max_connections=200`, `shared_buffers=256MB` and `effective_cache_size=1GB` (PostgreSQL's own
+defaults are 100 and 128MB); change them with `POSTGRES_MAX_CONNECTIONS`, `POSTGRES_SHARED_BUFFERS`
+and `POSTGRES_EFFECTIVE_CACHE_SIZE` in `.env` and recreate the container. Raise `max_connections`
+(and give PostgreSQL the memory for it), lower the pool, or put a connection pooler in front before
+running several API replicas. A pooler in transaction mode is not tested with AurumAI here: the tenant context is set
 per transaction, which suits it, but check prepared statements and your driver settings first.
 
 A request that cannot get a connection within `APP_DB_POOL_TIMEOUT` seconds fails with a

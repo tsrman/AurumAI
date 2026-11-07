@@ -5,6 +5,7 @@ what is recorded and that failed logging does not fail the request.
 test_audit_rls.py separately verifies real insertion and RLS constraints.
 """
 
+import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -78,9 +79,20 @@ def make_app() -> FastAPI:
     return app
 
 
+class _DrainingClient(httpx.AsyncClient):
+    """A client that waits for the background audit write before returning."""
+
+    async def request(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        from src.middleware.audit import drain_pending_audit
+
+        response = await super().request(*args, **kwargs)
+        await drain_pending_audit()
+        return response
+
+
 @pytest.fixture
 def client():
-    return httpx.AsyncClient(transport=ASGITransport(app=make_app()), base_url="http://test")
+    return _DrainingClient(transport=ASGITransport(app=make_app()), base_url="http://test")
 
 
 @pytest.fixture
@@ -273,3 +285,66 @@ async def test_request_without_org_is_not_written(identity):
 
     assert response.status_code == 200
     session_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_audit_write_does_not_delay_the_response(identity):
+    """The row is written after the response is sent: a mutating request used to wait for a
+    second pooled connection, an INSERT and a commit before the client saw anything."""
+    from src.middleware.audit import drain_pending_audit
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def slow_record(self, request, status_code):  # noqa: ANN001
+        started.set()
+        await release.wait()
+        finished.set()
+
+    with patch.object(AuditMiddleware, "_record", slow_record):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=make_app()), base_url="http://test"
+        ) as c:
+            response = await asyncio.wait_for(c.post("/v1/skills/"), timeout=2)
+            assert response.status_code == 200
+            assert not finished.is_set()
+            release.set()
+            await drain_pending_audit()
+
+    assert started.is_set() and finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_a_full_queue_makes_the_request_wait_instead_of_dropping_the_row(identity):
+    from src.middleware import audit
+
+    written: list[int] = []
+
+    async def record(self, request, status_code):  # noqa: ANN001
+        written.append(status_code)
+
+    with patch.object(AuditMiddleware, "_record", record), patch.object(audit, "_MAX_PENDING", 0):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=make_app()), base_url="http://test"
+        ) as c:
+            await c.post("/v1/skills/")
+            # No drain: with no room for a background write, it happened before the response.
+            assert written == [200]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_background_write_is_logged_and_never_raised(identity, caplog):
+    from src.middleware.audit import drain_pending_audit
+
+    async def boom(self, request, status_code):  # noqa: ANN001
+        raise RuntimeError("database unavailable")
+
+    with patch.object(AuditMiddleware, "_record", boom):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=make_app()), base_url="http://test"
+        ) as c:
+            response = await c.post("/v1/skills/")
+            await drain_pending_audit()
+
+    assert response.status_code == 200

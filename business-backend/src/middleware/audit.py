@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from fastapi import Request, Response
@@ -19,6 +20,19 @@ _AUDITED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _SKIPPED_PREFIXES = ("/v1/auth/", "/v1/internal/hermes/egress/", "/v1/internal/hermes/previews/check")
 
 
+# Audit rows are written after the response, not before it. At most this many writes are in
+# flight; past that, the request waits for its own write rather than dropping the row, so a
+# slow database slows requests down instead of piling up tasks or losing audit records.
+_MAX_PENDING = 200
+_pending: set[asyncio.Task[None]] = set()
+
+
+async def drain_pending_audit() -> None:
+    """Wait for the audit writes still in flight (shutdown, and tests)."""
+    while _pending:
+        await asyncio.gather(*list(_pending), return_exceptions=True)
+
+
 def _route_template(request: Request) -> str:
     """Return a route template such as /v1/skills/{skill_id}, not an object URL.
 
@@ -37,8 +51,10 @@ def _route_template(request: Request) -> str:
 class AuditMiddleware(BaseHTTPMiddleware):
     """Write an audit_logs row for each mutating request.
 
-    Record after responding without changing the response. Audit failure must
-    not fail the user request, but must remain visible in application logs.
+    Record after responding without changing the response: the write runs as a
+    background task, so the client never waits for a second pooled connection, an
+    INSERT and a commit. Audit failure must not fail the user request, but must
+    remain visible in application logs.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -51,12 +67,19 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith(_SKIPPED_PREFIXES):
             return response
 
+        if len(_pending) >= _MAX_PENDING:
+            await self._record_logged(request, response.status_code)
+            return response
+        task = asyncio.create_task(self._record_logged(request, response.status_code))
+        _pending.add(task)
+        task.add_done_callback(_pending.discard)
+        return response
+
+    async def _record_logged(self, request: Request, status_code: int) -> None:
         try:
-            await self._record(request, response.status_code)
+            await self._record(request, status_code)
         except Exception:
             logger.warning("audit_log_write_failed", exc_info=True)
-
-        return response
 
     async def _record(self, request: Request, status_code: int) -> None:
         org_id, user_id = await _rate_limit_identity(request)
