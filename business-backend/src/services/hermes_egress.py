@@ -9,7 +9,7 @@ these take effect without restarting a sandbox.
 The organization's Hermes model is kept here as well, next to the egress mode.
 """
 
-from typing import Literal, cast
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -58,7 +58,7 @@ async def organization_egress_mode(session: AsyncSession, org_id: UUID) -> Egres
             OrganizationSettings.org_id == org_id
         )
     )
-    return cast(EgressMode, stored) if stored in EGRESS_MODES else DEFAULT_EGRESS_MODE
+    return stored if stored in EGRESS_MODES else DEFAULT_EGRESS_MODE
 
 
 async def set_organization_egress_mode(
@@ -103,7 +103,7 @@ async def effective_egress_mode(
         await organization_egress_mode(session, subject.org_id), settings.HERMES_EGRESS_MAX_MODE
     )
     if agent_mode in EGRESS_MODES:
-        mode = _lowest(mode, cast(EgressMode, agent_mode))
+        mode = _lowest(mode, agent_mode)
     if mode == "public" and not await authorization_service.has_capability(
         session, subject, Capability.WEB_ACCESS
     ):
