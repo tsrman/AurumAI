@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.0.7 (2026-11-07)
+
+Group membership editing in the Admin UI, operator runbooks, documentation publishing by CI and a pass over the dependencies.
+
 ### Added
 
 - **Group membership can be edited in the Admin UI.** The Members tab of a group lists who
@@ -35,6 +39,13 @@
   bar) and `.github/workflows/publish-docs.yml` publishes them to https://tsrman.github.io/aurumai/
   when a `vX.Y.Z` tag is pushed. It needs the repository secret `DOCS_SITE_TOKEN`; see
   [docs/RELEASE.md](docs/RELEASE.md#documentation-site).
+
+### Upgrade notes
+
+- One database migration since v0.0.6: `20261109_group_member_source` (adds `user_groups.source`, existing
+  rows become `identity`). It runs with the backend entrypoint.
+- Rebuild the images: the UI images moved to Node 24 and all Python services have new dependencies.
+- Publishing the documentation site on a tag needs the repository secret `DOCS_SITE_TOKEN`.
 
 ## v0.0.6 (2026-11-07)
 
