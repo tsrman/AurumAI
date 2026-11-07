@@ -23,7 +23,7 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.50b0",
     "prometheus-client>=0.21.0,<0.27.0",
     "boto3>=1.40,<2",
-    "pyarrow>=23.0.1,<24",
+    "pyarrow>=26.0.0,<27",
 ]
 
 [dependency-groups]
