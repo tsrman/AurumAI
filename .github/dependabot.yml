@@ -27,6 +27,10 @@ updates:
       # SDK 3+ targets the Langfuse v3 server; the deployment ships v2.
       - dependency-name: "langfuse"
         versions: [">=3"]
+      # Pinned exactly: rag-api and rag-worker `mutation_transport.py` call private
+      # pymilvus internals to send each Milvus mutation once, and refuse any other
+      # version. Move it only after re-auditing that module against the new SDK.
+      - dependency-name: "pymilvus"
 
   # rag-worker runs alone: resolving its torch/docling stack can take most of
   # a Dependabot job's time budget, which cancelled the shared Python run.
@@ -46,6 +50,10 @@ updates:
       # SDK 3+ targets the Langfuse v3 server; the deployment ships v2.
       - dependency-name: "langfuse"
         versions: [">=3"]
+      # Pinned exactly: rag-api and rag-worker `mutation_transport.py` call private
+      # pymilvus internals to send each Milvus mutation once, and refuse any other
+      # version. Move it only after re-auditing that module against the new SDK.
+      - dependency-name: "pymilvus"
 
   # Frontends and the scripts/ harness.
   - package-ecosystem: "npm"
