@@ -231,3 +231,16 @@ async def test_call_sse_httpx_propagates_http_error():
     with patch("httpx.AsyncClient", return_value=http_client):
         with pytest.raises(httpx.HTTPStatusError):
             await MCPClient()._call_sse_httpx("http://mcp.local/sse", "search", {})
+
+
+def test_sdk_call_result_keeps_the_camel_case_keys_callers_read():
+    # mcp 2 names the fields in snake_case; the result handed to callers must keep
+    # the wire names (`isError`, `structuredContent`) it has always had.
+    from mcp.types import CallToolResult, TextContent
+
+    result = CallToolResult(content=[TextContent(type="text", text="hi")], is_error=True)
+
+    dumped = result.model_dump(by_alias=True)
+
+    assert dumped["isError"] is True and "is_error" not in dumped
+    assert "structuredContent" in dumped

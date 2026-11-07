@@ -144,7 +144,7 @@ class MCPClient:
                 await session.initialize()
                 result = await session.call_tool(tool_name, args)
                 return {
-                    "result": result.model_dump()
+                    "result": result.model_dump(by_alias=True)
                     if hasattr(result, "model_dump")
                     else result
                 }

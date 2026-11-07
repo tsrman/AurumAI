@@ -40,7 +40,7 @@ async def discover_mcp_tools(endpoint: str, auth_token: str | None = None) -> li
         {
             "name": tool.name,
             "description": tool.description or "",
-            "inputSchema": tool.inputSchema or {},
+            "inputSchema": tool.input_schema or {},
         }
         for tool in result.tools
     ]
