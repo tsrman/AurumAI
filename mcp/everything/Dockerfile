@@ -3,7 +3,7 @@
 # `npx -y` setup re-downloaded it from the npm registry on every container
 # start, i.e. required internet at runtime (breaks air-gapped deployments —
 # see docs/AIR_GAPPED.md).
-FROM node:22-slim
+FROM node:25-slim
 
 RUN npm install -g @modelcontextprotocol/server-everything@2026.7.4 \
     && npm cache clean --force
