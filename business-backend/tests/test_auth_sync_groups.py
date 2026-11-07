@@ -226,3 +226,51 @@ async def test_identity_membership_still_follows_the_claim_next_to_manual_ones(
     second = UserInfo(user_id=str(user_id), org_id=str(org_id), raw_claims={"groups": ["b"]})
     await auth_service.sync_keycloak_user(db, second)
     assert await _member_group_names(db, user_id) == {"manual-only", "b"}
+
+
+def _capture_statements() -> tuple[list[str], object]:
+    """Record the SQL a block of code sends, for asserting what it does not write."""
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    seen: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        seen.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", record)
+    return seen, lambda: event.remove(Engine, "before_cursor_execute", record)  # type: ignore[return-value]
+
+
+async def test_repeated_sign_ins_do_not_rewrite_the_groups_rows(db: AsyncSession) -> None:
+    """Every authenticated request runs this sync, and every member of a group shares
+    its row: rewriting `last_synced_at` each time makes them queue on one lock."""
+    org_id, user_id = await _make_org_and_user(db)
+    info = UserInfo(user_id=str(user_id), org_id=str(org_id), raw_claims={"groups": ["engineers"]})
+    await auth_service.sync_keycloak_user(db, info)
+    seen, stop = _capture_statements()
+    try:
+        await auth_service.sync_keycloak_user(db, info)
+    finally:
+        stop()  # type: ignore[operator]
+
+    assert not [s for s in seen if s.lstrip().upper().startswith("UPDATE GROUPS")]
+    assert not [s for s in seen if s.lstrip().upper().startswith(("INSERT", "DELETE"))]
+
+
+async def test_a_stale_last_synced_at_is_refreshed(db: AsyncSession) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    org_id, user_id = await _make_org_and_user(db)
+    info = UserInfo(user_id=str(user_id), org_id=str(org_id), raw_claims={"groups": ["engineers"]})
+    await auth_service.sync_keycloak_user(db, info)
+    group = await group_repository.get_by_name_and_org(db, "engineers", org_id)
+    assert group is not None
+    group.last_synced_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    await db.commit()
+
+    await auth_service.sync_keycloak_user(db, info)
+
+    refreshed = await group_repository.get_by_name_and_org(db, "engineers", org_id)
+    assert refreshed is not None and refreshed.last_synced_at is not None
+    assert datetime.now(timezone.utc) - refreshed.last_synced_at < timedelta(minutes=1)

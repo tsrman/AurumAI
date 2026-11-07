@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Performance
+
+- **The conversation list no longer reads every conversation.** The sidebar's query (one person's
+  conversations, newest activity first) had no index starting with `(org_id, user_id)`, so it scanned
+  every partition: 34 ms with 300 000 conversations and growing with them. The new index
+  `ix_conversations_user_activity` (migration `20261110_conversation_list_index`) answers it in
+  0.4 ms regardless of the table's size. Creating an index on a partitioned table blocks writes to
+  `conversations` while it builds; upgrade a large installation in a quiet period.
+- **Signing in is lighter for groups.** Every authenticated request rewrote `groups.last_synced_at` for
+  each of the person's groups, so every member of a group queued on the same row. The timestamp is now
+  refreshed at most every 15 minutes, and a request that changes nothing no longer commits or re-reads
+  the user.
+
 ### Changed
 
 - **keycloak-js 26 and TypeScript 6** in the Admin and chat apps (TypeScript 6 also in the repository
