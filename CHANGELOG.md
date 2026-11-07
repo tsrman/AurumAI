@@ -1,13 +1,27 @@
 # Changelog
 
-## Unreleased
+## v0.0.6 (2026-11-07)
+
+A fix for the chat app's sign-in page and a pass over the documentation's screenshots.
 
 ### Fixed
 
 - The sign-in page showed the app's sidebar with the built-in demo agents, a dead "New chat" and a
   spinning history to a visitor who had not signed in. The sidebar now appears only for a signed-in
-  user. The sign-in and `example-compare` screenshots in the guide are retaken (the second one was
-  taken while the answer was still streaming, so its table showed as raw text).
+  user. (#180)
+
+### Documentation
+
+- The guides' screenshots are retaken on the current stack: the sign-in page, the comparison example
+  (it had been taken while the answer was still streaming, so its table showed as raw text), the
+  Hermes preview card and the running prototype. (#179, #180)
+- The Hermes Agent guide's troubleshooting table names a cause of failing Hermes turns: the egress
+  guard resolves the backend's address once, when it starts, so after the backend is recreated
+  `hermes-egress-guard` and `hermes-egress` must be restarted. (#179)
+
+### Upgrade notes
+
+- No database migration since v0.0.5. Only business-ui changed; the other services are unchanged.
 
 ## v0.0.5 (2026-11-05)
 
