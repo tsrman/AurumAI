@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- **The documentation site is published by CI.** `scripts/build-docs-site.py` builds the pages of
+  `docs/` (the same template as the published site, the current section marked in the navigation
+  bar) and `.github/workflows/publish-docs.yml` publishes them to https://tsrman.github.io/aurumai/
+  when a `vX.Y.Z` tag is pushed. It needs the repository secret `DOCS_SITE_TOKEN`; see
+  [docs/RELEASE.md](docs/RELEASE.md#documentation-site).
+
 ## v0.0.6 (2026-11-07)
 
 A fix for the chat app's sign-in page and a pass over the documentation's screenshots.
