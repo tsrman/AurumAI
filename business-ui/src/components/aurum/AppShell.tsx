@@ -17,6 +17,10 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const isPublicPath = PUBLIC_PATHS.includes(pathname);
+  // A visitor who has not signed in has no agents, history or knowledge bases;
+  // the sidebar would offer the built-in demo catalog and dead links. While the
+  // session is still being resolved the layout stays as it will be for a user.
+  const showSidebar = isLoading || isAuthenticated;
 
   useEffect(() => {
     if (isLoading || isPublicPath || isAuthenticated) return;
@@ -29,7 +33,7 @@ export function AppShell({ children }: AppShellProps) {
         "flex h-screen w-full overflow-hidden bg-aurum-bg text-aurum-text"
       )}
     >
-      <Sidebar />
+      {showSidebar ? <Sidebar /> : null}
       <main className="flex flex-1 flex-col overflow-auto">{children}</main>
     </div>
   );
