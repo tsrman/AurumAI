@@ -2,11 +2,17 @@
 
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Button, ConfirmDialog, Field } from "@/components/primitives";
+import { Badge, Button, ConfirmDialog, Field } from "@/components/primitives";
 import { GroupCapabilityEditor } from "@/components/authorization/CapabilityEditor";
-import { ButtonTabs, Modal, Notice, Table, Td, Th, Tr } from "@/components/ui";
+import { ButtonTabs, Modal, Notice, SearchInput, Table, Td, Th, Tr } from "@/components/ui";
 import { useAdminUsers } from "@/hooks/useAdminAnalytics";
-import { useDeleteGroup, useUpdateGroup } from "@/hooks/useGroups";
+import {
+  useAddGroupMembers,
+  useDeleteGroup,
+  useGroupMembers,
+  useRemoveGroupMember,
+  useUpdateGroup,
+} from "@/hooks/useGroups";
 import { useErrorMessage } from "@/lib/errors";
 import type { Group } from "@/lib/api";
 import { formatDateTime } from "./format";
@@ -20,7 +26,7 @@ export function isKeycloakGroup(group: Group): boolean {
   return Boolean(group.lastSyncedAt || group.keycloakId);
 }
 
-/** Edit one group: identity, capabilities and (read-only) members. */
+/** Edit one group: identity, capabilities and members. */
 export function GroupDialog({
   group,
   canWrite,
@@ -60,7 +66,7 @@ export function GroupDialog({
       {group && tab === "permissions" ? (
         <GroupCapabilityEditor groupId={group.id} groupLabel={group.name} />
       ) : null}
-      {group && tab === "members" ? <MembersTab group={group} /> : null}
+      {group && tab === "members" ? <MembersTab group={group} canWrite={canWrite} /> : null}
     </Modal>
   );
 }
@@ -149,17 +155,28 @@ function GeneralTab({ group, canWrite, onDeleted }: { group: Group; canWrite: bo
   );
 }
 
-function MembersTab({ group }: { group: Group }) {
+function MembersTab({ group, canWrite }: { group: Group; canWrite: boolean }) {
   const t = useTranslations("people.groups.dialog");
   const errorMessage = useErrorMessage();
   const [offset, setOffset] = useState(0);
-  const members = useAdminUsers({ limit: MEMBERS_PAGE, offset, groupId: group.id });
+  const [adding, setAdding] = useState(false);
+  const members = useGroupMembers(group.id, { limit: MEMBERS_PAGE, offset });
+  const remove = useRemoveGroupMember();
   const rows = members.data?.data ?? [];
 
   return (
     <div className="space-y-4">
       <Notice>{t("membersHint", { group: group.name })}</Notice>
+      {canWrite ? (
+        <div className="flex justify-end">
+          <Button variant="secondary" onClick={() => setAdding((open) => !open)} aria-expanded={adding}>
+            {adding ? t("addMembersClose") : t("addMembers")}
+          </Button>
+        </div>
+      ) : null}
+      {adding ? <AddMembers group={group} /> : null}
       {members.error ? <Notice tone="error">{errorMessage(members.error)}</Notice> : null}
+      {remove.isError ? <Notice tone="error">{errorMessage(remove.error)}</Notice> : null}
       {members.isLoading ? (
         <p role="status" className="text-sm text-aurum-text-3">{t("membersLoading")}</p>
       ) : rows.length === 0 && !members.error ? (
@@ -170,16 +187,42 @@ function MembersTab({ group }: { group: Group }) {
             <tr>
               <Th>{t("memberName")}</Th>
               <Th>{t("memberRole")}</Th>
+              <Th>{t("memberSource")}</Th>
+              {canWrite ? <Th className="text-right">{t("memberActions")}</Th> : null}
             </tr>
           </thead>
           <tbody>
-            {rows.map((user) => (
-              <Tr key={user.id}>
+            {rows.map((member) => (
+              <Tr key={member.id}>
                 <Td>
-                  <p className="font-medium text-aurum-text">{user.fullName || user.email}</p>
-                  {user.fullName ? <p className="text-xs text-aurum-text-3">{user.email}</p> : null}
+                  <p className="font-medium text-aurum-text">{member.fullName || member.email}</p>
+                  {member.fullName ? <p className="text-xs text-aurum-text-3">{member.email}</p> : null}
                 </Td>
-                <Td><RoleBadge role={user.role} /></Td>
+                <Td><RoleBadge role={member.role} /></Td>
+                <Td>
+                  {member.source === "manual" ? (
+                    <Badge color="amber">{t("sourceManual")}</Badge>
+                  ) : (
+                    <Badge color="blue">Keycloak</Badge>
+                  )}
+                </Td>
+                {canWrite ? (
+                  <Td className="text-right">
+                    {member.source === "manual" ? (
+                      <button
+                        type="button"
+                        disabled={remove.isPending}
+                        onClick={() => remove.mutate({ groupId: group.id, userId: member.id })}
+                        aria-label={t("removeAria", { user: member.fullName || member.email })}
+                        className="rounded-btn px-2 py-1.5 text-xs font-medium text-aurum-err-fg hover:bg-aurum-surface-3 disabled:opacity-50"
+                      >
+                        {t("remove")}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-aurum-text-3">{t("managedInKeycloak")}</span>
+                    )}
+                  </Td>
+                ) : null}
               </Tr>
             ))}
           </tbody>
@@ -194,5 +237,74 @@ function MembersTab({ group }: { group: Group }) {
         onChange={setOffset}
       />
     </div>
+  );
+}
+
+/** Find people in the organization and add them to the group by hand. */
+function AddMembers({ group }: { group: Group }) {
+  const t = useTranslations("people.groups.dialog");
+  const errorMessage = useErrorMessage();
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const found = useAdminUsers({ limit: 10, offset: 0, search: search.trim() });
+  const inGroup = useGroupMembers(group.id, { limit: 100, offset: 0 });
+  const memberIds = new Set((inGroup.data?.data ?? []).map((member) => member.id));
+  const add = useAddGroupMembers();
+  const candidates = found.data?.data ?? [];
+
+  const toggle = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  return (
+    <section className="space-y-3 rounded-input border border-aurum-border p-4" aria-label={t("addMembers")}>
+      <SearchInput value={search} onChange={setSearch} placeholder={t("searchPeople")} className="max-w-none" />
+      {found.error ? <Notice tone="error">{errorMessage(found.error)}</Notice> : null}
+      {found.isLoading ? (
+        <p role="status" className="text-sm text-aurum-text-3">{t("membersLoading")}</p>
+      ) : candidates.length === 0 && !found.error ? (
+        <p className="text-sm text-aurum-text-3">{t("noPeople")}</p>
+      ) : (
+        <ul className="divide-y divide-aurum-border">
+          {candidates.map((person) => {
+            const already = memberIds.has(person.id);
+            return (
+              <li key={person.id}>
+                <label className="flex items-center gap-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={already || selected.has(person.id)}
+                    disabled={already}
+                    onChange={() => toggle(person.id)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-aurum-text">{person.fullName || person.email}</span>
+                    {person.fullName ? <span className="block text-xs text-aurum-text-3">{person.email}</span> : null}
+                  </span>
+                  {already ? <span className="text-xs text-aurum-text-3">{t("alreadyMember")}</span> : null}
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {add.isError ? <Notice tone="error">{errorMessage(add.error)}</Notice> : null}
+      <div className="flex justify-end">
+        <Button
+          disabled={selected.size === 0 || add.isPending}
+          onClick={() =>
+            add.mutate(
+              { groupId: group.id, userIds: [...selected] },
+              { onSuccess: () => setSelected(new Set()) },
+            )
+          }
+        >
+          {add.isPending ? t("adding") : t("addSelected", { count: selected.size })}
+        </Button>
+      </div>
+    </section>
   );
 }

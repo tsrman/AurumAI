@@ -38,6 +38,21 @@ export interface GroupUpdate {
   name?: string;
 }
 
+export interface GroupMember {
+  id: string;
+  email: string;
+  fullName: string | null;
+  role: string;
+  status: string;
+  /** "identity": synchronized from Keycloak; "manual": added in the Admin UI. */
+  source: "identity" | "manual";
+}
+
+export interface GroupMembersAdded {
+  added: number;
+  alreadyMembers: number;
+}
+
 export interface Skill {
   id: string;
   orgId?: string | null;
@@ -478,6 +493,27 @@ export async function updateGroup(id: string, payload: GroupUpdate) {
 
 export async function deleteGroup(id: string) {
   return api.delete(`admin/groups/${id}`);
+}
+
+export async function getGroupMembers(
+  groupId: string,
+  params: { limit: number; offset: number; search?: string },
+) {
+  return (
+    await api.get(`admin/groups/${groupId}/members`, {
+      searchParams: explicitSearchParams(params),
+    })
+  ).json<ApiResponse<GroupMember[]>>();
+}
+
+export async function addGroupMembers(groupId: string, userIds: string[]) {
+  return (await api.post(`admin/groups/${groupId}/members`, { json: { userIds } })).json<
+    ApiResponse<GroupMembersAdded>
+  >();
+}
+
+export async function removeGroupMember(groupId: string, userId: string) {
+  return api.delete(`admin/groups/${groupId}/members/${userId}`);
 }
 
 export async function getSkills() {

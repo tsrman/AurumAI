@@ -21,7 +21,7 @@ Detailed fresh verification belongs in the release report and CI.
 - Optional background identity synchronization, monthly payload partitions and
   verified operator-only Parquet archive/export/restore.
 - Admin UI in the chat app's shell: users and groups (default and per-group
-  permissions, read-only Keycloak membership), agents (a creation wizard, per-agent capability switches, archive and restore; chosen in chat),
+  permissions, Keycloak membership plus people added by hand), agents (a creation wizard, per-agent capability switches, archive and restore; chosen in chat),
   skills, workflows, knowledge bases, models and usage analytics, with access
   configured from each resource.
 - Image generation and editing in chat through an OpenAI-compatible Images API,
@@ -94,8 +94,6 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
 - Removal of remaining upstream development-tool advisories when patches are available,
   and the major dependency upgrades Dependabot proposes (Node 26, zod 4, vitest 5,
   redis 8, mypy 2 and others) once each is migrated and tested.
-- Editable group membership in the Admin UI: today sign-in synchronization replaces
-  memberships from the Keycloak `groups` claim, so membership is managed in Keycloak.
 
 Default-off features stay gated until their prerequisites and enforcement checks
 are satisfied. A historical acceptance pass does not automatically close a fresh

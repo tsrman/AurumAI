@@ -183,3 +183,46 @@ async def test_concurrent_new_group_creation_recovers_from_lost_race(db: AsyncSe
     groups = result.scalars().all()
     assert len(groups) == 1
     assert groups[0].id == winner_group.id
+
+
+async def test_manual_membership_survives_every_kind_of_sync(db: AsyncSession) -> None:
+    org_id, user_id = await _make_org_and_user(db)
+    kept = Group(org_id=org_id, name="kept")
+    claimed = Group(org_id=org_id, name="claimed")
+    db.add_all([kept, claimed])
+    await db.flush()
+    db.add_all(
+        [
+            UserGroup(user_id=user_id, group_id=kept.id, source="manual"),
+            UserGroup(user_id=user_id, group_id=claimed.id, source="manual"),
+        ]
+    )
+    await db.commit()
+
+    # A claim without the manual groups, one naming a manual group, an empty one.
+    for claim in (["other"], ["claimed"], []):
+        user_info = UserInfo(user_id=str(user_id), org_id=str(org_id), raw_claims={"groups": claim})
+        await auth_service.sync_keycloak_user(db, user_info)
+        assert {"kept", "claimed"} <= await _member_group_names(db, user_id)
+
+    rows = (await db.execute(select(UserGroup.source).where(UserGroup.user_id == user_id))).scalars().all()
+    assert sorted(rows) == ["manual", "manual"]
+
+
+async def test_identity_membership_still_follows_the_claim_next_to_manual_ones(
+    db: AsyncSession,
+) -> None:
+    org_id, user_id = await _make_org_and_user(db)
+    manual = Group(org_id=org_id, name="manual-only")
+    db.add(manual)
+    await db.flush()
+    db.add(UserGroup(user_id=user_id, group_id=manual.id, source="manual"))
+    await db.commit()
+
+    first = UserInfo(user_id=str(user_id), org_id=str(org_id), raw_claims={"groups": ["a"]})
+    await auth_service.sync_keycloak_user(db, first)
+    assert await _member_group_names(db, user_id) == {"manual-only", "a"}
+
+    second = UserInfo(user_id=str(user_id), org_id=str(org_id), raw_claims={"groups": ["b"]})
+    await auth_service.sync_keycloak_user(db, second)
+    assert await _member_group_names(db, user_id) == {"manual-only", "b"}

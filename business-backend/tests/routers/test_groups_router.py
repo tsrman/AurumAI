@@ -10,8 +10,10 @@ from sqlalchemy import text
 
 from src.core.auth import UserInfo, get_current_user
 from src.core.dependencies import get_org_db_session
+from src.models.group import Group
 from src.models.organization import Organization
 from src.models.user import User
+from src.models.user_group import UserGroup
 from src.routers import groups as groups_router
 
 
@@ -251,3 +253,108 @@ async def test_created_group_starts_without_members(admin_client):
     response = await admin_client.post("/v1/admin/groups/", json={"name": "fresh"})
 
     assert response.json()["data"]["memberCount"] == 0
+
+
+async def _group_and_users(db, test_org, count=2):
+    group = Group(org_id=test_org.id, name=f"members-{uuid.uuid4().hex[:6]}")
+    users = [
+        User(
+            keycloak_id=uuid.uuid4(),
+            email=f"m{i}-{uuid.uuid4().hex[:6]}@example.com",
+            full_name=f"Member {i}",
+            org_id=test_org.id,
+        )
+        for i in range(count)
+    ]
+    db.add_all([group, *users])
+    await db.commit()
+    return group, users
+
+
+@pytest.mark.asyncio
+async def test_members_endpoints_require_org_admin(member_client, db, test_org):
+    group, users = await _group_and_users(db, test_org, 1)
+    base = f"/v1/admin/groups/{group.id}/members"
+    assert (await member_client.get(base)).status_code == 403
+    assert (await member_client.post(base, json={"userIds": [str(users[0].id)]})).status_code == 403
+    assert (await member_client.delete(f"{base}/{users[0].id}")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_adds_lists_and_removes_a_manual_member(admin_client, db, test_org):
+    group, users = await _group_and_users(db, test_org)
+    base = f"/v1/admin/groups/{group.id}/members"
+
+    added = await admin_client.post(base, json={"userIds": [str(u.id) for u in users]})
+    assert added.status_code == 200
+    assert added.json()["data"] == {"added": 2, "alreadyMembers": 0}
+
+    again = await admin_client.post(base, json={"userIds": [str(users[0].id)]})
+    assert again.json()["data"] == {"added": 0, "alreadyMembers": 1}
+
+    listing = await admin_client.get(base)
+    body = listing.json()
+    assert body["pagination"]["total"] == 2
+    assert {m["source"] for m in body["data"]} == {"manual"}
+
+    searched = await admin_client.get(base, params={"search": "Member 1"})
+    assert [m["id"] for m in searched.json()["data"]] == [str(users[1].id)]
+
+    removed = await admin_client.delete(f"{base}/{users[0].id}")
+    assert removed.status_code == 204
+    assert (await admin_client.get(base)).json()["pagination"]["total"] == 1
+    # The group listing counts what the dialog shows.
+    groups = (await admin_client.get("/v1/admin/groups/")).json()["data"]
+    assert next(g for g in groups if g["id"] == str(group.id))["memberCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_synchronized_member_cannot_be_removed_here(admin_client, db, test_org):
+    group, users = await _group_and_users(db, test_org, 1)
+    db.add(UserGroup(user_id=users[0].id, group_id=group.id))  # default source: identity
+    await db.commit()
+    response = await admin_client.delete(f"/v1/admin/groups/{group.id}/members/{users[0].id}")
+    assert response.status_code == 409
+    listed = (await admin_client.get(f"/v1/admin/groups/{group.id}/members")).json()["data"]
+    assert [m["source"] for m in listed] == ["identity"]
+
+
+@pytest.mark.asyncio
+async def test_member_of_another_org_is_refused_and_nothing_is_added(admin_client, db, test_org):
+    group, users = await _group_and_users(db, test_org, 1)
+    other = Organization(name="Other", slug=f"other-{uuid.uuid4().hex[:8]}")
+    db.add(other)
+    await db.flush()
+    foreigner = User(
+        keycloak_id=uuid.uuid4(), email=f"f-{uuid.uuid4().hex[:6]}@example.com", org_id=other.id
+    )
+    db.add(foreigner)
+    await db.commit()
+    base = f"/v1/admin/groups/{group.id}/members"
+    response = await admin_client.post(
+        base, json={"userIds": [str(users[0].id), str(foreigner.id)]}
+    )
+    assert response.status_code == 404
+    assert (await admin_client.get(base)).json()["pagination"]["total"] == 0
+    assert (await admin_client.delete(f"{base}/{foreigner.id}")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_members_of_an_unknown_or_foreign_group_are_not_found(admin_client, db):
+    other = Organization(name="Other", slug=f"other-{uuid.uuid4().hex[:8]}")
+    db.add(other)
+    await db.flush()
+    foreign = Group(org_id=other.id, name="foreign")
+    db.add(foreign)
+    await db.commit()
+    for group_id in (str(foreign.id), str(uuid.uuid4()), "not-a-uuid"):
+        assert (await admin_client.get(f"/v1/admin/groups/{group_id}/members")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_member_payload_is_validated(admin_client, db, test_org):
+    group, _ = await _group_and_users(db, test_org, 0)
+    base = f"/v1/admin/groups/{group.id}/members"
+    assert (await admin_client.post(base, json={"userIds": []})).status_code == 422
+    assert (await admin_client.post(base, json={"userIds": ["x"]})).status_code == 422
+    assert (await admin_client.post(base, json={"userIds": [], "extra": 1})).status_code == 422

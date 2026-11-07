@@ -10,6 +10,9 @@ import {
   createGroup,
   updateGroup,
   deleteGroup,
+  getGroupMembers,
+  addGroupMembers,
+  removeGroupMember,
 } from "@/lib/api";
 
 export function useGroups() {
@@ -41,5 +44,44 @@ export function useDeleteGroup() {
   return useMutation({
     mutationFn: (id: string) => deleteGroup(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["groups"] }),
+  });
+}
+
+export function useGroupMembers(
+  groupId: string,
+  params: { limit: number; offset: number; search?: string },
+) {
+  return useQuery({
+    queryKey: ["group-members", groupId, params],
+    queryFn: () => getGroupMembers(groupId, params),
+  });
+}
+
+function useInvalidateMembers() {
+  const qc = useQueryClient();
+  // The group list shows the member count; the user directory filters by group.
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["group-members"] }),
+      qc.invalidateQueries({ queryKey: ["groups"] }),
+      qc.invalidateQueries({ queryKey: ["admin-users"] }),
+    ]);
+}
+
+export function useAddGroupMembers() {
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: ({ groupId, userIds }: { groupId: string; userIds: string[] }) =>
+      addGroupMembers(groupId, userIds),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveGroupMember() {
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: ({ groupId, userId }: { groupId: string; userId: string }) =>
+      removeGroupMember(groupId, userId),
+    onSuccess: invalidate,
   });
 }

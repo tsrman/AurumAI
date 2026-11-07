@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- **Group membership can be edited in the Admin UI.** The Members tab of a group lists who
+  is in it and where each membership comes from, and administrators can add people to any
+  group by hand and remove them again. Sign-in synchronization with the Keycloak `groups`
+  claim now touches only the memberships it created: people added by hand stay (the new
+  `user_groups.source` column, migration `20261109_group_member_source`), and memberships
+  from Keycloak remain managed in Keycloak. New endpoints:
+  `GET/POST /v1/admin/groups/{id}/members` and `DELETE /v1/admin/groups/{id}/members/{userId}`.
+
 ### Documentation
 
 - **The documentation site is published by CI.** `scripts/build-docs-site.py` builds the pages of

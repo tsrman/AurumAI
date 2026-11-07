@@ -116,6 +116,7 @@ Every route needs the `org_admin` role unless noted.
 |---|---|
 | `GET /v1/admin/users` | Users and their roles |
 | `GET /v1/admin/groups/`, `POST`, `PATCH /{id}`, `DELETE /{id}` | Groups |
+| `GET/POST /v1/admin/groups/{id}/members`, `DELETE .../members/{userId}` | Members of a group; only people added by hand can be removed |
 | `GET /v1/admin/authorization/capabilities` and `/subjects` | Capability catalog and subjects |
 | `GET/PUT /v1/admin/authorization/capabilities/organization` | Default permissions |
 | `GET/PUT /v1/admin/authorization/capabilities/groups/{id}` | A group's capabilities |

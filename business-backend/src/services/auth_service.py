@@ -187,7 +187,11 @@ class AuthService:
                 select(UserGroup).where(UserGroup.user_id == user.id)
             )
             for user_group in current.scalars().all():
-                if user_group.group_id not in desired_ids:
+                if user_group.source == "manual":
+                    # Added by an administrator: the claim neither grants nor
+                    # revokes it, and a claimed group is not added twice.
+                    desired_ids.discard(user_group.group_id)
+                elif user_group.group_id not in desired_ids:
                     await session.delete(user_group)
                 else:
                     desired_ids.discard(user_group.group_id)

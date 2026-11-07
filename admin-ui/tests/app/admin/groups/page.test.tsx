@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 import AdminGroupsPage from "@/app/admin/groups/page";
-import type { AdminUser, Group } from "@/lib/api";
+import type { AdminUser, Group, GroupMember } from "@/lib/api";
 
 let adminAccess = { allowed: true, canWrite: true, error: null as string | null, isLoading: false };
 let groupsResult: { data?: { data: Group[] }; isLoading: boolean; error: unknown } = {
@@ -14,7 +14,11 @@ const updateMutate = vi.fn();
 const removeMutate = vi.fn();
 let removeError: Error | null = null;
 const usersQuery = vi.fn();
-let members: AdminUser[] = [];
+const membersQuery = vi.fn();
+const addMembersMutate = vi.fn();
+const removeMemberMutate = vi.fn();
+let members: GroupMember[] = [];
+let people: AdminUser[] = [];
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/admin/groups" }));
 vi.mock("@/hooks/useAdminAccess", () => ({ useAdminAccess: () => adminAccess }));
@@ -27,11 +31,17 @@ vi.mock("@/hooks/useGroups", () => ({
   useCreateGroup: () => ({ mutate: createMutate, reset: vi.fn(), isPending: false, isError: false }),
   useUpdateGroup: () => ({ mutate: updateMutate, isPending: false, isError: false, isSuccess: false }),
   useDeleteGroup: () => ({ mutate: removeMutate, isPending: false, isError: Boolean(removeError), error: removeError }),
+  useGroupMembers: (groupId: string, params: unknown) => {
+    membersQuery(groupId, params);
+    return { data: { data: members, pagination: { hasMore: false, total: members.length } }, isLoading: false, error: null };
+  },
+  useAddGroupMembers: () => ({ mutate: addMembersMutate, isPending: false, isError: false }),
+  useRemoveGroupMember: () => ({ mutate: removeMemberMutate, isPending: false, isError: false }),
 }));
 vi.mock("@/hooks/useAdminAnalytics", () => ({
   useAdminUsers: (filters: unknown) => {
     usersQuery(filters);
-    return { data: { data: members, pagination: { hasMore: false, total: members.length } }, isLoading: false, error: null };
+    return { data: { data: people, pagination: { hasMore: false, total: people.length } }, isLoading: false, error: null };
   },
 }));
 
@@ -44,8 +54,12 @@ beforeEach(() => {
   updateMutate.mockClear();
   removeMutate.mockClear();
   usersQuery.mockClear();
+  membersQuery.mockClear();
+  addMembersMutate.mockClear();
+  removeMemberMutate.mockClear();
   removeError = null;
   members = [];
+  people = [];
 });
 
 function openGroup(name = "support") {
@@ -97,9 +111,7 @@ test("edits default permissions from the organization row", () => {
 
 test("the group dialog renames, edits permissions and lists members", () => {
   groupsResult = { data: { data: [group] }, isLoading: false, error: null };
-  members = [
-    { id: "u1", email: "ann@example.com", fullName: "Ann", role: "member", status: "active", lastLoginAt: null, createdAt: "2026-01-01T00:00:00Z" },
-  ];
+  members = [{ id: "u1", email: "ann@example.com", fullName: "Ann", role: "member", status: "active", source: "identity" }];
   render(<AdminGroupsPage />);
   const dialog = openGroup();
 
@@ -111,8 +123,65 @@ test("the group dialog renames, edits permissions and lists members", () => {
   expect(within(dialog).getByText("group-capability-editor:support")).toBeInTheDocument();
 
   fireEvent.click(within(dialog).getByRole("tab", { name: "Members" }));
-  expect(usersQuery).toHaveBeenLastCalledWith(expect.objectContaining({ groupId: "group-1" }));
+  expect(membersQuery).toHaveBeenLastCalledWith("group-1", expect.objectContaining({ limit: 25, offset: 0 }));
   expect(within(dialog).getByText("Ann")).toBeInTheDocument();
+});
+
+const member = (id: string, name: string, source: GroupMember["source"]): GroupMember => ({
+  id,
+  email: `${name.toLowerCase()}@example.com`,
+  fullName: name,
+  role: "member",
+  status: "active",
+  source,
+});
+
+test("members added here can be removed, synchronized ones are managed in Keycloak", () => {
+  groupsResult = { data: { data: [group] }, isLoading: false, error: null };
+  members = [member("u1", "Ann", "identity"), member("u2", "Bob", "manual")];
+  render(<AdminGroupsPage />);
+  const dialog = openGroup();
+  fireEvent.click(within(dialog).getByRole("tab", { name: "Members" }));
+
+  expect(within(dialog).getByText("Managed in Keycloak")).toBeInTheDocument();
+  expect(within(dialog).getByText("Added here")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: "Remove Ann from the group" })).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove Bob from the group" }));
+  expect(removeMemberMutate).toHaveBeenCalledWith({ groupId: "group-1", userId: "u2" });
+});
+
+test("adds the selected people to the group and skips those already in it", () => {
+  groupsResult = { data: { data: [group] }, isLoading: false, error: null };
+  members = [member("u1", "Ann", "identity")];
+  people = [
+    { id: "u1", email: "ann@example.com", fullName: "Ann", role: "member", status: "active", lastLoginAt: null, createdAt: "2026-01-01T00:00:00Z" },
+    { id: "u3", email: "cy@example.com", fullName: "Cy", role: "member", status: "active", lastLoginAt: null, createdAt: "2026-01-01T00:00:00Z" },
+  ];
+  render(<AdminGroupsPage />);
+  const dialog = openGroup();
+  fireEvent.click(within(dialog).getByRole("tab", { name: "Members" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Add people" }));
+
+  const picker = within(dialog).getByRole("region", { name: "Add people" });
+  fireEvent.change(within(picker).getByRole("searchbox"), { target: { value: " cy " } });
+  expect(usersQuery).toHaveBeenLastCalledWith(expect.objectContaining({ search: "cy" }));
+  expect(within(picker).getByRole("checkbox", { name: /Ann/ })).toBeDisabled();
+  expect(within(picker).getByRole("button", { name: "Add selected (0)" })).toBeDisabled();
+  fireEvent.click(within(picker).getByRole("checkbox", { name: /Cy/ }));
+  fireEvent.click(within(picker).getByRole("button", { name: "Add selected (1)" }));
+  expect(addMembersMutate).toHaveBeenCalledWith({ groupId: "group-1", userIds: ["u3"] }, expect.anything());
+});
+
+test("a read-only administrator sees members but cannot change them", () => {
+  adminAccess = { allowed: true, canWrite: false, error: null, isLoading: false };
+  groupsResult = { data: { data: [group] }, isLoading: false, error: null };
+  members = [member("u2", "Bob", "manual")];
+  render(<AdminGroupsPage />);
+  const dialog = openGroup();
+  fireEvent.click(within(dialog).getByRole("tab", { name: "Members" }));
+  expect(within(dialog).getByText("Bob")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: "Add people" })).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
 });
 
 test("confirms group deletion", () => {

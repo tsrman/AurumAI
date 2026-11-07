@@ -481,7 +481,7 @@
       },
       "admin_users_write": {
         "label": "Manage users",
-        "description": "Manage organization user settings outside Keycloak group membership."
+        "description": "Manage organization user settings and the people added to groups by hand."
       },
       "chat_send": {
         "label": "Send chat messages",
@@ -790,7 +790,7 @@
       "subtitle": "Everyone who has signed in to your organization, with their role and last activity.",
       "search": "Search by name or email",
       "count": "{count, plural, one {# user} other {# users}}",
-      "keycloakHint": "Accounts, roles and group membership are managed in Keycloak and appear here after the person signs in.",
+      "keycloakHint": "Accounts and roles are managed in Keycloak and appear here after the person signs in. Group membership comes from Keycloak too, and groups can also take people added by hand.",
       "loading": "Loading users...",
       "noMatches": "No users match the search",
       "empty": "No users yet",
@@ -856,11 +856,24 @@
         "delete": "Delete",
         "deleteConfirmTitle": "Delete the group?",
         "deleteConfirm": "“{group}” will be deleted and member access will change immediately.",
-        "membersHint": "Members are taken from the Keycloak group “{group}” each time a person signs in.",
+        "membersHint": "People from the Keycloak group “{group}” are added and removed at each sign-in. People you add here stay until you remove them here.",
         "membersLoading": "Loading members...",
         "membersEmpty": "No members yet.",
         "memberName": "User",
-        "memberRole": "Role"
+        "memberRole": "Role",
+        "memberSource": "Source",
+        "memberActions": "Actions",
+        "sourceManual": "Added here",
+        "managedInKeycloak": "Managed in Keycloak",
+        "remove": "Remove",
+        "removeAria": "Remove {user} from the group",
+        "addMembers": "Add people",
+        "addMembersClose": "Close",
+        "searchPeople": "Search people by name or email",
+        "noPeople": "Nobody found.",
+        "alreadyMember": "Already a member",
+        "adding": "Adding...",
+        "addSelected": "Add selected ({count})"
       }
     }
   },
