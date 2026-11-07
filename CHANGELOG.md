@@ -12,6 +12,16 @@
   from Keycloak remain managed in Keycloak. New endpoints:
   `GET/POST /v1/admin/groups/{id}/members` and `DELETE /v1/admin/groups/{id}/members/{userId}`.
 
+### Changed
+
+- **Dependencies moved to their current majors.** Node 24 LTS in the UI images and CI;
+  redis-py 8, mypy 2, uvicorn 0.54, structlog 26, sse-starlette 3, aioboto3 15, pyarrow 26
+  and pytest-cov 7 in the Python services; vitest 5, jsdom 30, jest-dom 7, mermaid 12,
+  lucide-react 1 and tailwind-merge 3 (the release for Tailwind 4) in the frontends. The
+  unused `zod` and `opensearch-py` dependencies are removed. pymilvus stays at 2.6.17: the
+  mutation transport is audited against that exact SDK and refuses any other version.
+  Dependabot is told to leave pymilvus, `node` and `@types/node` majors to us.
+
 ### Documentation
 
 - **Operator runbooks.** Four new pages under `docs/operations/`: secrets and credentials
