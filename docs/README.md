@@ -24,6 +24,10 @@ optional sandboxed agent (Hermes Agent). Start with the section for your role.
 - [Operations](guides/operations.md): health, upgrades, backups, troubleshooting.
 - [Configuration reference](CONFIGURATION.md): every setting.
 - [Air-gapped deployment](AIR_GAPPED.md).
+- Operator runbooks: [secrets and credentials](operations/secrets.md),
+  [backup and recovery](operations/backup-recovery.md),
+  [network enforcement](operations/network-enforcement.md) and
+  [changing models and providers](operations/model-changes.md).
 - [Data archive, export and restore](operations/data-archive.md).
 
 ## I integrate or review it

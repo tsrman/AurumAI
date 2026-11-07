@@ -287,11 +287,10 @@ passes it with `hermes.enabled`.
 ### Hermes sandbox egress
 
 `docker-compose.hermes.yml` (profile `hermes`) adds `hermes-egress`, the only way
-out of a Hermes sandbox. Sandboxes join `aurum-ai-hermes-sandbox`
-(`HERMES_SANDBOX_SUBNET`, default `172.31.250.0/24`), an internal network without
-NAT or external DNS where the egress guard is the only platform member. The backend
-never joins it. Sandboxes share this segment; sandbox isolation from one another
-arrives with the sandboxes themselves.
+out of a Hermes sandbox. Each sandbox runs on a network of its own, a `/28` carved from
+`HERMES_SANDBOX_POOL` (default `172.31.0.0/16`): an internal network without NAT or
+external DNS where the egress guard is the only platform member, so sandboxes cannot
+reach one another. The backend never joins it.
 
 - **Platform path.** `hermes-egress:8080` forwards exactly
   `POST /v1/hermes/chat/completions` and `POST /v1/hermes/mcp`, one request per

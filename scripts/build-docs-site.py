@@ -41,6 +41,10 @@ CURRENT = {
     "AIR_GAPPED.md": "guides/deployment.html",
     "guides/operations.md": "guides/operations.html",
     "operations/data-archive.md": "guides/operations.html",
+    "operations/secrets.md": "guides/operations.html",
+    "operations/backup-recovery.md": "guides/operations.html",
+    "operations/network-enforcement.md": "guides/operations.html",
+    "operations/model-changes.md": "guides/operations.html",
     "reference/api.md": "reference/api.html",
     "reference/security.md": "reference/security.html",
 }

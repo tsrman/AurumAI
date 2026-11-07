@@ -85,7 +85,8 @@ docker compose exec backend python -m src.cli.provision_org --all --apply
 ![Models page: defaults and image settings](../assets/screenshots/admin-models.png)
 
 **Models** lists what the gateway publishes. The status bar says whether the gateway
-is reachable.
+is reachable. When the gateway adds, renames or removes a model, follow
+[changing models and providers](../operations/model-changes.md).
 
 - **Defaults.** The default model offered to users who have not chosen one, and the
   default temperature for agents that inherit the organization's value (unset means

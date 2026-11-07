@@ -49,6 +49,8 @@ operator. The deployment-specific procedures are in
   policy; they are off by default.
 - Browser-facing ports bind to loopback unless you change `PUBLIC_BIND_ADDRESS`.
   Docker-published ports bypass host firewalls, so publish through the proxy overlay.
+- Each feature that reaches outside has one enforced way out; the map and the checks are
+  in [network enforcement](../operations/network-enforcement.md).
 - Internal service routes (`/v1/internal/*`) require service credentials and are not
   meant to be reachable from browsers.
 
