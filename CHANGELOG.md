@@ -7,6 +7,9 @@
 - **keycloak-js 26 and TypeScript 6** in the Admin and chat apps (TypeScript 6 also in the repository
   scripts). Sign-in was verified against Keycloak 26.7. ESLint stays on 9 until `eslint-config-next`
   supports 10; Dependabot ignores it.
+- **MCP SDK 2** in the backend and the tool worker. Tool discovery reads the SDK's renamed
+  `input_schema`, tool-call results keep their `isError` and `structuredContent` keys, and the Hermes
+  bridge endpoint now pins the MCP protocol revisions it implements instead of reading them from the SDK.
 
 ## v0.0.7 (2026-11-07)
 
