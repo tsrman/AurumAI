@@ -16,8 +16,6 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
-from mcp.types import LATEST_PROTOCOL_VERSION
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import UserInfo
@@ -32,6 +30,11 @@ router = APIRouter(dependencies=[Depends(require_hermes_enabled)])
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_BYTES = 1024 * 1024
+# The protocol revisions this hand-written endpoint implements (oldest first). The
+# endpoint answers `initialize` with the client's revision when listed and with the
+# newest listed one otherwise. They are pinned here, not read from the MCP SDK, so an
+# SDK upgrade cannot change what the endpoint promises.
+_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 _SERVER_INFO = {"name": "aurum-ai", "version": "1"}
 _INSTRUCTIONS = (
     "AurumAI platform tools for this conversation. Results from searches and "
@@ -104,7 +107,7 @@ async def hermes_mcp(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": exc.code}) from None
     if method == "initialize":
         requested = params.get("protocolVersion")
-        version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else LATEST_PROTOCOL_VERSION
+        version = requested if requested in _PROTOCOL_VERSIONS else _PROTOCOL_VERSIONS[-1]
         result: dict[str, Any] = {
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},

@@ -9,7 +9,7 @@ def _make_tool(name: str, description: str, input_schema: dict) -> MagicMock:
     tool = MagicMock()
     tool.name = name
     tool.description = description
-    tool.inputSchema = input_schema
+    tool.input_schema = input_schema
     return tool
 
 
@@ -112,3 +112,13 @@ async def test_discover_mcp_tools_raises_when_sdk_not_installed():
     with patch("builtins.__import__", side_effect=_raise_import_error):
         with pytest.raises(McpDiscoveryError, match="MCP SDK not available"):
             await discover_mcp_tools("http://mcp-everything:3001/sse")
+
+
+def test_the_sdk_tool_type_exposes_the_schema_under_the_name_discovery_reads():
+    # Pins the SDK contract the MagicMock-based tests above cannot: a real tool
+    # object, as `list_tools()` returns it.
+    from mcp.types import Tool
+
+    tool = Tool(name="echo", input_schema={"type": "object", "properties": {"m": {}}})
+
+    assert tool.input_schema == {"type": "object", "properties": {"m": {}}}
