@@ -61,7 +61,7 @@ describe("AgentWizard", () => {
   it("walks a new simple agent through its steps and creates it on the last one", () => {
     renderWizard(STATE);
 
-    expect(screen.getByRole("radio", { name: /^Agent / })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Agent/ })).toBeChecked();
     expect(screen.getByRole("button", { name: /4\. Tools and knowledge/ })).toBeDisabled();
     next();
     expect(screen.getByLabelText(/Agent name/i)).toBeInTheDocument();
