@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, JSON, Numeric, String, Text, ForeignKeyConstraint
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, JSON, Numeric, String, Text, ForeignKeyConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -16,6 +16,14 @@ class Conversation(OrgScopedModel):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True, server_default=func.now())
     __table_args__ = (
         ForeignKeyConstraint(["org_id", "id", "created_at"], ["conversation_identities.org_id", "conversation_identities.id", "conversation_identities.created_at"], ondelete="CASCADE"),
+        # The sidebar list: one person's conversations, newest activity first.
+        Index(
+            "ix_conversations_user_activity",
+            "org_id",
+            "user_id",
+            text("(COALESCE(last_message_at, created_at)) DESC"),
+            text("id DESC"),
+        ),
         {"postgresql_partition_by": "RANGE(created_at)"},
     )
 

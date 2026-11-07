@@ -25,6 +25,10 @@ from src.services.organization_provisioning import organization_provisioning_ser
 # get_service_db_session and never reach it). Coarsened so an active user
 # costs at most one extra UPDATE per interval instead of one per request.
 LAST_LOGIN_REFRESH_INTERVAL = timedelta(minutes=15)
+# This sync runs on every authenticated request and every member of a group shares
+# its row: rewriting the timestamp each time would make them queue on one lock. The
+# timestamp only says when a group was last seen in a claim, so it may lag by this much.
+GROUP_SYNC_REFRESH_INTERVAL = timedelta(minutes=15)
 
 
 class AuthService:
@@ -179,7 +183,11 @@ class AuthService:
                     group = result.scalar_one()
                 existing[name] = group
             for group in existing.values():
-                group.last_synced_at = now
+                if (
+                    group.last_synced_at is None
+                    or now - group.last_synced_at >= GROUP_SYNC_REFRESH_INTERVAL
+                ):
+                    group.last_synced_at = now
             await session.flush()
             desired_ids = {group.id for group in existing.values()}
 
@@ -200,6 +208,14 @@ class AuthService:
 
         if not commit:
             await session.flush()
+            return user
+        if not (
+            session.new
+            or session.deleted
+            or any(session.is_modified(obj) for obj in session.dirty)
+        ):
+            # Nothing changed (the usual case once a person is signed in): no write,
+            # no commit, no refresh. The caller ends the transaction.
             return user
         await session.commit()
         # This commit+refresh is exactly the sequence that used to crash
