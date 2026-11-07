@@ -71,6 +71,10 @@ updates:
       # Unsupported by typescript-eslint; the language check needs the JS API.
       - dependency-name: "typescript"
         versions: [">=7"]
+      # eslint-config-next 16 bundles eslint-plugin-react, -import and -jsx-a11y,
+      # none of which declare support for ESLint 10 yet.
+      - dependency-name: "eslint"
+        versions: [">=10"]
       # Changes the hook signatures used by business-ui/src/lib/api.ts.
       - dependency-name: "ky"
         versions: [">=2"]
