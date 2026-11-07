@@ -19,7 +19,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "katex": "^0.19.1",
-    "keycloak-js": "^25.0.0",
+    "keycloak-js": "^26.2.5",
     "ky": "^1.7.0",
     "lucide-react": "^1.70.0",
     "mermaid": "^12.3.0",
