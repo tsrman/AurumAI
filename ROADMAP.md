@@ -93,9 +93,11 @@ Provider/Kubernetes/long-deadline gates below remain separate from the release.
   enforcement and backup/recovery are written ([operations](docs/guides/operations.md));
   a restore on your own hosts and versions, and deployment-specific accounts, certificates
   and credentials, remain the operator's to rehearse and supply.
-- Removal of remaining upstream development-tool advisories when patches are available,
-  and the major dependency upgrades Dependabot proposes (Node 26, zod 4, vitest 5,
-  redis 8, mypy 2 and others) once each is migrated and tested.
+- Removal of remaining upstream development-tool advisories when patches are available.
+  The major dependency upgrades are done (Node 24, vitest 5, redis 8, mypy 2, mermaid 12
+  and others) except two: pymilvus 3, which needs the Milvus mutation transport
+  re-audited against the new SDK (it is pinned to 2.6.17 on purpose), and the move from
+  Node 24 to the Node 26 LTS.
 
 Default-off features stay gated until their prerequisites and enforcement checks
 are satisfied. A historical acceptance pass does not automatically close a fresh
