@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- **keycloak-js 26 and TypeScript 6** in the Admin and chat apps (TypeScript 6 also in the repository
+  scripts). Sign-in was verified against Keycloak 26.7. ESLint stays on 9 until `eslint-config-next`
+  supports 10; Dependabot ignores it.
+
 ## v0.0.7 (2026-11-07)
 
 Group membership editing in the Admin UI, operator runbooks, documentation publishing by CI and a pass over the dependencies.
