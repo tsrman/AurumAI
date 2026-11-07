@@ -102,7 +102,7 @@ class Publisher:
 
     async def publish(self, org_id: str, conversation_id: str, payload: dict[str, Any]) -> None:
         if self._client is None:
-            self._client = redis.from_url(settings.redis_url)  # type: ignore[no-untyped-call]
+            self._client = redis.from_url(settings.redis_url)
         try:
             await self._client.publish(f"{org_id}:session:{conversation_id}:events", json.dumps(payload))
         except redis_exceptions.RedisError:

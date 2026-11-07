@@ -61,12 +61,18 @@ _T = TypeVar("_T")
 WaitGuard = Callable[[str | None, str], Awaitable[bool]]
 
 
-async def _redis(call: Awaitable[_T] | _T) -> _T:
-    """redis-py types hash/list commands as `Awaitable[T] | T` because the
-    same command mixin backs both the sync and async clients — mypy can't
-    know redis_client.client is always the async one. The cast is a runtime
-    no-op; it just tells mypy the awaitable branch is the real one."""
-    return await cast(Awaitable[_T], call)
+async def _redis(call: Awaitable[_T]) -> _T:
+    """Await a redis-py command from the async client.
+
+    redis-py types some commands as `T | Awaitable[T]` because one mixin backs
+    both the sync and the async clients; where the checker still sees the union,
+    the call site is wrapped in `cast(Awaitable[...])`."""
+    return await call
+
+
+def _text(value: bytes | str) -> str:
+    """The Redis client decodes responses; redis-py 8 still types them as bytes | str."""
+    return value.decode() if isinstance(value, bytes) else value
 
 
 def _kubernetes_cleanup_lease_margin() -> float:
@@ -625,7 +631,7 @@ class SessionManager:
             except Exception:
                 keep = False
             if not keep:
-                await _redis(redis_client.client.lrem(POOL_REDIS_KEY, 1, raw))
+                await _redis(redis_client.client.lrem(POOL_REDIS_KEY, 1, _text(raw)))
                 removed += 1
         if removed:
             logger.info("cleanup_stale_pool removed %d stale pool entries", removed)
@@ -697,7 +703,8 @@ class SessionManager:
         removed = 0
         # The hash key is session_field ("{org_id}:{conversation_id}"), not a
         # bare conversation_id; the variable name reflects that distinction.
-        for field, data_str in all_entries.items():
+        for raw_field, data_str in all_entries.items():
+            field = _text(raw_field)
             data = self._decode_record(data_str)
             if data is None:
                 await _redis(redis_client.client.hdel("session_containers", field))
@@ -881,7 +888,8 @@ class SessionManager:
             return 0
 
         reaped = 0
-        for field, data_str in all_entries.items():
+        for raw_field, data_str in all_entries.items():
+            field = _text(raw_field)
             data = self._decode_record(data_str)
             if data is None:
                 await _redis(redis_client.client.hdel("session_containers", field))

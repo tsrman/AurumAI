@@ -15,10 +15,7 @@ class RedisCache:
         return self._client
 
     async def connect(self) -> None:
-        # redis-py's from_url classmethod itself has no return type annotation
-        # (upstream gap, not ours) — mypy flags the call as untyped regardless
-        # of the assignment target's declared type.
-        self._client = redis.from_url(  # type: ignore[no-untyped-call]
+        self._client = redis.from_url(
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True,
@@ -58,7 +55,7 @@ class RedisCache:
     async def incr(self, key: str) -> int:
         if not self._client:
             raise RuntimeError("Redis not connected")
-        return cast(int, await self._client.incr(key))
+        return await self._client.incr(key)
 
     async def expire(self, key: str, seconds: int) -> None:
         if not self._client:

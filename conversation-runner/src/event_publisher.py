@@ -27,10 +27,7 @@ class EventPublisher:
     @property
     def client(self) -> redis.Redis:
         if self._client is None:
-            # redis-py's from_url classmethod itself has no return type
-            # annotation (upstream gap, not ours) — mypy flags the call as
-            # untyped regardless of the assignment target's declared type.
-            self._client = redis.from_url(settings.redis_url)  # type: ignore[no-untyped-call]
+            self._client = redis.from_url(settings.redis_url)
         return self._client
 
     async def publish(self, event_type: str, data: dict[str, Any]) -> None:
