@@ -16,6 +16,7 @@ from src.core.auth import UserInfo, get_current_user
 from src.core.authorization_dependencies import authorization_subject
 from src.core.config import settings
 from src.core.dependencies import get_org_db_session
+from src.core.database import async_session
 from src.core.events import event_bus
 from src.schemas.common import ApiResponse, Meta
 from src.schemas.interaction import TurnSnapshot
@@ -164,15 +165,24 @@ async def get_turn_events(
         await pubsub.aclose()  # type: ignore[no-untyped-call]
         raise _not_found() from exc
 
+    # End the request's read transaction before streaming. Its session would otherwise
+    # keep a pooled connection "idle in transaction" until the stream closes, up to
+    # EVENT_SUBSCRIBE_TIMEOUT: one open stream per active chat would exhaust the pool.
+    await session.rollback()
+
     async def load_snapshot() -> TurnSnapshot:
-        try:
-            return await interaction_service.get_turn_snapshot(
-                session, subject, conversation_id, turn_id
-            )
-        except InteractionNotFound as exc:
-            # An exact turn row cannot disappear without its owned conversation;
-            # close the stream rather than retargeting another active turn.
-            raise _not_found() from exc
+        # A short-lived session per reload: the connection returns to the pool as soon
+        # as the snapshot is read, never held across the wait for the next hint.
+        async with async_session() as fresh:
+            fresh.info["org_id"] = user.org_id
+            try:
+                return await interaction_service.get_turn_snapshot(
+                    fresh, subject, conversation_id, turn_id
+                )
+            except InteractionNotFound as exc:
+                # An exact turn row cannot disappear without its owned conversation;
+                # close the stream rather than retargeting another active turn.
+                raise _not_found() from exc
 
     notifications = event_bus.listen(
         pubsub,

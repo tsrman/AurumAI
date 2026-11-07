@@ -4,6 +4,14 @@
 
 ### Performance
 
+- **An open chat no longer holds a database connection.** The turn event stream
+  (`GET /v1/conversations/{id}/turns/{id}/events`) kept the request's session, and so a pooled
+  connection "idle in transaction", for as long as the stream was open, up to two minutes. One
+  stream per active chat exhausted the 60-connection pool of a process. The stream now ends the
+  request's transaction before it starts and reads each later snapshot with a short-lived session.
+- **The connection pool is configurable.** `APP_DB_POOL_SIZE`, `APP_DB_MAX_OVERFLOW` and
+  `APP_DB_POOL_TIMEOUT` (defaults unchanged: 20, 40 and 30 seconds); the operations guide now has the
+  connection budget and how to see who holds connections.
 - **The conversation list no longer reads every conversation.** The sidebar's query (one person's
   conversations, newest activity first) had no index starting with `(org_id, user_id)`, so it scanned
   every partition: 34 ms with 300 000 conversations and growing with them. The new index
