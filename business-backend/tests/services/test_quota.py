@@ -966,3 +966,138 @@ async def test_cancel_retries_transient_database_failures() -> None:
 
     assert failing_factory.attempts == 3
     assert snapshot.org_requests_used == 0
+
+
+class _StatementLog:
+    """The SQL one block of code sends, in order, for asserting how long a row is held."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    def __enter__(self) -> "_StatementLog":
+        from sqlalchemy import event
+        from sqlalchemy.engine import Engine
+
+        def record(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            self.statements.append(" ".join(statement.split()))
+
+        self._record = record
+        event.listen(Engine, "before_cursor_execute", record)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        from sqlalchemy import event
+        from sqlalchemy.engine import Engine
+
+        event.remove(Engine, "before_cursor_execute", self._record)
+
+    def touching_counter(self) -> list[str]:
+        return [s for s in self.statements if "organization_usage_monthly" in s]
+
+
+@pytest.mark.asyncio
+async def test_reserve_and_complete_hold_the_counter_row_only_for_their_last_statement() -> None:
+    """Everyone in an organization shares one counter row. A transaction that locks it
+    first and then keeps working holds the whole organization back, so the row is
+    touched last, by a single statement, and never read with FOR UPDATE."""
+    now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    async with quota_identity(request_limit=100) as identity:
+        request_id = uuid.uuid4()
+        with _StatementLog() as log:
+            await identity.service.reserve(
+                identity.org_id, identity.user_id, None, "gpt-test", request_id, now=now
+            )
+        reserve_sql = log.statements
+        await identity.service.accept(identity.org_id, request_id, now=now)
+        with _StatementLog() as log:
+            await identity.service.complete(identity.org_id, request_id, 1, 2, 3, now=now)
+        complete_sql = log.statements
+
+    for sql in (reserve_sql, complete_sql):
+        assert not [s for s in log_counter(sql) if "FOR UPDATE" in s]
+        body = [s for s in sql if not s.startswith(("BEGIN", "COMMIT", "ROLLBACK", "SET LOCAL"))]
+        assert body[-1].startswith("UPDATE organization_usage_monthly"), body[-1]
+
+
+def log_counter(statements: list[str]) -> list[str]:
+    return [s for s in statements if "organization_usage_monthly" in s]
+
+
+@pytest.mark.asyncio
+async def test_quota_transactions_do_not_wait_for_a_disk_flush() -> None:
+    """Commit latency is held under the counter row's lock. A quota transaction is
+    atomic either way; it just may lose the last fraction of a second of counts if
+    PostgreSQL itself crashes, which is acceptable for a usage counter."""
+    now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    async with quota_identity(request_limit=100) as identity:
+        request_id = uuid.uuid4()
+        with _StatementLog() as log:
+            await identity.service.reserve(
+                identity.org_id, identity.user_id, None, "gpt-test", request_id, now=now
+            )
+            await identity.service.accept(identity.org_id, request_id, now=now)
+            await identity.service.complete(identity.org_id, request_id, 1, 2, 3, now=now)
+            cancelled = uuid.uuid4()
+            await identity.service.reserve(
+                identity.org_id, identity.user_id, None, "gpt-test", cancelled, now=now
+            )
+            await identity.service.cancel(identity.org_id, cancelled)
+
+    relaxed = [s for s in log.statements if "synchronous_commit" in s]
+    # reserve, accept, complete, reserve, cancel
+    assert len(relaxed) >= 5
+
+
+@pytest.mark.asyncio
+async def test_many_concurrent_reservations_never_exceed_the_limit() -> None:
+    """The limit stays exact although the counter row is locked only briefly: with room for
+    five requests, twenty racing reservations let exactly five through."""
+    now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    async with quota_identity(request_limit=5) as identity:
+        results = await asyncio.gather(
+            *(
+                identity.service.reserve(
+                    identity.org_id, identity.user_id, None, "gpt-test", uuid.uuid4(), now=now
+                )
+                for _ in range(20)
+            ),
+            return_exceptions=True,
+        )
+        snapshot = await identity.service.snapshot(identity.org_id, identity.user_id, now=now)
+        async with identity.session_factory() as session:
+            event_count = await session.scalar(
+                select(func.count(LLMUsageEvent.id)).where(
+                    LLMUsageEvent.org_id == identity.org_id
+                )
+            )
+
+    assert sum(not isinstance(r, Exception) for r in results) == 5
+    assert all(isinstance(r, QuotaExceededError) for r in results if isinstance(r, Exception))
+    assert snapshot.org_requests_used == 5
+    assert event_count == 5
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_frees_a_slot_that_a_racing_reserve_can_then_use() -> None:
+    now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    async with quota_identity(request_limit=1) as identity:
+        first = uuid.uuid4()
+        await identity.service.reserve(
+            identity.org_id, identity.user_id, None, "gpt-test", first, now=now
+        )
+        results = await asyncio.gather(
+            identity.service.cancel(identity.org_id, first),
+            identity.service.reserve(
+                identity.org_id, identity.user_id, None, "gpt-test", uuid.uuid4(), now=now
+            ),
+            return_exceptions=True,
+        )
+        snapshot = await identity.service.snapshot(identity.org_id, identity.user_id, now=now)
+
+    # Either order is legal: the reserve ran before the cancel (over the limit) or after it.
+    reserve_result = results[1]
+    if isinstance(reserve_result, Exception):
+        assert isinstance(reserve_result, QuotaExceededError)
+        assert snapshot.org_requests_used == 0
+    else:
+        assert snapshot.org_requests_used == 1
