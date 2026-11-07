@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.0.8 (2026-11-08)
+
+A database pass for many simultaneous users (two migrations, `20261110` and `20261111`) and the keycloak-js, TypeScript and MCP SDK major upgrades.
 
 ### Performance
 
