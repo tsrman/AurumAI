@@ -30,6 +30,19 @@ Keep `/metrics` off the public internet; scrape it from inside the network.
 
 Never publish a complete environment dump or a browser trace that contains tokens.
 
+### Audit and usage durability
+
+Mutating API requests wait for their audit write before returning the HTTP response.
+Audit records are not left in detached process tasks. A database failure is logged as
+`audit_log_write_failed`; it does not change the outcome of a business mutation that may
+already have committed. Audit and business writes are separate transactions, so audit-storage
+failures still need operator attention.
+
+Quota reservations, acceptance, completion and cancellation preserve PostgreSQL's configured
+commit durability. Keep `synchronous_commit=on` for durable usage acknowledgement; the application
+does not override it for faster counters. Atomic quota updates still minimize the aggregate
+row's lock scope, and repeated request identities are counted once.
+
 ## Upgrades
 
 1. Read the release notes and the [changelog](https://github.com/tsrman/AurumAI/blob/main/CHANGELOG.md) for migrations and new
@@ -105,12 +118,21 @@ The [configuration reference](../CONFIGURATION.md) has every setting.
 
 ## Database connections
 
-Every API process may hold `APP_DB_POOL_SIZE + APP_DB_MAX_OVERFLOW` connections (20 + 40 by
-default), and PostgreSQL refuses new ones beyond `max_connections` (100 by default). The budget
-is the sum over everything that connects:
+Compose passes `APP_DB_POOL_SIZE`, `APP_DB_MAX_OVERFLOW` and `APP_DB_POOL_TIMEOUT` from the
+root `.env` into both API containers. Recreate the APIs after changing them; if Hermes is enabled,
+follow its [guard restart procedure](hermes-agent.md#troubleshooting) after recreating the backend.
+Helm configures each API independently with `backend.databasePool` and `backendAdmin.databasePool`:
+`size` (20), `maxOverflow` (40, including zero) and `timeout` (30 seconds). Every worker and replica
+multiplies these values in the connection budget below.
+
+Every API process may hold `APP_DB_POOL_SIZE + APP_DB_MAX_OVERFLOW` request connections (20 + 40
+by default), plus one dedicated audit connection. Audit persistence does not compete with
+connections held by request dependencies. Its pool has no overflow and uses `APP_DB_POOL_TIMEOUT`.
+PostgreSQL refuses new connections beyond `max_connections` (100 by default). The budget is
+the sum over everything that connects:
 
 ```
-replicas x processes x (pool size + overflow)  +  RAG services  +  Temporal  +  Keycloak  +  Langfuse  <=  max_connections
+replicas x processes x (pool size + overflow + 1 audit)  +  RAG services  +  Temporal  +  Keycloak  +  Langfuse  <=  max_connections
 ```
 
 On the Compose stack Temporal alone holds about 30, so the stack starts PostgreSQL with

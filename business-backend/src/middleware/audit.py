@@ -1,13 +1,27 @@
-import asyncio
 import uuid
 
 from fastapi import Request, Response
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from src.core.database import async_session
+from src.core.config import settings
 from src.core.logging import logger
 from src.middleware.rate_limit import _rate_limit_identity
+
+# Request-scoped dependencies may retain their connections until the response
+# body is sent. Awaited audit writes must not wait for that same pool to drain.
+audit_engine = create_async_engine(
+    settings.DATABASE_URL,
+    pool_size=1,
+    max_overflow=0,
+    pool_timeout=settings.DB_POOL_TIMEOUT,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=settings.DEBUG,
+    hide_parameters=settings.IDENTITY_SYNC_ENABLED,
+)
+async_session = async_sessionmaker(audit_engine, expire_on_commit=False)
 
 # Reads are not logged here: this journal tracks who changed what.
 # Frequent GET requests would drown out useful mutation records.
@@ -18,19 +32,6 @@ _AUDITED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # connection, and the preview service every browser connection, and each
 # keeps its own journal of them.
 _SKIPPED_PREFIXES = ("/v1/auth/", "/v1/internal/hermes/egress/", "/v1/internal/hermes/previews/check")
-
-
-# Audit rows are written after the response, not before it. At most this many writes are in
-# flight; past that, the request waits for its own write rather than dropping the row, so a
-# slow database slows requests down instead of piling up tasks or losing audit records.
-_MAX_PENDING = 200
-_pending: set[asyncio.Task[None]] = set()
-
-
-async def drain_pending_audit() -> None:
-    """Wait for the audit writes still in flight (shutdown, and tests)."""
-    while _pending:
-        await asyncio.gather(*list(_pending), return_exceptions=True)
 
 
 def _route_template(request: Request) -> str:
@@ -51,10 +52,10 @@ def _route_template(request: Request) -> str:
 class AuditMiddleware(BaseHTTPMiddleware):
     """Write an audit_logs row for each mutating request.
 
-    Record after responding without changing the response: the write runs as a
-    background task, so the client never waits for a second pooled connection, an
-    INSERT and a commit. Audit failure must not fail the user request, but must
-    remain visible in application logs.
+    Wait for the audit write before returning the response, so acknowledged
+    mutations do not leave their audit records in detached process tasks.
+    A storage failure remains visible in application logs without changing the
+    result of a business mutation that may already have committed.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -67,12 +68,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith(_SKIPPED_PREFIXES):
             return response
 
-        if len(_pending) >= _MAX_PENDING:
-            await self._record_logged(request, response.status_code)
-            return response
-        task = asyncio.create_task(self._record_logged(request, response.status_code))
-        _pending.add(task)
-        task.add_done_callback(_pending.discard)
+        await self._record_logged(request, response.status_code)
         return response
 
     async def _record_logged(self, request: Request, status_code: int) -> None:

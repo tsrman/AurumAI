@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Hermes agents with selected skills now hydrate only their selected, currently accessible code
+  skills. Hydration requires the live bound session and checks the agent's current grant and archive state.
+- An agent with its own Hermes model can be selected and run when the organization's default model
+  is unset or unavailable to the user; access to the agent's actual model is still required.
+- Both API planes receive database pool settings in Compose and Helm, including zero overflow and
+  independent Helm overrides for the business and admin APIs.
+- Concurrent quota reservations with the same request ID count once; conflicting attribution is
+  rejected without leaking another tenant's event or raising a database uniqueness error.
+
+### Reliability
+
+- Usage transactions preserve PostgreSQL's configured commit durability instead of switching
+  `synchronous_commit` off. Atomic counter updates and short aggregate lock scopes are retained.
+- Mutating HTTP requests wait for their audit write before returning the response. Audit storage
+  errors remain logged without changing the outcome of a business mutation that may already have
+  committed; detached audit tasks are no longer used.
+
 ## v0.0.8 (2026-11-08)
 
 A database pass for many simultaneous users (two migrations, `20261110` and `20261111`) and the keycloak-js, TypeScript and MCP SDK major upgrades.

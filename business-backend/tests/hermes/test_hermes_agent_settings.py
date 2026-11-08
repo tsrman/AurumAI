@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 
 from src.core.capability_catalog import Capability
 from src.core.config import settings
+from src.models.access_grant import AccessGrant
 from src.models.agent_definition import AgentDefinition
 from src.models.conversation import Conversation
 from src.models.interaction import InteractionExecution
@@ -48,6 +49,17 @@ async def _agent(env, *, chat: bool = True, **values: Any) -> uuid.UUID:  # noqa
             )
         )
         await db.flush()
+        db.add(
+            AccessGrant(
+                org_id=env.org_id,
+                resource_type="agent_definition",
+                resource_id=str(agent_id),
+                principal_type="user",
+                principal_id=env.user_id,
+                permission="read",
+                created_via="provisioning",
+            )
+        )
         if chat:
             conversation = await db.scalar(select(Conversation).where(Conversation.id == env.conversation_id))
             conversation.hermes_agent_definition_id = agent_id

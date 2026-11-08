@@ -7,12 +7,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from src.core.config import settings
+from src.core.database import _AppSession
 from src.models.llm_usage import LLMUsageEvent, OrganizationUsageMonthly
 from src.models.agent_definition import AgentDefinition
 from src.models.conversation import Conversation
@@ -22,7 +24,12 @@ from src.models.user import User
 from src.models.workflow_definition import WorkflowDefinition
 from src.models.workflow_run import WorkflowRun
 from src.models.llm_usage import UsageEventKind
-from src.services.quota import QuotaExceededError, QuotaInvariantError, QuotaService
+from src.services.quota import (
+    QuotaExceededError,
+    QuotaInvariantError,
+    QuotaService,
+    UsageReservation,
+)
 
 
 @dataclass(frozen=True)
@@ -346,6 +353,141 @@ async def test_reserve_is_idempotent_but_rejects_conflicting_attribution() -> No
 
     assert repeated == first
     assert snapshot.org_requests_used == 1
+
+
+async def _wait_for_blocked_quota_calls(
+    identity: QuotaIdentity, application_name: str, count: int
+) -> None:
+    async def wait() -> None:
+        async with identity.session_factory() as session:
+            while True:
+                blocked = await session.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity "
+                        "WHERE datname = current_database() "
+                        "AND application_name = :application_name "
+                        "AND wait_event_type = 'Lock'"
+                    ),
+                    {"application_name": application_name},
+                )
+                if blocked == count:
+                    return
+                await session.rollback()
+                await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(wait(), timeout=10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_role", [False, True], ids=["owner", "rls"])
+@pytest.mark.parametrize(
+    "second_model", ["gpt-test", "different-model"], ids=["duplicate", "conflict"]
+)
+async def test_concurrent_request_id_counts_once_and_validates_attribution(
+    runtime_role: bool, second_model: str
+) -> None:
+    now = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    request_id = uuid.uuid4()
+    application_name = f"quota-race-{uuid.uuid4()}"
+    server_settings = {"application_name": application_name}
+    if runtime_role:
+        server_settings["role"] = "aurum_ai_app"
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        poolclass=NullPool,
+        connect_args={"server_settings": server_settings},
+    )
+    sessions = async_sessionmaker(
+        engine, sync_session_class=_AppSession, expire_on_commit=False
+    )
+    service = QuotaService(sessions)
+    try:
+        async with quota_identity(request_limit=1) as identity:
+            async with identity.session_factory() as session:
+                session.add(
+                    OrganizationUsageMonthly(
+                        org_id=identity.org_id, period_start=now.date().replace(day=1)
+                    )
+                )
+                await session.commit()
+
+            tasks: list[asyncio.Task[UsageReservation]] = []
+            try:
+                async with identity.session_factory() as blocker, blocker.begin():
+                    await blocker.execute(
+                        select(OrganizationUsageMonthly)
+                        .where(OrganizationUsageMonthly.org_id == identity.org_id)
+                        .with_for_update()
+                    )
+                    # The first event is uncommitted while its counter update waits.
+                    # The second call must resolve that same identity after commit.
+                    for blocked, model in enumerate(["gpt-test", second_model], start=1):
+                        tasks.append(
+                            asyncio.create_task(
+                                service.reserve(
+                                    identity.org_id,
+                                    identity.user_id,
+                                    None,
+                                    model,
+                                    request_id,
+                                    now=now,
+                                )
+                            )
+                        )
+                        await _wait_for_blocked_quota_calls(
+                            identity, application_name, blocked
+                        )
+            finally:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            snapshot = await service.snapshot(identity.org_id, identity.user_id, now=now)
+            async with identity.session_factory() as session:
+                count = await session.scalar(
+                    select(func.count(LLMUsageEvent.id)).where(
+                        LLMUsageEvent.org_id == identity.org_id
+                    )
+                )
+
+        assert isinstance(results[0], UsageReservation)
+        if second_model == "gpt-test":
+            assert results[1] == results[0]
+        else:
+            assert isinstance(results[1], QuotaInvariantError)
+        assert count == 1
+        assert snapshot.org_requests_used == 1
+        assert snapshot.user_requests_used == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_request_id_owned_by_another_org_is_rejected_under_rls() -> None:
+    request_id = uuid.uuid4()
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        poolclass=NullPool,
+        connect_args={"server_settings": {"role": "aurum_ai_app"}},
+    )
+    sessions = async_sessionmaker(
+        engine, sync_session_class=_AppSession, expire_on_commit=False
+    )
+    service = QuotaService(sessions)
+    try:
+        async with quota_identity() as first, quota_identity() as second:
+            await service.reserve(
+                first.org_id, first.user_id, None, "gpt-test", request_id
+            )
+            with pytest.raises(QuotaInvariantError):
+                await service.reserve(
+                    second.org_id, second.user_id, None, "gpt-test", request_id
+                )
+            first_snapshot = await service.snapshot(first.org_id, first.user_id)
+            second_snapshot = await service.snapshot(second.org_id, second.user_id)
+
+        assert first_snapshot.org_requests_used == 1
+        assert second_snapshot.org_requests_used == 0
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -1024,28 +1166,55 @@ def log_counter(statements: list[str]) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_quota_transactions_do_not_wait_for_a_disk_flush() -> None:
-    """Commit latency is held under the counter row's lock. A quota transaction is
-    atomic either way; it just may lose the last fraction of a second of counts if
-    PostgreSQL itself crashes, which is acceptable for a usage counter."""
+@pytest.mark.parametrize("operation", ["reserve", "accept", "complete", "cancel", "reclaim"])
+async def test_usage_acknowledgements_keep_synchronous_commits(operation: str) -> None:
+    """Read the real transaction setting immediately before its commit."""
     now = datetime(2026, 8, 15, tzinfo=timezone.utc)
-    async with quota_identity(request_limit=100) as identity:
-        request_id = uuid.uuid4()
-        with _StatementLog() as log:
-            await identity.service.reserve(
-                identity.org_id, identity.user_id, None, "gpt-test", request_id, now=now
-            )
-            await identity.service.accept(identity.org_id, request_id, now=now)
-            await identity.service.complete(identity.org_id, request_id, 1, 2, 3, now=now)
-            cancelled = uuid.uuid4()
-            await identity.service.reserve(
-                identity.org_id, identity.user_id, None, "gpt-test", cancelled, now=now
-            )
-            await identity.service.cancel(identity.org_id, cancelled)
+    observed_settings: list[str] = []
 
-    relaxed = [s for s in log.statements if "synchronous_commit" in s]
-    # reserve, accept, complete, reserve, cancel
-    assert len(relaxed) >= 5
+    class ObservedSession(Session):
+        pass
+
+    @event.listens_for(ObservedSession, "before_commit")
+    def observe_commit(session: Session) -> None:
+        observed_settings.append(session.scalar(text("SHOW synchronous_commit")))
+
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        poolclass=NullPool,
+        connect_args={"server_settings": {"synchronous_commit": "on"}},
+    )
+    sessions = async_sessionmaker(
+        engine, sync_session_class=ObservedSession, expire_on_commit=False
+    )
+    service = QuotaService(sessions)
+    try:
+        async with quota_identity(request_limit=100) as identity:
+            request_id = uuid.uuid4()
+            if operation != "reserve":
+                await identity.service.reserve(
+                    identity.org_id, identity.user_id, None, "gpt-test", request_id, now=now
+                )
+            if operation == "complete":
+                await identity.service.accept(identity.org_id, request_id, now=now)
+                await service.complete(identity.org_id, request_id, 1, 2, 3, now=now)
+            elif operation == "accept":
+                await service.accept(identity.org_id, request_id, now=now)
+            elif operation == "cancel":
+                await service.cancel(identity.org_id, request_id)
+            elif operation == "reclaim":
+                await _backdate_reservation(identity, request_id, now - timedelta(hours=1))
+                snapshot = await service.preflight(identity.org_id, now=now)
+                assert snapshot.org_requests_used == 0
+            else:
+                await service.reserve(
+                    identity.org_id, identity.user_id, None, "gpt-test", request_id, now=now
+                )
+    finally:
+        await engine.dispose()
+
+    assert observed_settings
+    assert all(value == "on" for value in observed_settings), observed_settings
 
 
 @pytest.mark.asyncio

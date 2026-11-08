@@ -85,6 +85,7 @@
     "business-backend/src/starter_bundles/csv_statistics/scripts/analyze.py",
     "business-backend/src/starter_bundles/json_format/SKILL.md",
     "business-backend/src/starter_bundles/json_format/scripts/format_json.py",
+    "business-backend/tests/hermes/test_hermes_skill_hydration.py",
     "business-backend/tests/starter_tools/test_catalog.py",
     "business-backend/tests/starter_tools/test_install.py",
     "business-backend/tests/starter_tools/test_install_wrapper.py",
