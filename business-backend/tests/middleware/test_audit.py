@@ -7,11 +7,13 @@ test_audit_rls.py separately verifies real insertion and RLS constraints.
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from httpx import ASGITransport
 
 from src.middleware.audit import AuditMiddleware
@@ -79,20 +81,9 @@ def make_app() -> FastAPI:
     return app
 
 
-class _DrainingClient(httpx.AsyncClient):
-    """A client that waits for the background audit write before returning."""
-
-    async def request(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        from src.middleware.audit import drain_pending_audit
-
-        response = await super().request(*args, **kwargs)
-        await drain_pending_audit()
-        return response
-
-
 @pytest.fixture
 def client():
-    return _DrainingClient(transport=ASGITransport(app=make_app()), base_url="http://test")
+    return httpx.AsyncClient(transport=ASGITransport(app=make_app()), base_url="http://test")
 
 
 @pytest.fixture
@@ -288,55 +279,27 @@ async def test_request_without_org_is_not_written(identity):
 
 
 @pytest.mark.asyncio
-async def test_the_audit_write_does_not_delay_the_response(identity):
-    """The row is written after the response is sent: a mutating request used to wait for a
-    second pooled connection, an INSERT and a commit before the client saw anything."""
-    from src.middleware.audit import drain_pending_audit
-
-    started = asyncio.Event()
-    release = asyncio.Event()
+async def test_the_audit_write_finishes_before_the_response_is_returned(identity):
+    """Acknowledging a mutation must wait for its audit persistence attempt."""
     finished = asyncio.Event()
 
     async def slow_record(self, request, status_code):  # noqa: ANN001
-        started.set()
-        await release.wait()
+        await asyncio.sleep(0)
         finished.set()
 
+    request = Request({"type": "http", "method": "POST", "path": "/v1/skills/", "headers": []})
+
+    async def handle(request: Request) -> Response:
+        return Response(status_code=201)
+
     with patch.object(AuditMiddleware, "_record", slow_record):
-        async with httpx.AsyncClient(
-            transport=ASGITransport(app=make_app()), base_url="http://test"
-        ) as c:
-            response = await asyncio.wait_for(c.post("/v1/skills/"), timeout=2)
-            assert response.status_code == 200
-            assert not finished.is_set()
-            release.set()
-            await drain_pending_audit()
-
-    assert started.is_set() and finished.is_set()
+        response = await AuditMiddleware(make_app()).dispatch(request, handle)
+        assert response.status_code == 201
+        assert finished.is_set()
 
 
 @pytest.mark.asyncio
-async def test_a_full_queue_makes_the_request_wait_instead_of_dropping_the_row(identity):
-    from src.middleware import audit
-
-    written: list[int] = []
-
-    async def record(self, request, status_code):  # noqa: ANN001
-        written.append(status_code)
-
-    with patch.object(AuditMiddleware, "_record", record), patch.object(audit, "_MAX_PENDING", 0):
-        async with httpx.AsyncClient(
-            transport=ASGITransport(app=make_app()), base_url="http://test"
-        ) as c:
-            await c.post("/v1/skills/")
-            # No drain: with no room for a background write, it happened before the response.
-            assert written == [200]
-
-
-@pytest.mark.asyncio
-async def test_a_failed_background_write_is_logged_and_never_raised(identity, caplog):
-    from src.middleware.audit import drain_pending_audit
-
+async def test_a_failed_audit_write_is_logged_and_never_raised(identity, caplog):
     async def boom(self, request, status_code):  # noqa: ANN001
         raise RuntimeError("database unavailable")
 
@@ -345,6 +308,36 @@ async def test_a_failed_background_write_is_logged_and_never_raised(identity, ca
             transport=ASGITransport(app=make_app()), base_url="http://test"
         ) as c:
             response = await c.post("/v1/skills/")
-            await drain_pending_audit()
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_during_serving", [False, True])
+async def test_app_shutdown_disposes_the_audit_pool(fail_during_serving):
+    from src.app_factory import create_app
+
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def lifespan(app):
+        events.append("started")
+        try:
+            yield
+        finally:
+            events.append("stopped")
+
+    async def dispose():
+        events.append("audit_disposed")
+
+    with patch("src.app_factory.audit_engine", SimpleNamespace(dispose=dispose)):
+        app = create_app(title="Audit pool test", lifespan=lifespan, routers=[])
+        try:
+            async with app.router.lifespan_context(app):
+                if fail_during_serving:
+                    raise RuntimeError("serving failed")
+        except RuntimeError:
+            if not fail_during_serving:
+                raise
+
+    assert events == ["started", "stopped", "audit_disposed"]

@@ -14,12 +14,13 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.authorization_types import AuthorizationSubject
+from src.core.authorization_types import AccessPermission, AuthorizationSubject, ResourceRef, ResourceType
 from src.models.agent_definition import AgentDefinition
 from src.models.conversation import Conversation
 from src.models.hermes_session import HermesSession
 from src.models.interaction import InteractionExecution
 from src.services.hermes_access import HermesAccessDenied
+from src.services.authorization import authorization_service
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,17 @@ async def agent_settings_of_session(
             AgentDefinition.kind == "hermes",
         )
     )
-    if agent is None or agent.archived_at is not None:
+    if (
+        agent is None
+        or agent.archived_at is not None
+        or not await authorization_service.can_access(
+            session,
+            subject,
+            ResourceRef(ResourceType.AGENT_DEFINITION, str(agent.id)),
+            AccessPermission.READ,
+            resource_org_id=subject.org_id,
+        )
+    ):
         raise HermesAccessDenied("hermes_agent_unavailable")
     return HermesAgentSettings(
         agent_id=agent.id,

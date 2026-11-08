@@ -390,6 +390,7 @@ async def test_a_turn_lists_the_code_skills_its_user_may_read_to_hydrate(hermes_
         )
         await setup.commit()
 
+    await hermes_env.open_session()
     listed = await hermes_env.internal("GET", "/platform-skills")
     await hermes_env.finish_turn()
     after_turn = await hermes_env.internal("GET", "/platform-skills")

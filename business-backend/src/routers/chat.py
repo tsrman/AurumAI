@@ -526,15 +526,17 @@ async def _maybe_classify_workflow(
     return workflow_id
 
 
-async def _hermes_model(session: AsyncSession, user: UserInfo) -> str:
-    """The organization's Hermes model, once Hermes is on and allowed for the user."""
+async def _hermes_model(
+    session: AsyncSession, user: UserInfo, model_id: str | None = None
+) -> str:
+    """The effective Hermes model, once Hermes is on and allowed for the user."""
     if not settings.HERMES_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hermes is not available")
     try:
         await require_hermes_capabilities(session, authorization_subject(user))
     except HermesAccessDenied as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": exc.code}) from None
-    model = await organization_hermes_model(session, uuid.UUID(user.org_id or ""))
+    model = model_id or await organization_hermes_model(session, uuid.UUID(user.org_id or ""))
     if model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Hermes is not set up for this organization"
@@ -596,7 +598,7 @@ class ChatAgentDefinition(BaseModel):
     name: str
     description: str | None = None
     modelId: str
-    # "hermes": runs in a Hermes sandbox (files, previews), on the organization's Hermes model.
+    # "hermes": runs in a Hermes sandbox (files, previews), using its effective Hermes model.
     kind: Literal["agent", "hermes"] = "agent"
 
 
@@ -607,27 +609,26 @@ async def chat_agent_definitions(
 ) -> ApiResponse[list[ChatAgentDefinition]]:
     """The administrator's agents the composer offers: those a chat turn would accept now."""
     subject = authorization_subject(user)
-    # Hermes agents are offered where a Hermes turn would be accepted now.
-    hermes_model: str | None = None
-    try:
-        hermes_model = await _hermes_model(session, user)
-        await ensure_model_allowed(session, user.org_id, hermes_model, user_id=user.user_id, role=user.role)
-    except HTTPException:
-        hermes_model = None
+    # Resolve each model once, without gating own-model agents on the organization's model.
+    hermes_models: dict[str | None, str | None] = {}
     offered: list[ChatAgentDefinition] = []
     for agent in await agent_definition_repository.list_accessible(session, subject):
         if agent.kind == "hermes":
-            if hermes_model is None:
-                continue
-            model_id = hermes_model
-            if not agent.use_org_hermes_model:
+            selected_model = None if agent.use_org_hermes_model else agent.model_id
+            if selected_model not in hermes_models:
                 try:
+                    model = await _hermes_model(session, user, selected_model)
                     await ensure_model_allowed(
-                        session, user.org_id, agent.model_id, user_id=user.user_id, role=user.role
+                        session, user.org_id, model, user_id=user.user_id, role=user.role
                     )
                 except HTTPException:
-                    continue
-                model_id = agent.model_id
+                    hermes_models[selected_model] = None
+                else:
+                    hermes_models[selected_model] = model
+            resolved_model = hermes_models[selected_model]
+            if resolved_model is None:
+                continue
+            model_id = resolved_model
         else:
             try:
                 await agent_authorization_service.require_executable(session, subject, agent.id)
@@ -721,13 +722,9 @@ async def chat_stream(
     if conv.agent_definition_id != wanted_agent_id:
         conv.agent_definition_id = wanted_agent_id
     if hermes:
-        turn_model = await _hermes_model(session, user)
-        if chat_agent is not None and chat_agent.hermes_model:
-            # The agent chose its own model; the user must still be allowed to use it.
-            await ensure_model_allowed(
-                session, user.org_id, chat_agent.hermes_model, user_id=user.user_id, role=user.role
-            )
-            turn_model = chat_agent.hermes_model
+        turn_model = await _hermes_model(
+            session, user, chat_agent.hermes_model if chat_agent is not None else None
+        )
         if upload_ids:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

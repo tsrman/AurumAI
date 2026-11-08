@@ -59,11 +59,16 @@ def _hydrated_dir(skill: Skill) -> str:
     return f"{slug}-{skill.id.hex[:8]}"
 
 
-async def platform_code_skills(session: AsyncSession, subject: AuthorizationSubject) -> list[dict[str, Any]]:
+async def platform_code_skills(
+    session: AsyncSession,
+    subject: AuthorizationSubject,
+    allowed: frozenset[UUID] | None = None,
+) -> list[dict[str, Any]]:
     """The code skills the user may read, for skill-executor to hydrate into
     the sandbox before a turn: where they go and how to fetch and verify
     their bundles. A skill whose grant is gone is not listed, so the next
-    turn's sandbox no longer has it."""
+    turn's sandbox no longer has it. `allowed` further narrows live grants to
+    the bound agent's selected skills; an empty selection hydrates nothing."""
     skills = await skill_registry.list_accessible_skills(session, subject, LIST_LIMIT, 0)
     return [
         {
@@ -77,6 +82,7 @@ async def platform_code_skills(session: AsyncSession, subject: AuthorizationSubj
         and skill.owning_conversation_id is None
         and skill.bundle_storage_key
         and skill.bundle_checksum
+        and (allowed is None or skill.id in allowed)
     ][:PLATFORM_SKILLS_MAX]
 
 

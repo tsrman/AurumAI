@@ -331,3 +331,46 @@ def test_a_bound_agent_takes_precedence_over_the_generic_hermes_in_the_conversat
 
     assert (bound.agent, bound.agentDefinitionId) == (None, str(AGENT_ID))
     assert (plain.agent, plain.agentDefinitionId) == ("hermes", None)
+
+
+async def test_an_own_model_hermes_turn_does_not_require_an_organization_model(monkeypatch) -> None:
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", True)
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
+    patches = _hermes_patches(conv, pubsub, signal)
+    patches["resolve"] = patch.object(
+        chat.agent_authorization_service, "require_chat_agent",
+        AsyncMock(return_value=_agent(kind="hermes", hermes_model="own/model")),
+    )
+    patches["hermes_model"] = patch.object(chat, "organization_hermes_model", AsyncMock(return_value=None))
+
+    _, error = await _stream(conv, user, session, _request(conv), patches)
+
+    assert error is None
+    assert signal.call_args.args[2]["model"] == "own/model"
+
+
+@pytest.mark.parametrize("case", ["own_model_denied", "capability_denied", "disabled"])
+async def test_an_own_model_hermes_turn_preserves_real_denials(monkeypatch, case) -> None:  # noqa: ANN001
+    from src.services.hermes_access import HermesAccessDenied
+
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", case != "disabled")
+    conv, user, session, pubsub = _fixture()
+    signal = AsyncMock()
+    patches = _hermes_patches(conv, pubsub, signal)
+    patches["resolve"] = patch.object(
+        chat.agent_authorization_service, "require_chat_agent",
+        AsyncMock(return_value=_agent(kind="hermes", hermes_model="own/model")),
+    )
+    if case == "own_model_denied":
+        patches["allowed"] = patch.object(chat, "ensure_model_allowed", AsyncMock(side_effect=HTTPException(403)))
+    elif case == "capability_denied":
+        patches["hermes_capabilities"] = patch.object(
+            chat, "require_hermes_capabilities", AsyncMock(side_effect=HermesAccessDenied("hermes_access_denied"))
+        )
+
+    mocks, error = await _stream(conv, user, session, _request(conv), patches)
+
+    assert error is not None and error.status_code == (404 if case == "disabled" else 403)
+    mocks["begin"].assert_not_awaited()
+    signal.assert_not_awaited()

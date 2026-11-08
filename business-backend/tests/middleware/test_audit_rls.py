@@ -11,15 +11,15 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from httpx import ASGITransport
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from src.core.config import settings
-from src.core.database import engine as shared_engine
-from src.middleware.audit import AuditMiddleware
+from src.core.database import async_session as request_sessions
+from src.middleware.audit import AuditMiddleware, audit_engine
 
 pytestmark = pytest.mark.asyncio
 
@@ -55,6 +55,61 @@ async def _insert_org(session_factory, org_id: uuid.UUID) -> None:
         await session.commit()
 
 
+async def test_audit_commits_when_the_request_holds_the_only_request_connection():
+    """Request dependency teardown must not be needed to acquire an audit connection."""
+    admin_engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    admin_sessions = async_sessionmaker(admin_engine, expire_on_commit=False)
+    request_engine = create_async_engine(
+        settings.DATABASE_URL, pool_size=1, max_overflow=0, pool_timeout=0.1
+    )
+    org_id = uuid.uuid4()
+    await _insert_org(admin_sessions, org_id)
+    original_bind = request_sessions.kw["bind"]
+    request_sessions.configure(bind=request_engine)
+
+    async def hold_request_connection():
+        async with request_sessions() as session:
+            await session.execute(text("SELECT 1"))
+            yield
+
+    app = FastAPI()
+    app.add_middleware(AuditMiddleware)
+
+    @app.post("/v1/audit-pool-test", dependencies=[Depends(hold_request_connection)])
+    async def mutate() -> dict[str, str]:
+        return {"status": "ok"}
+
+    try:
+        with patch(
+            "src.middleware.audit._rate_limit_identity",
+            AsyncMock(return_value=(str(org_id), str(uuid.uuid4()))),
+        ):
+            async with httpx.AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post("/v1/audit-pool-test")
+        assert response.status_code == 200
+        async with admin_sessions() as session:
+            count = await session.scalar(
+                text("SELECT count(*) FROM audit_logs WHERE org_id = :org"),
+                {"org": org_id},
+            )
+        assert count == 1
+    finally:
+        request_sessions.configure(bind=original_bind)
+        await request_engine.dispose()
+        await audit_engine.dispose()
+        async with admin_sessions() as session:
+            await session.execute(
+                text("DELETE FROM audit_logs WHERE org_id = :org"), {"org": org_id}
+            )
+            await session.execute(
+                text("DELETE FROM organizations WHERE id = :org"), {"org": org_id}
+            )
+            await session.commit()
+        await admin_engine.dispose()
+
+
 async def test_record_lands_in_the_database_and_is_org_scoped():
     admin_engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
     admin_sessions = async_sessionmaker(admin_engine, expire_on_commit=False)
@@ -77,10 +132,7 @@ async def test_record_lands_in_the_database_and_is_org_scoped():
                 f"/v1/skills/{skill_id}", headers={"user-agent": "pytest-audit"}
             )
     assert response.status_code == 200
-    # The row is written in the background, after the response.
-    from src.middleware.audit import drain_pending_audit
-
-    await drain_pending_audit()
+    # The response waits for the audit row to commit.
 
     role_engine = create_async_engine(_runtime_db_url(), poolclass=NullPool)
     app_sessions = async_sessionmaker(role_engine, expire_on_commit=False)
@@ -125,11 +177,11 @@ async def test_record_lands_in_the_database_and_is_org_scoped():
             ).scalar()
         assert leaked == 0
     finally:
-        # Middleware uses shared async_session; its pool may keep a connection
+        # Middleware uses its audit pool, which may keep a connection
         # opened in this test event loop. pytest-asyncio gives each test a new
         # loop, so a pooled connection would break the next test that borrows it
         # (do_ping cannot operate on another event loop).
-        await shared_engine.dispose()
+        await audit_engine.dispose()
         async with admin_sessions() as session:
             await session.execute(
                 text("DELETE FROM audit_logs WHERE org_id = ANY(:orgs)"),

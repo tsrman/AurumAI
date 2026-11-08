@@ -12,6 +12,7 @@ from src.models.access_grant import AccessGrant
 from src.models.agent_definition import AgentDefinition
 from src.models.knowledge_base import KnowledgeBase
 from src.models.organization import Organization
+from src.models.organization_capability import OrganizationCapability
 from src.models.user import User
 from src.routers import chat
 from src.services.agent_authorization import (
@@ -19,6 +20,7 @@ from src.services.agent_authorization import (
     AgentDefinitionNotFound,
 )
 from src.services.resource_registry import ResourceRegistry
+from src.core.capability_catalog import Capability
 
 
 async def _catalog() -> list[dict[str, object]]:
@@ -188,3 +190,37 @@ async def test_a_hermes_agent_with_its_own_model_carries_it(
 
     assert (await service.require_chat_agent(db, subject, own.id)).hermes_model == "own/model"
     assert (await service.require_chat_agent(db, subject, shared.id)).hermes_model is None
+
+
+@pytest.mark.parametrize(
+    ("organization_model", "own_allowed", "org_allowed", "enabled", "capability", "expected"),
+    [
+        ("org/model", True, False, True, True, {"Own": "own/model"}),
+        (None, True, False, True, True, {"Own": "own/model"}),
+        ("org/model", False, True, True, True, {"Shared": "org/model"}),
+        ("org/model", True, True, True, True, {"Own": "own/model", "Shared": "org/model"}),
+        ("org/model", True, True, False, True, {}),
+        ("org/model", True, True, True, False, {}),
+    ],
+)
+async def test_hermes_catalog_checks_only_each_agents_effective_model(
+    db, test_org, test_user, monkeypatch, organization_model, own_allowed, org_allowed,
+    enabled, capability, expected,
+) -> None:  # noqa: ANN001
+    await _agent(db, test_org, test_user, "Own", kind="hermes", model_id="own/model", use_org_hermes_model=False)
+    await _agent(db, test_org, test_user, "Shared", kind="hermes")
+    db.add(OrganizationCapability(org_id=test_org.id, capability=Capability.CHAT_SEND.value))
+    if capability:
+        db.add(OrganizationCapability(org_id=test_org.id, capability=Capability.AGENTS_HERMES.value))
+    if own_allowed:
+        db.add(_grant(test_org, test_user, "model", "own/model"))
+    if org_allowed:
+        db.add(_grant(test_org, test_user, "model", "org/model"))
+    await db.commit()
+    user = UserInfo(user_id=str(test_user.id), org_id=str(test_org.id), role="member", raw_claims={})
+    monkeypatch.setattr(chat.settings, "HERMES_ENABLED", enabled)
+    monkeypatch.setattr(chat, "organization_hermes_model", AsyncMock(return_value=organization_model))
+
+    result = await chat.chat_agent_definitions(user=user, session=db)
+
+    assert {item.name: item.modelId for item in result.data} == expected

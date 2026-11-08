@@ -127,6 +127,11 @@ migrations:
   activeDeadlineSeconds: 300
 
 backend:
+  # Each worker has its own pool; include every replica in the connection budget.
+  databasePool:
+    size: 20
+    maxOverflow: 40
+    timeout: 30
   image:
     repository: aurum-ai-backend
     tag: ""
@@ -396,6 +401,10 @@ hermes:
         memory: 256Mi
 
 backendAdmin:
+  databasePool:
+    size: 20
+    maxOverflow: 40
+    timeout: 30
   image:
     repository: aurum-ai-backend
     tag: ""

@@ -46,6 +46,12 @@ spec:
               value: "0.0.0.0:8000"
             - name: APP_WORKERS
               value: "2"
+            - name: APP_DB_POOL_SIZE
+              value: {{ .Values.backendAdmin.databasePool.size | quote }}
+            - name: APP_DB_MAX_OVERFLOW
+              value: {{ .Values.backendAdmin.databasePool.maxOverflow | quote }}
+            - name: APP_DB_POOL_TIMEOUT
+              value: {{ .Values.backendAdmin.databasePool.timeout | quote }}
             - name: APP_DATABASE_ROLE_PASSWORD
               valueFrom:
                 secretKeyRef:

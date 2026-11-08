@@ -25,6 +25,7 @@ from src.services.hermes_access import (
     active_hermes_turn,
     require_hermes_capabilities,
 )
+from src.services.hermes_agent_settings import agent_settings_of_session
 from src.services import file_uploads, hermes_files, hermes_memory, hermes_skill_drafts, hermes_skills
 from src.services.object_storage import object_storage
 from src.services.conversation_files import MAX_FILE_BYTES
@@ -375,5 +376,15 @@ async def hermes_platform_skills_for_turn(
     session: AsyncSession = Depends(get_service_db_session),
 ) -> dict[str, list[dict[str, Any]]]:
     """The conversation owner's code skills, to hydrate into the sandbox for the turn."""
-    subject = await _turn_owner(user, session)
-    return {"skills": await hermes_skills.platform_code_skills(session, subject)}
+    subject, conversation_id = _runner(user)
+    try:
+        await require_hermes_capabilities(session, subject)
+        turn = await active_hermes_turn(session, subject, conversation_id)
+        row = await current_session(session, subject, conversation_id)
+        if row is None or row.active_turn_id != turn.id or row.active_execution_id is None:
+            raise HermesAccessDenied("hermes_turn_inactive")
+        agent = await agent_settings_of_session(session, subject, row)
+    except HermesAccessDenied as exc:
+        _fail(exc)
+    allowed = frozenset(agent.skill_ids) if agent is not None and agent.skills_scope == "selected" else None
+    return {"skills": await hermes_skills.platform_code_skills(session, subject, allowed)}
