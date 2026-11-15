@@ -34,7 +34,9 @@ optional sandboxed agent (Hermes Agent). Start with the section for your role.
 
 - [API reference](reference/api.md).
 - [Security model](reference/security.md).
-- [Architecture](ARCHITECTURE.md) and the [Hermes Agent design](HERMES_AGENT.md).
+- [Architecture overview](ARCHITECTURE.md), the detailed
+  [technical architecture](TECHNICAL_ARCHITECTURE.md) for architects, the
+  [RAG architecture](RAG_ARCHITECTURE.md), and the [Hermes Agent design](HERMES_AGENT.md).
 
 ## I contribute
 
