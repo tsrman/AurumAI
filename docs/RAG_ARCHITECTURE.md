@@ -607,10 +607,50 @@ read-only and does not promise that every claim or export check will pass.
 
 ### 11.3 Changing the embedding model or dimension
 
-Vectors from different models or dimensions are not comparable. Changing `embedding_model`
-or `embedding_dim` requires dropping the collection and re-indexing every document (the
-cached `parsed_markdown` avoids repeating the parse, but contextualization and embedding run
-again). There is no in-place migration tool. Plan the change as a maintenance window.
+Vectors from different models are not comparable, and vectors of different dimensions cannot
+share a collection. After changing `embedding_model`, `embedding_dim`, the chunking or the
+parser, rebuild the vectors with the operator tool `python -m src.reindex`, which runs inside
+the `rag-api` image and needs the `rag_lifecycle` database role (the same kind of credential
+as the archive process; it is never part of the ordinary API configuration):
+
+```
+docker compose run --rm -e RAG_API_REINDEX_DATABASE_URL=postgresql+asyncpg://<lifecycle-role>@postgres:5432/rag_platform \
+  rag-api python -m src.reindex --all --dry-run                 # count first
+docker compose run --rm -e RAG_API_REINDEX_DATABASE_URL=... \
+  rag-api python -m src.reindex --org <org-id> --run-id model-2   # one organization
+```
+
+For every document the tool follows the same protocol as an upload (section 9): it takes the
+writer fence, records a `vector_delete` intent, removes the document's chunks, resets the document
+to `pending` (counts back to zero) and starts a **new** `IndexDocumentWorkflow` for the same
+document, with its own receipt in `rag_index_executions`. The worker reuses the cached
+`parsed_markdown`, so Docling does not run again unless you pass `--reparse`; contextualization and
+embedding do run again, so the cost is the same as the original ingestion. Searches keep working
+throughout: a document has no vectors only between its delete and the end of its new run, and
+reaches status `indexed` when done.
+
+* **Safe to repeat.** A document's operation id is derived from `--run-id` and its id. Running
+  again with the same `--run-id` starts nothing twice, and adopts a run whose start reply was
+  lost (after verifying the exact workflow history). A new `--run-id` starts a new rebuild.
+* **It never forces.** A document is skipped, and reported, while one of its indexing runs is
+  still open, while a Milvus write or delete is unsettled, or while its knowledge base is
+  archiving, archived or restoring. A failed vector delete leaves its intent unsettled and the
+  document untouched, exactly as in a normal delete; reconcile it before running again.
+* **Scope.** `--all`, or `--org` with an optional `--kb`; `--limit N` stops after N documents for
+  a staged rollout; `--dry-run` only counts. The exit status is non-zero when any document failed.
+* **Same dimension, new model.** Run it as above. While it runs the collection holds a mix of old
+  and new vectors, so relevance is degraded until it finishes; do it in a quiet period.
+* **Different dimension.** The collection must be recreated: add `--recreate-collection --yes` to
+  an `--all` run. This **drops every vector first** and refuses unless every knowledge base is
+  `active`; knowledge search returns no results until documents are re-indexed, so plan a
+  maintenance window and set the new `embedding_dim` and model on `rag-api` and `rag-worker`
+  before starting.
+* **Monitoring.** Documents move `pending` → `indexing` → `indexed` (or `failed` with an error).
+  `SELECT status, count(*) FROM documents GROUP BY 1` shows progress; the per-document counts of
+  section 7 show whether contextualization worked in the new run.
+
+The tool does not re-chunk by itself: chunk size and caps are worker settings, applied when the
+new run executes.
 
 ### 11.4 Backup and recovery
 

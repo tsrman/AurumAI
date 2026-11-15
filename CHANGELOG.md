@@ -12,6 +12,13 @@
 
 ### Added
 
+- **`python -m src.reindex`, an operator tool to rebuild knowledge-base vectors** after changing the
+  embedding model, its dimension, the chunking or the parser. It resets each document and starts a
+  fresh indexing run through the same fenced, receipted protocol as an upload, reuses the cached
+  parse, is safe to repeat with the same `--run-id`, never forces a document that has an open run,
+  an unsettled Milvus operation or an archiving knowledge base, and can recreate the collection
+  when the dimension changed (`--recreate-collection --yes`). It needs a `rag_lifecycle` login in
+  `RAG_API_REINDEX_DATABASE_URL`.
 - **Optional cross-encoder reranking for knowledge search.** Set `RAG_API_RERANK_URL` (Compose:
   start the new `rerank` profile, service `rag-rerank`, and use `http://rag-rerank:7997`) and the
   hybrid results are re-ordered by a reranker model (default `BAAI/bge-reranker-v2-m3`) before the

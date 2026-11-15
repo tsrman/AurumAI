@@ -64,6 +64,10 @@ search waits for the query embedding. A CPU-only embedding model under memory
 pressure can exceed it on the first query after idling, which surfaces as a failed
 search; raise it on such hosts.
 
+`RAG_API_REINDEX_DATABASE_URL` is read only by the operator tool `python -m src.reindex` (see the
+[RAG architecture](RAG_ARCHITECTURE.md#113-changing-the-embedding-model-or-dimension)): the
+connection URL of a `rag_lifecycle` login role. Do not set it on the running `rag-api`.
+
 Cross-encoder reranking of knowledge search is off until `RAG_API_RERANK_URL` is set (for the
 Compose service: start the `rerank` profile and use `http://rag-rerank:7997`). `RAG_RERANK_MODEL`
 (default `BAAI/bge-reranker-v2-m3`) picks the model for both the service and rag-api;

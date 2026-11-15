@@ -406,3 +406,14 @@ async def test_a_turn_lists_the_code_skills_its_user_may_read_to_hydrate(hermes_
         ]
     }
     assert after_turn.status_code == 403 and "hermes_turn_inactive" in after_turn.text
+
+
+def test_tokens_issued_in_these_tests_are_not_dated_in_the_future() -> None:
+    """Guards the conftest fixture: a backwards step of the host clock must not make a
+    token look not-yet-valid."""
+    issued = _issued()
+    claims = jwt.decode(
+        issued.token, settings.SECRET_KEY, algorithms=["HS256"], audience=HERMES_SESSION_AUDIENCE
+    )
+
+    assert claims["iat"] <= datetime.now(timezone.utc).timestamp() - 5

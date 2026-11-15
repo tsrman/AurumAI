@@ -5,6 +5,7 @@ rows through a dedicated engine and removes the organization afterwards.
 """
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator, Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
@@ -35,10 +36,28 @@ from src.models.organization_capability import OrganizationCapability
 from src.models.user import User
 from src.routers import hermes, hermes_egress_internal, hermes_internal, hermes_mcp
 from src.schemas.interaction import TurnLimits
+from src.services.hermes_session_token import HermesSessionTokenService
 from src.services.quota import UsageReservation, get_quota_service
 from src.services.session_token import session_token_service
 
 MODEL = "provider/hermes-model"
+
+
+# Tokens issued by these tests are verified within milliseconds, but a development host
+# whose wall clock steps backwards (WSL2 does, by up to a second) would see its own token
+# as "not yet valid" (iat in the future) and fail a test at random. Issue them a little in
+# the past instead; production code and the explicit-`now` tests are untouched.
+TOKEN_ISSUED_AGO = timedelta(seconds=10)
+
+
+@pytest.fixture(autouse=True)
+def _tokens_issued_slightly_in_the_past(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = HermesSessionTokenService.issue
+
+    def issue(self: HermesSessionTokenService, *, now: datetime | None = None, **claims: Any) -> Any:
+        return original(self, now=now or datetime.now(timezone.utc) - TOKEN_ISSUED_AGO, **claims)
+
+    monkeypatch.setattr(HermesSessionTokenService, "issue", issue)
 
 
 class RecordingQuota:
