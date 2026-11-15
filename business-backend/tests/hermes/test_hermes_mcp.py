@@ -436,3 +436,15 @@ async def test_a_web_search_runs_as_a_durable_operation_of_the_turn(hermes_env, 
         uuid.UUID(opened["sessionId"]), 7, "web_search", {"query": "x"}
     )
     assert turn is not None and turn.search_count == 1
+
+
+def test_knowledge_search_description_tells_the_model_about_the_agents_bases() -> None:
+    """The model only knows what the listing says: attachments by default, and a base id
+    for the knowledge bases named in the agent's instructions."""
+    from src.services import hermes_mcp
+
+    tool = next(item for item in hermes_mcp.listed_tools() if item["name"] == "knowledge_search")
+
+    assert "knowledgeBaseId" in tool["description"]
+    assert "attached" in tool["description"]
+    assert "knowledgeBaseId" in tool["inputSchema"]["properties"]
