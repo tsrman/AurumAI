@@ -590,3 +590,33 @@ def test_connect_streams_bytes_to_a_loopback_port_only(relay, tmp_path: Path) ->
             [sys.executable, str(IMAGE / "hermes_relay.py"), "connect", refused], input=b"", capture_output=True, timeout=30
         )
         assert result.returncode == code and result.stdout == b"", refused
+
+
+def test_skills_read_does_not_count_bundled_skills_that_are_too_big_to_read(relay, tmp_path: Path) -> None:
+    """Hermes ships skills larger than the bounds; copied unchanged into the agent's skills they
+    are not the agent's, so they are neither returned nor reported as skipped."""
+    run, _ = relay
+    skills, bundled = tmp_path / ".hermes" / "skills", tmp_path / "bundled"
+    for root in (skills, bundled):
+        _skill(root / "creative" / "huge", **{"a.md": "x" * 60_000, "b.md": "y" * 60_000})
+        _skill(root / "creative" / "many", **{f"f{index}.md": "z" for index in range(40)})
+
+    assert run("skills-read") == [{"type": "skills", "count": 0, "skipped": 0}]
+
+
+def test_skills_read_still_reports_a_changed_bundled_skill_it_cannot_read(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    skills, bundled = tmp_path / ".hermes" / "skills", tmp_path / "bundled"
+    for root in (skills, bundled):
+        _skill(root / "creative" / "huge", **{"a.md": "x" * 60_000, "b.md": "y" * 60_000})
+    (skills / "creative" / "huge" / "c.md").write_text("added by the agent")
+
+    assert run("skills-read") == [{"type": "skills", "count": 0, "skipped": 1}]
+
+
+def test_skills_read_reports_an_unreadable_skill_that_is_not_bundled(relay, tmp_path: Path) -> None:
+    run, _ = relay
+    skills = tmp_path / ".hermes" / "skills"
+    _skill(skills / "mine", **{"a.md": "x" * 60_000, "b.md": "y" * 60_000})
+
+    assert run("skills-read") == [{"type": "skills", "count": 0, "skipped": 1}]

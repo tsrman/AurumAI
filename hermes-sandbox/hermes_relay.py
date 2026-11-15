@@ -329,6 +329,42 @@ def _bundled(relative: str) -> dict[str, str] | None:
         return None
 
 
+def _listing(directory: str) -> dict[str, int] | None:
+    """Every file of a skill with its size, read without opening any, or None when the tree is
+    not plain files (a link, a device) or is deeper or larger than the bounds allow."""
+    sizes: dict[str, int] = {}
+
+    def walk(path: str, prefix: str, depth: int) -> None:
+        for entry in sorted(os.scandir(path), key=lambda item: item.name):
+            if _ignored(entry.name):
+                continue
+            if depth > SKILL_MAX_DEPTH or len(sizes) > SKILL_DIRS_MAX:
+                raise Unusable()
+            info = entry.stat(follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                walk(entry.path, f"{prefix}{entry.name}/", depth + 1)
+            elif stat.S_ISREG(info.st_mode):
+                sizes[f"{prefix}{entry.name}"] = info.st_size
+            else:
+                raise Unusable()
+
+    try:
+        walk(directory, "", 1)
+    except (OSError, Unusable):
+        return None
+    return sizes
+
+
+def _unchanged_bundled(relative: str, directory: str) -> bool:
+    """A skill too big to read that still lists the same files, sizes included, as the image's
+    own copy: Hermes ships some, and they are not the agent's work."""
+    bundled = os.path.join(BUNDLED_SKILLS, relative)
+    if not _is_dir(bundled):
+        return False
+    listing = _listing(directory)
+    return listing is not None and listing == _listing(bundled)
+
+
 def _newest(directory: str, depth: int = 1) -> float:
     """The latest change in a skill's tree, links not followed."""
     try:
@@ -370,7 +406,8 @@ def skills_read() -> int:
             try:
                 files = _skill_files(directory)
             except Unusable:
-                skipped += 1
+                if not _unchanged_bundled(relative, directory):
+                    skipped += 1
                 continue
             # Copied from the image or the platform unchanged: not the agent's.
             if files == _bundled(relative) or files in platform:

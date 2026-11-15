@@ -4,6 +4,7 @@
 
 ### Changed
 
+- The Hermes skill read-back no longer counts Hermes's own oversized bundled skills as "skipped": nine of the 58 it ships exceed the 96 KiB or 32-file bounds, which made every turn report `skipped: 9`. A bundled skill the agent changed, and any other skill the relay cannot read, are still counted.
 - Contextual retrieval is now off in the base Compose stack, which has no gateway the RAG worker can
   call, and on with `docker-compose.llm-gateway.yml` (`RAG_CONTEXTUAL_RETRIEVAL_ENABLED`; choose the
   model with `RAG_CONTEXTUAL_MODEL`). Before, every document in the base stack was reported as
