@@ -873,7 +873,10 @@ Each phase is a separate PR behind the flag:
        `skills` directory that is a link is no skills, links are never
        followed, and only regular, valid UTF-8 text files count. A skill
        with anything else (a link, a binary, more than 32 files, a file over
-       64 KiB or more than 96 KiB in all) is skipped whole, and at most 16
+       64 KiB or more than 96 KiB in all) is skipped whole, except a bundled
+       skill too big to read that still lists the same files and sizes as the
+       image's copy (nine of Hermes's own are), which is neither read nor
+       counted as skipped, and at most 16
        skills are read per turn, one line each, the most recently changed
        first, so skills read on earlier turns do not crowd out a new one;
      - the backend checks the paths and bounds again, builds the bundle
