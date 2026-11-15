@@ -37,6 +37,7 @@ from src.milvus_store import (
     search_milvus_hybrid,
 )
 from src.telemetry import init_telemetry
+from src.rerank import RerankError, rerank_enabled, rerank_passages
 
 logger = logging.getLogger(__name__)
 
@@ -438,6 +439,9 @@ async def delete_document(
     return None
 
 
+RERANK_UNAVAILABLE_WARNING = "Reranking unavailable; results are in fusion order"
+
+
 class SearchRequest(BaseModel):
     query: str
     limit: int = 5
@@ -476,10 +480,18 @@ async def search_documents(
     # execute_hybrid_search branch) — clamp to search_max_limit so a huge
     # value can't force Milvus to fetch millions of rows.
     limit = max(1, min(req.limit, settings.search_max_limit))
+    reranking = rerank_enabled()
+    # With a reranker the fused search supplies a candidate pool that is larger than
+    # the answer; the cross-encoder then decides which `limit` of them to return.
+    candidates = (
+        max(limit, min(settings.rerank_candidates, settings.search_max_limit))
+        if reranking
+        else limit
+    )
     results, warnings = await search_milvus_hybrid(
         query=req.query,
         embedding=embedding,
-        limit=limit,
+        limit=candidates,
         org_id=str(org_id),
         knowledge_base_id=str(knowledge_base_id),
         acl=None,
@@ -489,7 +501,41 @@ async def search_documents(
         org_id,
         knowledge_base_id,
     )
-    return {"results": results, "warnings": warnings}
+    if reranking and results:
+        results, warnings = await _rerank_results(
+            req.query, results, limit, candidates, warnings
+        )
+    return {"results": results[:limit], "warnings": warnings}
+
+
+async def _rerank_results(
+    query: str,
+    results: list[dict[str, Any]],
+    limit: int,
+    candidates: int,
+    warnings: list[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Order the live hits by cross-encoder score; on any failure keep the fusion order."""
+    # Hits from one parent window carry the same passage: score it once.
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any]] = set()
+    for hit in results:
+        key = ((hit.get("metadata") or {}).get("document_id"), hit.get("content"))
+        if key not in seen:
+            seen.add(key)
+            unique.append(hit)
+    unique = unique[:candidates]
+    try:
+        scores = await rerank_passages(query, [str(hit.get("content") or "") for hit in unique])
+    except RerankError as exc:
+        logger.warning("rerank_unavailable: %s", exc)
+        return unique, [*warnings, RERANK_UNAVAILABLE_WARNING]
+    ranked = [
+        {**hit, "fusion_score": hit.get("relevance_score"), "relevance_score": score}
+        for hit, score in zip(unique, scores)
+    ]
+    ranked.sort(key=lambda hit: hit["relevance_score"], reverse=True)
+    return ranked[:limit], warnings
 
 
 async def _filter_results_to_live_documents(

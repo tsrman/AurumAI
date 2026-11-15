@@ -64,6 +64,14 @@ search waits for the query embedding. A CPU-only embedding model under memory
 pressure can exceed it on the first query after idling, which surfaces as a failed
 search; raise it on such hosts.
 
+Cross-encoder reranking of knowledge search is off until `RAG_API_RERANK_URL` is set (for the
+Compose service: start the `rerank` profile and use `http://rag-rerank:7997`). `RAG_RERANK_MODEL`
+(default `BAAI/bge-reranker-v2-m3`) picks the model for both the service and rag-api;
+`RAG_API_RERANK_CANDIDATES` (30, at most the search limit of 50) is how many hits are scored and
+`RAG_API_RERANK_TIMEOUT_SECONDS` (10) bounds the request. A reranker that is down or slow never
+fails a search: results fall back to the fusion order. See the
+[RAG architecture](RAG_ARCHITECTURE.md#81-cross-encoder-reranking).
+
 ## Frontend runtime values
 
 Both UIs read `RUNTIME_*` on the server for each request:

@@ -32,10 +32,10 @@ Contents:
 | Authoritative stores | PostgreSQL `aurum_ai` (KB metadata, grants, file metadata), PostgreSQL `rag_platform` (documents, ingestion state, lifecycle fences), MinIO (original files). |
 | Derived store | Milvus: one collection, dense and sparse vectors per chunk. It can be rebuilt from the other stores. |
 | Ingestion | Upload through the Business API into MinIO, then a durable Temporal workflow (`IndexDocumentWorkflow`) on the `rag-ingest` queue: parse, chunk, contextualize, embed, upsert. |
-| Retrieval | Hybrid search: dense cosine and sparse BM25 in one Milvus call, fused by reciprocal-rank fusion (RRF), then filtered against live PostgreSQL state. The model sees the larger parent window of each hit. |
+| Retrieval | Hybrid search: dense cosine and sparse BM25 in one Milvus call, fused by reciprocal-rank fusion (RRF), filtered against live PostgreSQL state and, when a reranker is configured, re-ordered by a cross-encoder. The model sees the larger parent window of each hit. |
 | Access control | Live KB grants evaluated by the Business API; the RAG service is an internal trust boundary that applies the organization and KB it is given to every query; row-level security in `rag_platform`. |
 | Consistency | Writes are fenced by a per-KB **generation**; every external side effect (a Milvus write or delete) is recorded as an **intent** before it happens and settled after; an uncertain outcome blocks further changes instead of being guessed. |
-| Embeddings | One embedding model behind an OpenAI-style `/embeddings` endpoint (the `reranker` Compose service runs Infinity with `gte-Qwen2-1.5B-instruct`, 1536 dimensions). Despite the service name there is **no reranking step**: fusion is RRF only. |
+| Embeddings | One embedding model behind an OpenAI-style `/embeddings` endpoint (the `reranker` Compose service runs Infinity with `gte-Qwen2-1.5B-instruct`, 1536 dimensions). The Compose service named `reranker` only serves embeddings; cross-encoder reranking is a separate, optional service (`rag-rerank`, section 8.1). |
 
 Three decisions explain most of the structure:
 
@@ -395,18 +395,49 @@ sequenceDiagram
    pressure may need more on its first query after idling).
 3. **Hybrid search.** One Milvus `hybrid_search` call with two requests, both filtered by
    `org_id == … and knowledge_base_id == …`: a dense request (cosine) and a sparse request
-   (BM25 over `content`). Each fetches `limit × 4` candidates; they are fused with
-   **reciprocal-rank fusion** (`k = 60`).
+   (BM25 over `content`). Each fetches four times the number of results asked for; they are
+   fused with **reciprocal-rank fusion** (`k = 60`). Without a reranker the number asked for is
+   `limit`; with one it is the candidate pool (`rerank_candidates`, default 30, never above
+   `search_max_limit`).
 4. **Clamp.** `limit` is clamped to `search_max_limit` (50), both in the API handler and
    in the search function, because it is formed by a model from skill arguments.
 5. **Live filter.** Hits are kept only if the KB is `active` in `rag_kb_lifecycle` and the
    document id exists in `documents` for that organization and KB. This closes the window in
    which a delete has removed the row but Milvus still serves a chunk, and the window in which
    a cancelled indexing run lands a few chunks after the delete.
-6. **Shape.** Each hit returns the **parent window** as `content` (falling back to the
-   indexed text), the indexed text, a `relevance_score` (the fused rank score, useful for
-   ordering within a result set, not as a calibrated probability) and metadata (document,
-   KB, chunk index, title).
+6. **Rerank (optional).** See 8.1.
+7. **Shape.** At most `limit` hits are returned (the search function over-fetches, so the
+   handler cuts the list; older versions could return up to twice the requested limit). Each hit
+   carries the **parent window** as `content` (falling back to the indexed text), the indexed
+   text, a `relevance_score` and metadata (document, KB, chunk index, title). The score is the
+   fused rank score, or the reranker's score when reranking ran (then the fused score is kept as
+   `fusion_score`); either is useful for ordering within one result set and is not a calibrated
+   probability.
+
+### 8.1 Cross-encoder reranking
+
+Fusion gives a good candidate list; a cross-encoder reads the query and each passage together
+and orders them more accurately. It is **off by default** and turned on by setting
+`RAG_API_RERANK_URL`; the model is `RAG_API_RERANK_MODEL` (default `BAAI/bge-reranker-v2-m3`).
+In Compose, start the `rerank` profile (service `rag-rerank`, the same Infinity image as the
+embedding service) and set `RAG_API_RERANK_URL=http://rag-rerank:7997`.
+
+What happens, after the live filter (so no time is spent on deleted documents):
+
+1. Hits that share a parent window (same document, same text) are collapsed to one passage;
+   otherwise the model would read the same window several times.
+2. At most `rerank_candidates` passages, each cut to `rerank_max_chars` (2000) characters, are
+   sent to `POST {rerank_url}/rerank` in a single request with a `rerank_timeout_seconds` (10 s)
+   bound.
+3. The response must score every passage exactly once; anything else is treated as a failure.
+4. The passages are ordered by score and the best `limit` are returned.
+
+**Reranking never makes a search fail.** If the service is down, slow or answers badly, the
+search returns the fusion order (still limited to `limit`, with duplicates collapsed) and a
+warning; the Business API reduces any warning to a fixed generic string for the caller, and the
+cause is logged as `rerank_unavailable`. The cost of enabling it is one extra request per
+search (the cross-encoder scores up to 30 passages), so latency rises by the reranker's
+inference time; run it on suitable hardware, and size `rerank_candidates` against that.
 
 Failure behaviour: an embedding failure is `500 Embedding service unavailable`; an unreachable
 RAG service is `503` at the backend; an empty or missing collection returns no results (and
@@ -536,6 +567,11 @@ read-only and does not promise that every claim or export check will pass.
 | `embedding_dim` | 1536 | Must match the model **and** the Milvus collection |
 | `milvus_uri`, `milvus_collection` | `http://milvus:19530`, `documents` | Vector store |
 | `search_max_limit` | 50 | Hard cap on results |
+| `rerank_url` | empty (off) | Base URL of an Infinity-compatible `/rerank` service |
+| `rerank_model` | `BAAI/bge-reranker-v2-m3` | Model name sent to the service |
+| `rerank_candidates` | 30 | Passages scored per search (at most `search_max_limit`) |
+| `rerank_timeout_seconds` | 10 | Bound on the rerank request |
+| `rerank_max_chars` | 2000 | Passage length sent to the reranker |
 | `search_embedding_timeout_seconds` | 10 | Query-embedding read timeout |
 | `document_max_content_bytes` | 2 MiB | Inline text cap |
 | `chunk_size` | 1000 | Parent window size, in estimated tokens |
@@ -589,13 +625,14 @@ treat contextual retrieval as off unless a local gateway is configured.
 the Business API's audit and request metrics cover the public calls. Useful signals:
 documents stuck in `pending` or `indexing` (workflow not running or worker down), `failed`
 documents with an `error`, `rag_index_start_unsettled` and `rag_vector_delete_unsettled`
-responses (unsettled intents), and `Contextual retrieval failed` warnings in the worker.
+responses (unsettled intents), `rerank_unavailable` and `contextual_retrieval_degraded` warnings in the logs.
 
 ## 12. Design notes and known limits
 
-* **No reranker.** The Compose service called `reranker` serves embeddings only. Result
-  order is the RRF fusion order. A cross-encoder rerank step is a natural extension point
-  between steps 3 and 5 of section 8, but it does not exist today.
+* **Reranking is optional and single-model.** Off by default; when on, one cross-encoder scores
+  a candidate pool in one request. The service named `reranker` in Compose serves embeddings
+  only; the cross-encoder is `rag-rerank`. There is no quality evaluation harness in the
+  repository: compare results on your own documents before and after enabling it.
 * **No per-document ACL.** Access is KB-wide. `acl_json` is stored but not enforced.
 * **Soft contextual degradation.** Chunks are indexed without context if the model call
   fails and ingestion still succeeds, but the per-document counts make it visible.
