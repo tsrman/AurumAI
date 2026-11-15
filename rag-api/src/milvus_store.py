@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -126,23 +125,10 @@ def init_milvus_collection() -> bool:
     logger.info("Milvus collection '%s' created successfully.", settings.milvus_collection)
     return True
 
-def _acl_allows(doc_acl: List[str], required: Optional[List[str]]) -> bool:
-    # `required` (the `acl` param on search_milvus_hybrid)
-    # is always None on every call path today — rag-api's own /v1/search
-    # handler passes acl=None (see main.py), and nothing else calls this
-    # with a real value — so this is presently always a no-op pass-through.
-    # Deliberate, not a bug to fix here: document-level ACL enforcement for
-    # hybrid search is intentionally NOT implemented. Access control for
-    # this feature is expected to be enforced one level up, the same way as
-    # every other skill — an org admin who wants the search skill scoped to
-    # files:read holders sets that in the skill's own `permissions` field
-    # (see CLAUDE.md's Access Control section), not per-document ACL. If
-    # per-document ACL is ever actually needed, `acl_json` is already
-    # populated on every chunk and ready to be wired through.
-    if not required:
-        return True
-    doc_set = set(doc_acl or [])
-    return bool(doc_set.intersection(required))
+# Chunks carry no access list of their own. Who may search a chunk is decided, live, by the
+# grants of the knowledge base that holds it (checked by the Business API on every search), so
+# a copy stored here could only go stale. The empty list keeps the stored/archived row shape.
+NO_CHUNK_ACL_JSON = "[]"
 
 async def bulk_insert_milvus(docs: list[tuple[str, Any]]) -> dict[str, Any]:
     if not docs:
@@ -153,7 +139,6 @@ async def bulk_insert_milvus(docs: list[tuple[str, Any]]) -> dict[str, Any]:
         init_milvus_collection()
         data: list[dict[str, Any]] = []
         for chunk_id, chunk_doc in docs:
-            acl = list(getattr(chunk_doc, "acl", None) or ["public"])
             data.append(
                 {
                     "pk": str(chunk_id),
@@ -163,7 +148,7 @@ async def bulk_insert_milvus(docs: list[tuple[str, Any]]) -> dict[str, Any]:
                     "chunk_index": int(chunk_doc.chunk_index),
                     "content": chunk_doc.content,
                     "parent_content": chunk_doc.parent_content,
-                    "acl_json": json.dumps(acl, ensure_ascii=False),
+                    "acl_json": NO_CHUNK_ACL_JSON,
                     "document_title": getattr(chunk_doc, "document_title", "") or "",
                     "dense": chunk_doc.embedding,
                 }
@@ -197,7 +182,6 @@ async def search_milvus_hybrid(
     limit: int,
     org_id: Optional[str],
     knowledge_base_id: str,
-    acl: Optional[List[str]],
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     warnings: list[str] = []
 
@@ -259,7 +243,6 @@ async def search_milvus_hybrid(
                 "knowledge_base_id",
                 "chunk_index",
                 "org_id",
-                "acl_json",
                 "document_title",
             ],
         )
@@ -267,16 +250,6 @@ async def search_milvus_hybrid(
         results: list[dict[str, Any]] = []
         for hit in res[0]:
             entity = hit.get("entity") or {}
-            try:
-                doc_acl = json.loads(entity.get("acl_json") or "[]")
-                if not isinstance(doc_acl, list):
-                    doc_acl = ["public"]
-            except json.JSONDecodeError:
-                doc_acl = ["public"]
-
-            if not _acl_allows(doc_acl, acl):
-                continue
-
             parent = entity.get("parent_content") or ""
             indexed = entity.get("content") or ""
             llm_content = parent or indexed
@@ -296,7 +269,6 @@ async def search_milvus_hybrid(
                         "knowledge_base_id": entity.get("knowledge_base_id"),
                         "chunk_index": entity.get("chunk_index"),
                         "org_id": entity.get("org_id"),
-                        "acl": doc_acl,
                         "document_title": entity.get("document_title") or "",
                         "engine": "milvus",
                     },

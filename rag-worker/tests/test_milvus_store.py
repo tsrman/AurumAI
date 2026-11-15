@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.milvus_store import init_milvus_collection, missing_collection_fields
 
 
@@ -61,3 +63,45 @@ def test_an_undescribable_collection_is_not_reported_as_drifted():
 
     with patch("src.milvus_store.get_milvus_client", return_value=fake_client):
         assert missing_collection_fields() == ()
+
+
+@pytest.mark.asyncio
+async def test_chunks_are_stored_without_an_access_list_of_their_own() -> None:
+    """Access is the knowledge base's live grants, so no copy of it is stored per chunk."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from src import milvus_store
+    from src.indexing.schema import ChunkDocument
+
+    assert "acl" not in ChunkDocument.model_fields
+
+    scope = SimpleNamespace(org_id="org", knowledge_base_id="kb", document_id="doc")
+    chunk = SimpleNamespace(
+        org_id="org",
+        knowledge_base_id="kb",
+        document_id="doc",
+        chunk_index=0,
+        content="c",
+        parent_content="p",
+        document_title="t",
+        embedding=[0.1],
+    )
+    written: list[list[dict]] = []
+
+    def fake_mutate(client, operation, collection, data):
+        written.append(data)
+        return {"upsert_count": len(data)}
+
+    with (
+        patch("src.milvus_store.get_milvus_client"),
+        patch("src.milvus_store.init_milvus_collection"),
+        patch("src.milvus_store.mutate", fake_mutate),
+        patch("src.lifecycle.begin_vector", AsyncMock(return_value=(scope, "op"))),
+        patch("src.lifecycle.settle_vector", AsyncMock()),
+    ):
+        await milvus_store.bulk_insert_milvus([("doc:0", chunk)])
+
+    assert written[0][0]["acl_json"] == "[]"
+    assert asyncio.iscoroutinefunction(milvus_store.bulk_insert_milvus)

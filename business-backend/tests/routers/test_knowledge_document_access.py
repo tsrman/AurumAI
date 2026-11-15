@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.auth import UserInfo, get_current_user, get_current_user_or_session
 from src.core.authorization_types import AccessPermission, GrantSource, PrincipalType
 from src.core.dependencies import get_org_db_session, get_service_db_session
+import pytest
+
 from src.models.access_grant import AccessGrant
+from src.models.group import Group
+from src.models.user_group import UserGroup
 from src.models.knowledge_base import KnowledgeBase
 from src.models.organization import Organization
 from src.models.user import User
@@ -196,3 +200,88 @@ async def test_internal_search_applies_live_revoke_before_rag_call(
         query="retention",
         limit=5,
     )
+
+
+async def _search_status(db, org, user, knowledge_base_id) -> int:
+    app = _app(db, org, user, session_token=True)
+    with patch.object(
+        documents.rag_client,
+        "search",
+        AsyncMock(return_value={"results": [], "warnings": []}),
+    ):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/v1/knowledge-bases/{knowledge_base_id}/search",
+                json={"query": "q", "limit": 3},
+            )
+    return response.status_code
+
+
+def _principal_grant(org_id, knowledge_base_id, principal_type, principal_id, permission):
+    return AccessGrant(
+        org_id=org_id,
+        resource_type="knowledge_base",
+        resource_id=str(knowledge_base_id),
+        principal_type=principal_type.value,
+        principal_id=principal_id,
+        permission=permission.value,
+        created_via=GrantSource.PROVISIONING.value,
+    )
+
+
+@pytest.mark.parametrize("permission", [AccessPermission.READ, AccessPermission.WRITE])
+@pytest.mark.parametrize("principal", ["user", "group", "organization"])
+async def test_search_follows_whoever_the_base_is_granted_to(
+    db: AsyncSession, test_org: Organization, test_user: User, principal: str, permission
+) -> None:
+    """Chunks carry no access list of their own: what a person may search is exactly
+    what the knowledge base's grants say (a user, a group they belong to, the
+    organization; write includes read)."""
+    knowledge_base = KnowledgeBase(org_id=test_org.id, name=f"kb-{principal}-{permission.value}")
+    db.add(knowledge_base)
+    group = Group(org_id=test_org.id, name=f"g-{principal}-{permission.value}")
+    db.add(group)
+    await db.flush()
+    db.add(UserGroup(user_id=test_user.id, group_id=group.id))
+    principal_id = {"user": test_user.id, "group": group.id, "organization": test_org.id}[principal]
+    db.add(
+        _principal_grant(
+            test_org.id, knowledge_base.id, PrincipalType(principal), principal_id, permission
+        )
+    )
+    await db.commit()
+
+    assert await _search_status(db, test_org, test_user, knowledge_base.id) == 200
+
+
+async def test_search_is_refused_when_the_grant_is_for_a_group_the_person_is_not_in(
+    db: AsyncSession, test_org: Organization, test_user: User
+) -> None:
+    knowledge_base = KnowledgeBase(org_id=test_org.id, name="other group")
+    other_group = Group(org_id=test_org.id, name="not mine")
+    db.add_all([knowledge_base, other_group])
+    await db.flush()
+    db.add(
+        _principal_grant(
+            test_org.id, knowledge_base.id, PrincipalType.GROUP, other_group.id, AccessPermission.READ
+        )
+    )
+    await db.commit()
+
+    assert await _search_status(db, test_org, test_user, knowledge_base.id) == 404
+
+
+async def test_a_grant_on_one_base_does_not_open_another(
+    db: AsyncSession, test_org: Organization, test_user: User
+) -> None:
+    granted = KnowledgeBase(org_id=test_org.id, name="granted")
+    other = KnowledgeBase(org_id=test_org.id, name="not granted")
+    db.add_all([granted, other])
+    await db.flush()
+    db.add(_grant(test_org.id, test_user.id, granted.id, AccessPermission.READ))
+    await db.commit()
+
+    assert await _search_status(db, test_org, test_user, granted.id) == 200
+    assert await _search_status(db, test_org, test_user, other.id) == 404

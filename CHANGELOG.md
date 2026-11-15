@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- Knowledge-search chunks no longer carry a copy of an access list. Access is, and was, decided by
+  the live grants of the knowledge base (a revoked grant stops the next search); the stored
+  `acl_json` was never read and could only have gone stale, so new chunks store an empty list and
+  the unused filter is removed. Existing chunks and archives are unaffected, and no re-indexing is
+  needed.
+
 ### Added
 
 - **Optional cross-encoder reranking for knowledge search.** Set `RAG_API_RERANK_URL` (Compose:

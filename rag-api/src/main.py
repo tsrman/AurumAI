@@ -494,7 +494,6 @@ async def search_documents(
         limit=candidates,
         org_id=str(org_id),
         knowledge_base_id=str(knowledge_base_id),
-        acl=None,
     )
     results = await _filter_results_to_live_documents(
         results,
