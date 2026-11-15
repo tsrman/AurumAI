@@ -33,6 +33,8 @@
 
 ### Fixed
 
+- The Hermes Agent `knowledge_search` tool now tells the model that it can search the knowledge bases
+  named in the agent's instructions by `knowledgeBaseId`, not only the conversation's attachments.
 - Hermes agents with selected skills now hydrate only their selected, currently accessible code
   skills. Hydration requires the live bound session and checks the agent's current grant and archive state.
 - An agent with its own Hermes model can be selected and run when the organization's default model

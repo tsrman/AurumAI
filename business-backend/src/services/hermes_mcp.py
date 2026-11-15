@@ -99,7 +99,8 @@ class BridgeTool:
 TOOLS = (
     BridgeTool(
         "knowledge_search",
-        "Search the files the user attached to this conversation. " + _UNTRUSTED,
+        "Search the files the user attached to this conversation or, when you pass its "
+        "knowledgeBaseId, one of the knowledge bases named in your instructions. " + _UNTRUSTED,
         KnowledgeSearchRequest,
     ),
     BridgeTool(

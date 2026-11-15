@@ -356,7 +356,8 @@ A new MCP endpoint (HTTP/SSE) in the business backend, `/v1/hermes/mcp`, exposes
 the AurumAI tools the user may use for this turn. Hermes's `mcp_servers` config
 points at it with `tools.include`.
 
-- **Tools exposed.** Knowledge search, `web.search` and `web.read`, image generation
+- **Tools exposed.** Knowledge search (the conversation's attachments, and the knowledge
+  bases of the session's agent by id, each authorized for the person live), `web.search` and `web.read`, image generation
   and editing, granted MCP skills and code skills, model questions to the user, and
   `attach_file` for the files and charts it makes (see Files and charts).
 - **Live authorization.** Every call re-authorizes. Revoking a grant during a turn
@@ -631,9 +632,9 @@ Each phase is a separate PR behind the flag:
        hermes-egress would refuse. Calls the bridge denies or cannot complete
        are tool errors with bounded codes, not HTTP errors, which Hermes counts
        towards pausing the server; the ordinary rate limit still answers 429;
-     - knowledge search covers only the files attached to the conversation, as
-       for an ordinary chat agent; the Hermes agent definition's knowledge bases
-       follow with phase 4;
+     - knowledge search covers the files attached to the conversation and, by
+       `knowledgeBaseId`, the knowledge bases of the session's Hermes agent
+       definition (implemented with phase 4; any other id is refused);
      - questions to the user move to phase 4: they wait in Hermes's `clarify`
        state, answered through the durable `user_questions` flow by the session
        workflow, not over a tool call bounded by its timeout;

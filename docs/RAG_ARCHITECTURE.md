@@ -165,6 +165,13 @@ inside a running turn.
 
 ### 4.1 What the model can name
 
+Hermes Agent reaches knowledge the same way, through the `knowledge_search` tool of its MCP bridge
+(`/v1/hermes/mcp`): the conversation's attachments by default, or, by `knowledgeBaseId`, one of the
+knowledge bases of the session's Hermes agent definition (any other id is refused). The bridge
+authorizes the person the session belongs to against the live KB grant and then calls the Business
+API search path, so everything in this section, including reranking, applies unchanged; the sandbox
+itself has no route to the RAG service.
+
 For an ordinary KB the model calls a search skill with a `knowledge_base_id` argument; the
 backend checks the caller's grant on **that** id at search time, so a model that invents or
 is tricked into another KB's id is refused. For attachments the hidden skill's schema pins
