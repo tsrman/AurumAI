@@ -1002,6 +1002,13 @@ services:
       RAG_API_MILVUS_URI: "http://milvus:19530"
       RAG_API_RERANKER_URL: "http://reranker:7997"
       RAG_API_SEARCH_EMBEDDING_TIMEOUT_SECONDS: "${RAG_API_SEARCH_EMBEDDING_TIMEOUT_SECONDS:-10}"
+      # Optional cross-encoder reranking (docs/RAG_ARCHITECTURE.md). Off while the URL is
+      # empty; to turn it on start the `rerank` profile and set
+      # RAG_API_RERANK_URL=http://rag-rerank:7997 in .env.
+      RAG_API_RERANK_URL: "${RAG_API_RERANK_URL:-}"
+      RAG_API_RERANK_MODEL: "${RAG_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}"
+      RAG_API_RERANK_CANDIDATES: "${RAG_API_RERANK_CANDIDATES:-30}"
+      RAG_API_RERANK_TIMEOUT_SECONDS: "${RAG_API_RERANK_TIMEOUT_SECONDS:-10}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "console"
     # this ran Alembic migrations against a Postgres
     # that might still be starting (the short depends_on form only orders
@@ -1087,6 +1094,24 @@ services:
     networks:
       - rag-net
 
+  # Optional cross-encoder reranker for knowledge search (off by default). Start with
+  # `--profile rerank` and set RAG_API_RERANK_URL=http://rag-rerank:7997 for rag-api.
+  # Separate from `reranker` above, which serves the embedding model.
+  rag-rerank:
+    image: michaelf34/infinity:0.0.77
+    container_name: aurum-ai-rag-rerank
+    restart: unless-stopped
+    profiles: ["rerank"]
+    command: v2 --model-id ${RAG_RERANK_MODEL:-BAAI/bge-reranker-v2-m3} --port 7997
+    environment:
+      HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-0}"
+      TRANSFORMERS_OFFLINE: "${HF_HUB_OFFLINE:-0}"
+    volumes:
+      - rerank_cache:/app/.cache
+    # No host port and no auth: only rag-api (rag-net) calls it.
+    networks:
+      - rag-net
+
   # Two reference MCP servers for testing the platform's MCP skill integration
   # (tool-worker/src/mcp_client.py). Disabled by default; start explicitly with
   # `docker compose --profile mcp up -d`.
@@ -1132,6 +1157,7 @@ volumes:
   etcd_data:
   milvus_data:
   reranker_cache:
+  rerank_cache:
 
 networks:
   runner-net:

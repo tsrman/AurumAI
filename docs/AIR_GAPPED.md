@@ -16,7 +16,7 @@ verify the exact inputs on an authorized connected build host first.
   mirror among `HERMES_EGRESS_PACKAGE_HOSTS`.
 - Mirror pinned base/application/infrastructure images and record actual digests.
 - Prepare pgvector/pg_partman5.5.0 prerequisites and current migration chains.
-- Obtain embedding/reranker/parser model revisions from their actual sources,
+- Obtain embedding, parser and (if you enable reranking) reranker model revisions from their actual sources,
   verify model-card licenses/checksums, and populate the expected caches.
 - Include upstream license notices when redistributing packages/images/weights.
 

@@ -771,8 +771,9 @@ knowledge-base grant and passes the canonical organization and knowledge-base id
 applies both to every SQL and Milvus lookup. Search embeds the query, runs a **hybrid**
 search (dense cosine and BM25 sparse in one Milvus call, fused with reciprocal-rank fusion,
 `k = 60`), caps the fetch size, filters hits to documents that still exist and whose
-knowledge base is `active` in PostgreSQL (closing the delete race), and returns the parent
-windows. Result size is clamped server-side because skill arguments are model-formed.
+knowledge base is `active` in PostgreSQL (closing the delete race), optionally re-orders the
+candidates with a cross-encoder reranker (off by default; failure falls back to the fusion
+order), and returns the parent windows. Result size is clamped server-side because skill arguments are model-formed.
 
 ### 13.3 Ownership
 

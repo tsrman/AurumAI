@@ -401,3 +401,127 @@ async def test_list_documents_reports_degraded_and_truncated_chunks() -> None:
 
     assert rows[0]["uncontextualized_chunks"] == 1
     assert rows[0]["truncated_chunks"] == 2
+
+
+def _hit(document_id: uuid.UUID, content: str, score: float = 0.5) -> dict:
+    return {
+        "id": f"{document_id}:{content}",
+        "content": content,
+        "indexed_content": content,
+        "relevance_score": score,
+        "metadata": {"document_id": str(document_id), "knowledge_base_id": "kb"},
+    }
+
+
+async def _search(
+    hits: list[dict],
+    *,
+    limit: int,
+    live: set[uuid.UUID],
+    rerank_scores: list[float] | None = None,
+    rerank_error: Exception | None = None,
+    rerank_url: str = "http://rerank:7997",
+):
+    fake_search = AsyncMock(return_value=(hits, []))
+    fake_rerank = AsyncMock(return_value=rerank_scores, side_effect=rerank_error)
+    with (
+        patch("httpx.AsyncClient", return_value=_make_embedding_httpx_client()),
+        patch("src.main.search_milvus_hybrid", fake_search),
+        patch("src.main.AsyncSessionLocal", return_value=_FakeSession(live_ids=live)),
+        patch("src.main.rerank_passages", fake_rerank),
+        patch("src.rerank.settings.rerank_url", rerank_url),
+        patch("src.main.settings.rerank_candidates", 30),
+        patch("src.main.settings.search_max_limit", 50),
+    ):
+        body = await main.search_documents(
+            main.SearchRequest(query="q", limit=limit), str(uuid.uuid4()), str(uuid.uuid4())
+        )
+    return body, fake_search, fake_rerank
+
+
+@pytest.mark.asyncio
+async def test_search_returns_no_more_than_the_requested_limit_without_a_reranker() -> None:
+    docs = [uuid.uuid4() for _ in range(6)]
+    hits = [_hit(d, f"text {i}") for i, d in enumerate(docs)]
+
+    body, fake_search, fake_rerank = await _search(hits, limit=3, live=set(docs), rerank_url="")
+
+    assert [r["content"] for r in body["results"]] == ["text 0", "text 1", "text 2"]
+    assert fake_search.call_args.kwargs["limit"] == 3
+    fake_rerank.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_reranks_the_candidates_and_returns_the_best_limit() -> None:
+    docs = [uuid.uuid4() for _ in range(4)]
+    hits = [_hit(d, f"text {i}", score=1 - i / 10) for i, d in enumerate(docs)]
+
+    body, fake_search, fake_rerank = await _search(
+        hits, limit=2, live=set(docs), rerank_scores=[0.1, 0.9, 0.3, 0.8]
+    )
+
+    assert [r["content"] for r in body["results"]] == ["text 1", "text 3"]
+    assert [r["relevance_score"] for r in body["results"]] == [0.9, 0.8]
+    # The fused score stays visible next to the reranker's.
+    assert body["results"][0]["fusion_score"] == pytest.approx(0.9)
+    assert body["warnings"] == []
+    # Milvus is asked for a candidate pool, not just the limit.
+    assert fake_search.call_args.kwargs["limit"] == 30
+    assert fake_rerank.await_args.args[1] == ["text 0", "text 1", "text 2", "text 3"]
+
+
+@pytest.mark.asyncio
+async def test_search_reranks_only_documents_that_still_exist() -> None:
+    alive, gone = uuid.uuid4(), uuid.uuid4()
+    hits = [_hit(gone, "deleted"), _hit(alive, "kept")]
+
+    body, _, fake_rerank = await _search(hits, limit=5, live={alive}, rerank_scores=[0.4])
+
+    assert [r["content"] for r in body["results"]] == ["kept"]
+    assert fake_rerank.await_args.args[1] == ["kept"]
+
+
+@pytest.mark.asyncio
+async def test_search_sends_one_passage_for_hits_that_share_a_window() -> None:
+    doc = uuid.uuid4()
+    hits = [_hit(doc, "same window", 0.9), _hit(doc, "same window", 0.8), _hit(doc, "other", 0.7)]
+
+    body, _, fake_rerank = await _search(hits, limit=5, live={doc}, rerank_scores=[0.6, 0.5])
+
+    assert fake_rerank.await_args.args[1] == ["same window", "other"]
+    assert [r["content"] for r in body["results"]] == ["same window", "other"]
+
+
+@pytest.mark.asyncio
+async def test_search_falls_back_to_fusion_order_when_the_reranker_fails() -> None:
+    from src.rerank import RerankError
+
+    docs = [uuid.uuid4() for _ in range(3)]
+    hits = [_hit(d, f"text {i}") for i, d in enumerate(docs)]
+
+    body, _, _ = await _search(hits, limit=2, live=set(docs), rerank_error=RerankError("down"))
+
+    assert [r["content"] for r in body["results"]] == ["text 0", "text 1"]
+    assert body["results"][0]["relevance_score"] == 0.5
+    assert body["warnings"] == ["Reranking unavailable; results are in fusion order"]
+
+
+@pytest.mark.asyncio
+async def test_search_scores_at_most_the_candidate_pool() -> None:
+    docs = [uuid.uuid4() for _ in range(5)]
+    hits = [_hit(d, f"text {i}") for i, d in enumerate(docs)]
+    fake_rerank = AsyncMock(return_value=[0.5, 0.4])
+    with (
+        patch("httpx.AsyncClient", return_value=_make_embedding_httpx_client()),
+        patch("src.main.search_milvus_hybrid", AsyncMock(return_value=(hits, []))),
+        patch("src.main.AsyncSessionLocal", return_value=_FakeSession(live_ids=set(docs))),
+        patch("src.main.rerank_passages", fake_rerank),
+        patch("src.rerank.settings.rerank_url", "http://rerank:7997"),
+        patch("src.main.settings.rerank_candidates", 2),
+    ):
+        body = await main.search_documents(
+            main.SearchRequest(query="q", limit=1), str(uuid.uuid4()), str(uuid.uuid4())
+        )
+
+    assert fake_rerank.await_args.args[1] == ["text 0", "text 1"]
+    assert [r["content"] for r in body["results"]] == ["text 0"]

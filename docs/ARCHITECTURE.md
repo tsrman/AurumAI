@@ -251,8 +251,9 @@ See [the design](HERMES_AGENT.md), [the guide](guides/hermes-agent.md) and
 Uploads go through the backend into MinIO, with explicit file/knowledge-base metadata
 and direct conversation ownership. The RAG worker downloads/parses source files,
 chunks and embeds them, and records index receipt/generation. Hybrid retrieval
-combines Milvus dense and BM25 search by reciprocal-rank fusion (the `reranker` service only
-serves embeddings; see the [RAG architecture](RAG_ARCHITECTURE.md)). No RAG database/HTTP ports are
+combines Milvus dense and BM25 search by reciprocal-rank fusion, optionally followed by a
+cross-encoder rerank (`RAG_API_RERANK_URL`; the `reranker` service only serves embeddings; see
+the [RAG architecture](RAG_ARCHITECTURE.md)). No RAG database/HTTP ports are
 published by the ordinary profile solely for browser convenience.
 
 Chat attachments create their own conversation-scoped KB/search skill. Knowledge

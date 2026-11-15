@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Optional cross-encoder reranking for knowledge search.** Set `RAG_API_RERANK_URL` (Compose:
+  start the new `rerank` profile, service `rag-rerank`, and use `http://rag-rerank:7997`) and the
+  hybrid results are re-ordered by a reranker model (default `BAAI/bge-reranker-v2-m3`) before the
+  best ones are returned. Hits that share a parent window are sent once. Off by default; if the
+  reranker is down or slow, search falls back to the fusion order. Search now also returns at most
+  the requested number of results (it could return up to twice as many).
 - A knowledge-base document now records how it differs from the ideal: chunks indexed without their
   contextual-retrieval context (`uncontextualized_chunks`) and chunks dropped at the per-document cap
   (`truncated_chunks`). Both are logged by the worker, returned by the document API and shown on the

@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     ingest_task_queue: str = "rag-ingest"
     search_max_limit: int = 50
+    # Optional cross-encoder reranking of the fused hybrid results. Empty URL = off
+    # (results stay in reciprocal-rank-fusion order). The service must answer
+    # POST {rerank_url}/rerank in the Infinity / Cohere shape.
+    rerank_url: str = ""
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # How many fused hits are scored; clamped to search_max_limit. More candidates
+    # cost more reranker time and can only improve which `limit` hits are returned.
+    rerank_candidates: int = Field(default=30, ge=1)
+    rerank_timeout_seconds: float = Field(default=10.0, gt=0)
+    # Each passage is cut to this many characters before scoring.
+    rerank_max_chars: int = Field(default=2000, ge=100)
     # an unbounded DocumentCreate.content turns into
     # thousands of per-chunk LLM calls plus one giant embedding request in
     # rag-worker — cap it at the point of entry, before it's ever queued
