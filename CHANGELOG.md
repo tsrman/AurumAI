@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.0.9 (2026-11-15)
+
+Knowledge search grows up: optional reranking, visible indexing quality, a rebuild tool for vectors and chunks that inherit their knowledge base's grants; plus Hermes fixes and dependency updates (gunicorn 26, websockets 17, uvicorn 0.54).
 
 ### Changed
 

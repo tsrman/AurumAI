@@ -84,6 +84,7 @@ session token, so authorization and quota apply.
 | Starter tools (CSV statistics, JSON formatting) | `./install-platform.sh --apply` (a dry run without `--apply`) |
 | Code skills | `docker compose --profile build build skill-sandbox`, start with profile `skills-exec` |
 | Knowledge bases (RAG) | `docker compose --profile rag up -d --build`; the first model download can take minutes |
+| Reranking of knowledge search | Optional: add profile `rerank` and set `RAG_API_RERANK_URL=http://rag-rerank:7997`; see [the RAG architecture](../RAG_ARCHITECTURE.md#81-cross-encoder-reranking) |
 | Questions | `USER_QUESTIONS_ENABLED=true` |
 | Web search and read | `docker-compose.web.yml` with profile `web`, its secrets and enforcement checks |
 | Images | `IMAGES_ENABLED=true`, then models in Admin → Models |

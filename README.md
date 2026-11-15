@@ -126,7 +126,7 @@ including three complete examples, agent mapping, validation, access and chat ex
 | Starter MCP utilities | Included by `./install-platform.sh --apply`; uses only `mcp-everything` |
 | Unrestricted MCP fetch fixture | Opt-in test profile only; `docker compose --profile mcp up -d mcp-fetch` |
 | Code skills | Build `skill-sandbox` with profile `build`; start `skill-executor` with profile `skills-exec` |
-| RAG | `docker compose --profile rag up -d --build` |
+| RAG | `docker compose --profile rag up -d --build`; optional reranking with profile `rerank` and `RAG_API_RERANK_URL` |
 | Durable questions | Enable server-owned `USER_QUESTIONS_ENABLED`; deploy compatible backend, runner and UI |
 | Web search/read | Use `docker-compose.web.yml`, profile `web`, service/search secrets and operator enforcement checks |
 | Images | Enable `IMAGES_ENABLED`, choose models in Admin UI → Models, grant `images.generate` |
