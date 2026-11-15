@@ -96,6 +96,15 @@ uv run python -m src.cli.archive_data run --org-id <ORG_UUID> --audit           
 The runbook has roles, bounds, export and recovery: [data archive](../operations/data-archive.md).
 An ambiguous deletion is not a successful cleanup: keep the recovery evidence.
 
+## Rebuilding knowledge vectors
+
+After changing the embedding model or its dimension, the chunking or the parser, rebuild the
+vectors with the operator tool `python -m src.reindex` (it needs a `rag_lifecycle` login in
+`RAG_API_REINDEX_DATABASE_URL`). It is safe to repeat, never forces a document that is being
+indexed, and has a `--dry-run`. The procedure, including the dimension-change case that drops the
+Milvus collection, is in the
+[RAG architecture](../RAG_ARCHITECTURE.md#113-changing-the-embedding-model-or-dimension).
+
 ## Identity synchronization
 
 An optional worker (profile `maintenance`) synchronises Keycloak users and groups in the
