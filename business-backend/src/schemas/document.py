@@ -29,6 +29,10 @@ class DocumentResponse(BaseModel):
     source_filename: Optional[str] = None
     status: str
     chunk_count: int
+    # Chunks indexed without their contextual-retrieval context, and chunks dropped at
+    # the per-document cap. Zero for documents indexed before these were recorded.
+    uncontextualized_chunks: int = 0
+    truncated_chunks: int = 0
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime

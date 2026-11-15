@@ -119,6 +119,8 @@ class DocumentResponse(BaseModel):
     source_filename: Optional[str] = None
     status: str
     chunk_count: int
+    uncontextualized_chunks: int = 0
+    truncated_chunks: int = 0
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -334,6 +336,8 @@ async def list_documents(
                 "source_filename": d.source_filename,
                 "status": d.status,
                 "chunk_count": d.chunk_count,
+                "uncontextualized_chunks": d.uncontextualized_chunks,
+                "truncated_chunks": d.truncated_chunks,
                 "error": d.error,
                 "created_at": d.created_at,
                 "updated_at": d.updated_at,
@@ -368,6 +372,8 @@ async def get_document(
             "source_filename": doc.source_filename,
             "status": doc.status,
             "chunk_count": doc.chunk_count,
+            "uncontextualized_chunks": doc.uncontextualized_chunks,
+            "truncated_chunks": doc.truncated_chunks,
             "error": doc.error,
             "created_at": doc.created_at,
             "updated_at": doc.updated_at,

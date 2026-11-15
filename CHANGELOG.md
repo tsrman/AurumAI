@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- A knowledge-base document now records how it differs from the ideal: chunks indexed without their
+  contextual-retrieval context (`uncontextualized_chunks`) and chunks dropped at the per-document cap
+  (`truncated_chunks`). Both are logged by the worker, returned by the document API and shown on the
+  document in the chat app. Migration `0007` of the RAG database adds the columns (instant, with a
+  default of zero for existing documents); upgrade `rag-api` and `rag-worker` together.
+
 ### Fixed
 
 - Hermes agents with selected skills now hydrate only their selected, currently accessible code

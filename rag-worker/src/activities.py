@@ -204,11 +204,15 @@ async def index_document(input: IndexDocumentInput) -> None:
         await session.execute(
             text(
                 "UPDATE documents SET status = 'indexed', chunk_count = :chunk_count, "
+                "uncontextualized_chunks = :uncontextualized_chunks, "
+                "truncated_chunks = :truncated_chunks, "
                 "updated_at = now() WHERE id = :id AND org_id = :org_id "
                 "AND knowledge_base_id = :knowledge_base_id"
             ),
             {
                 "chunk_count": milvus_stats.get("indexed", res.get("chunks_created", 0)),
+                "uncontextualized_chunks": res.get("uncontextualized_chunks", 0),
+                "truncated_chunks": res.get("truncated_chunks", 0),
                 "id": input.document_id,
                 "org_id": input.org_id,
                 "knowledge_base_id": input.knowledge_base_id,

@@ -348,3 +348,56 @@ async def test_search_scopes_milvus_and_live_document_filter_to_knowledge_base()
 
     assert fake_search.call_args.kwargs["org_id"] == str(org_id)
     assert fake_search.call_args.kwargs["knowledge_base_id"] == str(knowledge_base_id)
+
+
+@pytest.mark.asyncio
+async def test_get_document_reports_degraded_and_truncated_chunks() -> None:
+    org, kb, doc_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    doc = Document(
+        id=doc_id,
+        org_id=org,
+        knowledge_base_id=kb,
+        title="t",
+        status="indexed",
+        chunk_count=5,
+        uncontextualized_chunks=3,
+        truncated_chunks=7,
+    )
+    doc.created_at = doc.updated_at = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc
+    )
+    with patch.object(main, "AsyncSessionLocal", lambda: _FakeSession(doc=doc)):
+        body = await main.get_document(str(doc_id), x_org_id=str(org), x_knowledge_base_id=str(kb))
+
+    assert body["uncontextualized_chunks"] == 3
+    assert body["truncated_chunks"] == 7
+
+
+@pytest.mark.asyncio
+async def test_list_documents_reports_degraded_and_truncated_chunks() -> None:
+    org, kb = uuid.uuid4(), uuid.uuid4()
+    doc = Document(
+        id=uuid.uuid4(),
+        org_id=org,
+        knowledge_base_id=kb,
+        title="t",
+        status="indexed",
+        chunk_count=5,
+        uncontextualized_chunks=1,
+        truncated_chunks=2,
+    )
+    doc.created_at = doc.updated_at = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc
+    )
+
+    class _Session(_FakeSession):
+        async def execute(self, stmt: object, params: object = None) -> MagicMock:
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = [doc]
+            return result
+
+    with patch.object(main, "AsyncSessionLocal", lambda: _Session()):
+        rows = await main.list_documents(x_org_id=str(org), x_knowledge_base_id=str(kb))
+
+    assert rows[0]["uncontextualized_chunks"] == 1
+    assert rows[0]["truncated_chunks"] == 2

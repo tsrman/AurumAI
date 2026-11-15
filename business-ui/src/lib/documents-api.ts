@@ -9,6 +9,10 @@ export interface DocumentDto {
   source_filename?: string | null;
   status: string;
   chunk_count: number;
+  /** Chunks indexed without their contextual-retrieval context. */
+  uncontextualized_chunks?: number;
+  /** Chunks dropped at the per-document cap. */
+  truncated_chunks?: number;
   error?: string | null;
   created_at: string;
   updated_at: string;

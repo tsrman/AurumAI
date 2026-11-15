@@ -134,6 +134,8 @@
     },
     "document": {
       "processingFailed": "The document could not be processed",
+      "truncated": "Partly indexed: the last {count} chunks were left out",
+      "uncontextualized": "{count} chunks were indexed without context; search may be less precise",
       "deleteAria": "Delete document {name}",
       "deleteTitle": "Delete the document?",
       "deleteDescription": "The document “{name}” will be removed from storage and search.",

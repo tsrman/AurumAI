@@ -179,3 +179,41 @@ async def test_index_document_fails_without_content_and_without_file() -> None:
 def test_index_document_input_requires_knowledge_base_id() -> None:
     with pytest.raises(ValueError, match="knowledge_base_id"):
         IndexDocumentInput(document_id="22222222-2222-2222-2222-222222222222", org_id="33333333-3333-3333-3333-333333333333")
+
+
+@pytest.mark.asyncio
+async def test_index_document_records_degraded_and_truncated_chunks() -> None:
+    """The document row says when it went in without context or was cut at the chunk cap."""
+    session_select = _FakeSession(select_row=("content text", None, "Title", None, None))
+    session_indexing = _FakeSession()
+    session_final = _FakeSession()
+    sessions = iter([session_select, session_indexing, session_final])
+
+    with (
+        patch("src.activities.AsyncSessionLocal", side_effect=lambda: next(sessions)),
+        patch(
+            "src.indexing.ingestion.ingest_parsed_document",
+            AsyncMock(
+                return_value={
+                    "status": "ok",
+                    "chunks_created": 5,
+                    "uncontextualized_chunks": 3,
+                    "truncated_chunks": 7,
+                    "milvus": {"indexed": 5},
+                }
+            ),
+        ),
+    ):
+        await activities.index_document(
+            IndexDocumentInput(
+                document_id="22222222-2222-2222-2222-222222222222",
+                org_id="33333333-3333-3333-3333-333333333333",
+                knowledge_base_id=KNOWLEDGE_BASE_ID,
+            )
+        )
+
+    final_sql, final_params = session_final.executed[1]
+    assert "uncontextualized_chunks = :uncontextualized_chunks" in final_sql
+    assert "truncated_chunks = :truncated_chunks" in final_sql
+    assert final_params["uncontextualized_chunks"] == 3
+    assert final_params["truncated_chunks"] == 7

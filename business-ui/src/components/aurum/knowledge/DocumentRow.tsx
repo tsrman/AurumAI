@@ -63,6 +63,16 @@ export function DocumentRow({
               {t("processingFailed")}
             </p>
           ) : null}
+          {status === "indexed" && (doc.truncated_chunks ?? 0) > 0 ? (
+            <p className="mt-1 text-xs text-aurum-text-3">
+              {t("truncated", { count: doc.truncated_chunks ?? 0 })}
+            </p>
+          ) : null}
+          {status === "indexed" && (doc.uncontextualized_chunks ?? 0) > 0 ? (
+            <p className="mt-1 text-xs text-aurum-text-3">
+              {t("uncontextualized", { count: doc.uncontextualized_chunks ?? 0 })}
+            </p>
+          ) : null}
         </td>
         {canDelete ? (
           <td className="px-4 py-3 text-right">

@@ -65,14 +65,24 @@ async def ingest_parsed_document(
     # run one contextualization LLM call each for — truncate rather than let
     # a pathological document (e.g. mostly very short "sentences") drive
     # thousands of calls.
-    if len(window_chunks) > settings.max_chunks_per_document:
+    truncated_chunks = max(0, len(window_chunks) - settings.max_chunks_per_document)
+    if truncated_chunks:
         logger.warning(
-            "Document %s produced %s chunks, truncating to max_chunks_per_document=%s",
+            "rag_document_truncated document=%s chunks=%s kept=%s dropped=%s",
             document_id,
             len(window_chunks),
             settings.max_chunks_per_document,
+            truncated_chunks,
         )
         window_chunks = window_chunks[: settings.max_chunks_per_document]
+
+    # Contextual retrieval fails soft (the chunk is indexed without its context), so the
+    # outcome is counted here: a silent degradation would otherwise only show as poorer
+    # recall. Switched off, or mocked, on purpose is not a degradation.
+    contextual_expected = (
+        settings.contextual_retrieval_enabled and not settings.contextual_retrieval_mock
+    )
+    uncontextualized_chunks = 0
 
     semaphore = asyncio.Semaphore(10)
 
@@ -85,6 +95,9 @@ async def ingest_parsed_document(
                 chunk=item.sentence,
                 document_excerpt=excerpt,
             )
+            if contextual_expected and not context.strip():
+                nonlocal uncontextualized_chunks
+                uncontextualized_chunks += 1
             indexed_text = build_contextual_content(context, item.sentence)
             # index_document's workflow sets heartbeat_timeout=1m but this
             # was the only long-running activity that never called
@@ -100,6 +113,13 @@ async def ingest_parsed_document(
 
     contextualized = await asyncio.gather(*[process_item(item) for item in window_chunks])
     activity.heartbeat("chunks contextualized, requesting embeddings")
+    if uncontextualized_chunks:
+        logger.warning(
+            "contextual_retrieval_degraded document=%s uncontextualized=%s of=%s",
+            document_id,
+            uncontextualized_chunks,
+            len(window_chunks),
+        )
     embeddings = await _embed_texts([text for text, _, _, _ in contextualized])
     activity.heartbeat("embeddings received, upserting to Milvus")
 
@@ -147,6 +167,8 @@ async def ingest_parsed_document(
         "document_id": document_id,
         "title": parsed.title,
         "chunks_created": len(docs),
+        "uncontextualized_chunks": uncontextualized_chunks,
+        "truncated_chunks": truncated_chunks,
         "milvus": milvus_stats,
         "status": "ok" if milvus_stats.get("errors", 0) == 0 else "partial",
     }
