@@ -5,6 +5,10 @@ durable execution; PostgreSQL holds application state and permissions; a separat
 conversation runner executes each conversation's workflow tree. The public source
 retains established technical identifiers for deployment/replay compatibility.
 
+This page is the short list of rules to preserve. For the full technical description
+(trust zones, data architecture, the chat turn, Temporal, scaling and failure modes) see
+[technical architecture](TECHNICAL_ARCHITECTURE.md).
+
 ## Components and data flow
 
 ```mermaid
@@ -247,7 +251,8 @@ See [the design](HERMES_AGENT.md), [the guide](guides/hermes-agent.md) and
 Uploads go through the backend into MinIO, with explicit file/knowledge-base metadata
 and direct conversation ownership. The RAG worker downloads/parses source files,
 chunks and embeds them, and records index receipt/generation. Hybrid retrieval
-combines Milvus search with the configured reranker. No RAG database/HTTP ports are
+combines Milvus dense and BM25 search by reciprocal-rank fusion (the `reranker` service only
+serves embeddings; see the [RAG architecture](RAG_ARCHITECTURE.md)). No RAG database/HTTP ports are
 published by the ordinary profile solely for browser convenience.
 
 Chat attachments create their own conversation-scoped KB/search skill. Knowledge
