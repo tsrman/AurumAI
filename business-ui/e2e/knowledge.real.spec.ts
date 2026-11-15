@@ -147,7 +147,7 @@ test.describe("Knowledge/RAG: full UI lifecycle", () => {
       ]);
 
       let documentRow = memberPage.getByRole("row", { name: new RegExp(sourceFilename) });
-      await expect(documentRow.getByText("Indexed")).toBeVisible({ timeout: 180_000 });
+      await expect(documentRow.getByText("Indexed", { exact: true })).toBeVisible({ timeout: 180_000 });
       await expect
         .poll(async () => Number((await documentRow.locator("td").nth(3).textContent())?.trim()))
         .toBeGreaterThan(0);
