@@ -165,3 +165,104 @@ async def test_embed_texts_batches_requests_by_embed_batch_size(monkeypatch) -> 
 
     assert len(embeddings) == 5
     assert posted_batches == [["a", "b"], ["c", "d"], ["e"]]
+
+
+def _ingest_patches(captured: list):
+    async def fake_bulk_insert(docs: list[tuple[str, object]]) -> dict:
+        captured.append(docs)
+        return {"indexed": len(docs), "errors": 0, "skipped": False}
+
+    return (
+        patch("src.indexing.ingestion.activity.heartbeat"),
+        patch(
+            "src.indexing.ingestion._embed_texts",
+            AsyncMock(side_effect=lambda texts: [[0.1] * 1536 for _ in texts]),
+        ),
+        patch("src.indexing.ingestion.bulk_insert_milvus", fake_bulk_insert),
+    )
+
+
+@pytest.mark.asyncio
+async def test_ingest_reports_chunks_indexed_without_context(monkeypatch, caplog) -> None:
+    """Contextual retrieval degrades silently by design; the result and the log must
+    say how many chunks went in without their context."""
+    monkeypatch.setattr(settings, "contextual_retrieval_enabled", True)
+    monkeypatch.setattr(settings, "contextual_retrieval_mock", False)
+    text = "Alpha sentence. Beta sentence. Gamma sentence."
+    p1, p2, p3 = _ingest_patches([])
+    with (
+        p1,
+        p2,
+        p3,
+        patch(
+            "src.indexing.ingestion.generate_chunk_context",
+            AsyncMock(side_effect=["", "Context B", ""]),
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        result = await ingest_parsed_document(
+            _parsed(text), org_id="org-1", knowledge_base_id=KNOWLEDGE_BASE_ID, document_id="doc-ctx"
+        )
+
+    assert result["chunks_created"] == 3
+    assert result["uncontextualized_chunks"] == 2
+    assert result["truncated_chunks"] == 0
+    assert "contextual_retrieval_degraded" in caplog.text
+    assert "doc-ctx" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_ingest_reports_no_degradation_when_context_is_present(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(settings, "contextual_retrieval_enabled", True)
+    monkeypatch.setattr(settings, "contextual_retrieval_mock", False)
+    p1, p2, p3 = _ingest_patches([])
+    with (
+        p1,
+        p2,
+        p3,
+        patch("src.indexing.ingestion.generate_chunk_context", AsyncMock(return_value="ctx")),
+        caplog.at_level("WARNING"),
+    ):
+        result = await ingest_parsed_document(
+            _parsed("Alpha sentence. Beta sentence."),
+            org_id="org-1",
+            knowledge_base_id=KNOWLEDGE_BASE_ID,
+            document_id="doc-ok",
+        )
+
+    assert result["uncontextualized_chunks"] == 0
+    assert "contextual_retrieval_degraded" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_ingest_does_not_count_chunks_when_contextual_retrieval_is_off(monkeypatch) -> None:
+    """Switched off on purpose is not a degradation."""
+    monkeypatch.setattr(settings, "contextual_retrieval_enabled", False)
+    p1, p2, p3 = _ingest_patches([])
+    with p1, p2, p3:
+        result = await ingest_parsed_document(
+            _parsed("Alpha sentence. Beta sentence."),
+            org_id="org-1",
+            knowledge_base_id=KNOWLEDGE_BASE_ID,
+            document_id="doc-off",
+        )
+
+    assert result["uncontextualized_chunks"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ingest_reports_how_many_chunks_the_cap_dropped(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(settings, "contextual_retrieval_enabled", False)
+    monkeypatch.setattr(settings, "max_chunks_per_document", 2)
+    p1, p2, p3 = _ingest_patches([])
+    with p1, p2, p3, caplog.at_level("WARNING"):
+        result = await ingest_parsed_document(
+            _parsed("Alpha sentence. Beta sentence. Gamma sentence. Delta sentence."),
+            org_id="org-1",
+            knowledge_base_id=KNOWLEDGE_BASE_ID,
+            document_id="doc-cap",
+        )
+
+    assert result["chunks_created"] == 2
+    assert result["truncated_chunks"] == 2
+    assert "doc-cap" in caplog.text

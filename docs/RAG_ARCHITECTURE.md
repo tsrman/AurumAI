@@ -103,7 +103,7 @@ authorization and audit paths.
 
 | Table | Purpose |
 |---|---|
-| `documents` | `id`, `org_id`, `knowledge_base_id`, `title`, inline `content` **or** `source_key` plus `source_filename`, `parsed_markdown` (cache of the parse), `status` (`pending`, `indexing`, `indexed`, `failed`), `error`, `chunk_count`, timestamps. |
+| `documents` | `id`, `org_id`, `knowledge_base_id`, `title`, inline `content` **or** `source_key` plus `source_filename`, `parsed_markdown` (cache of the parse), `status` (`pending`, `indexing`, `indexed`, `failed`), `error`, `chunk_count`, `uncontextualized_chunks` and `truncated_chunks` (how the finished document differs from the ideal, see sections 6.4 and 7), timestamps. |
 | `rag_kb_lifecycle` | One row per KB: `state` (`active`, `archiving`, `archived`, `restore_pending`), `generation`, `archive_id`, `provenance_complete`. The fence. |
 | `rag_index_executions` | One row per indexing operation: operation id (idempotency key), document, generation, the exact Temporal `workflow_id`, `run_id`, task queue, terminal status and close time. |
 | `rag_external_operations` | Intents for Milvus writes and deletes (`vector_upsert`, `vector_delete`) with a `settled` flag. |
@@ -309,7 +309,8 @@ runs two kinds of activity, each with bounded retries:
    later re-index does not repeat the download and the (expensive) parse.
    Unconfigured storage, an empty file or a parser that produces no text are non-retryable.
 3. Sets `status = indexing`, then runs ingestion (chunk, contextualize, embed, upsert).
-4. Writes `status = indexed` and the number of chunks **actually upserted**. If Milvus
+4. Writes `status = indexed`, the number of chunks **actually upserted** and the two counts of
+   section 7 (`uncontextualized_chunks`, `truncated_chunks`). If Milvus
    reported a partial failure the activity raises, so Temporal retries it (up to three
    attempts) and, failing that, the document is marked `failed`: a document is never shown
    as indexed when its vectors are missing.
@@ -335,17 +336,22 @@ The indexing strategy is **sentence window (small-to-big)**:
   overlap of three sentences between windows. The parent window is what the model receives
   when the chunk is retrieved, which gives context. Hits from the same window share it.
 * A document produces at most `max_chunks_per_document` chunks (default 2000); beyond that
-  the tail is dropped with a warning, because each chunk can cost a model call.
+  the tail is dropped, because each chunk can cost a model call. The drop is logged
+  (`rag_document_truncated`) and the number of dropped chunks is stored on the document
+  (`truncated_chunks`), so a partly indexed document is visible in the knowledge-base page.
 
 **Contextual retrieval** (optional, `contextual_retrieval_enabled`, default on): for each
 chunk the worker asks a model for a one- or two-sentence description of where the chunk sits
 in the document (title plus the document's first 1200 characters plus the chunk), at
 temperature 0 and at most 120 output tokens, 10 calls in flight at a time. The description
 is prepended to the chunk, and the **combined text is what is embedded and what feeds the
-BM25 function**, so both retrieval legs benefit. Failure is silent by design: on any error
-the chunk is indexed without context. This means an air-gapped or unconfigured gateway does
-not break ingestion, but it also means **retrieval quality can degrade without an error**;
-check the worker logs for `Contextual retrieval failed` if recall looks poor. The call goes
+BM25 function**, so both retrieval legs benefit. Failure is soft by design: on any error
+the chunk is indexed without context. It is **counted**, not silent: the worker logs
+`contextual_retrieval_degraded` with the number of affected chunks per document, stores it as
+`uncontextualized_chunks` and the knowledge-base page shows a notice on the document. This means an air-gapped or unconfigured gateway does
+not break ingestion; look at the per-document counts (and the `contextual_retrieval` line the
+worker logs at start, which shows whether it is enabled and against which gateway) when recall
+looks poor. The call goes
 to `*_LLM_GATEWAY_URL` with `contextual_model`; in the default Compose stack it points at the
 backend's protected endpoint, which the worker has no token for, so contextualization is
 effectively off until a gateway is configured (the gateway overlay does this).
@@ -591,11 +597,11 @@ responses (unsettled intents), and `Contextual retrieval failed` warnings in the
   order is the RRF fusion order. A cross-encoder rerank step is a natural extension point
   between steps 3 and 5 of section 8, but it does not exist today.
 * **No per-document ACL.** Access is KB-wide. `acl_json` is stored but not enforced.
-* **Silent contextual degradation.** Chunks are indexed without context if the model call
-  fails; ingestion still succeeds.
+* **Soft contextual degradation.** Chunks are indexed without context if the model call
+  fails and ingestion still succeeds, but the per-document counts make it visible.
 * **Sentence-granular chunks are many.** Because every sentence is a chunk, a long document
   produces many small vectors; the 2000-chunk cap truncates the tail of very large documents
-  with only a log warning.
+  with a log warning and a stored count.
 * **Re-indexing is manual.** There is no incremental re-embedding job for model changes and
   no automatic repair of a collection that predates a field.
 * **Single Milvus collection.** Tenant isolation inside Milvus relies on the partition key

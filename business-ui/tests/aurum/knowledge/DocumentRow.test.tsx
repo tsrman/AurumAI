@@ -82,3 +82,26 @@ test("shows a safe failed-indexing message without internal details", () => {
   expect(screen.queryByText(/password=secret/)).not.toBeInTheDocument();
 });
 
+
+test("says when an indexed document was cut at the chunk cap", () => {
+  renderRow({ doc: { ...documentDto, truncated_chunks: 7 } });
+
+  expect(
+    screen.getByText("Partly indexed: the last 7 chunks were left out")
+  ).toBeInTheDocument();
+});
+
+test("says when chunks were indexed without their context", () => {
+  renderRow({ doc: { ...documentDto, uncontextualized_chunks: 3 } });
+
+  expect(
+    screen.getByText("3 chunks were indexed without context; search may be less precise")
+  ).toBeInTheDocument();
+});
+
+test("shows no notice for a complete document", () => {
+  renderRow();
+
+  expect(screen.queryByText(/Partly indexed/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/without context/)).not.toBeInTheDocument();
+});

@@ -192,3 +192,49 @@ async def test_search_keeps_empty_warning_list_empty(test_user):
         )
 
     assert response == {"results": [], "warnings": []}
+
+
+@pytest.mark.asyncio
+async def test_get_document_passes_ingestion_visibility_counts_through(test_user):
+    doc_id = str(uuid.uuid4())
+    with (
+        patch("src.routers.documents._require_knowledge_access", new_callable=AsyncMock),
+        patch("src.routers.documents.rag_client.get_document", new_callable=AsyncMock) as mock_get,
+    ):
+        mock_get.return_value = {
+            "id": doc_id,
+            "knowledge_base_id": str(KNOWLEDGE_BASE_ID),
+            "title": "Test Doc",
+            "status": "indexed",
+            "chunk_count": 5,
+            "uncontextualized_chunks": 3,
+            "truncated_chunks": 7,
+            "created_at": "2026-07-18T22:00:00Z",
+            "updated_at": "2026-07-18T22:00:00Z",
+        }
+        resp = await get_document(doc_id, KNOWLEDGE_BASE_ID, test_user, AsyncMock())
+
+    assert resp.data.uncontextualized_chunks == 3
+    assert resp.data.truncated_chunks == 7
+
+
+@pytest.mark.asyncio
+async def test_a_document_from_an_older_rag_service_has_zero_counts(test_user):
+    doc_id = str(uuid.uuid4())
+    with (
+        patch("src.routers.documents._require_knowledge_access", new_callable=AsyncMock),
+        patch("src.routers.documents.rag_client.get_document", new_callable=AsyncMock) as mock_get,
+    ):
+        mock_get.return_value = {
+            "id": doc_id,
+            "knowledge_base_id": str(KNOWLEDGE_BASE_ID),
+            "title": "Test Doc",
+            "status": "indexed",
+            "chunk_count": 5,
+            "created_at": "2026-07-18T22:00:00Z",
+            "updated_at": "2026-07-18T22:00:00Z",
+        }
+        resp = await get_document(doc_id, KNOWLEDGE_BASE_ID, test_user, AsyncMock())
+
+    assert resp.data.uncontextualized_chunks == 0
+    assert resp.data.truncated_chunks == 0

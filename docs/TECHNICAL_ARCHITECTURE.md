@@ -974,11 +974,25 @@ not compete with request connections held until the response ends.
 * **History reads** prune partitions by `created_at`: planning cost went from about 8 ms at 46
   partitions (growing monthly) to about 0.2 ms.
 * **The per-organization quota counter** is the structural ceiling of model-request admission
-  for one tenant. The earlier lock-heavy sequence measured about 158 requests/s for a single
-  organization at 24 connections; the current design (counter touched last by one conditional
-  `UPDATE`) shortens the locked window substantially while keeping commit durability, so the
-  achieved rate is bound by commit latency. Measure it on your own storage before capacity
-  planning; separate organizations do not contend.
+  for one tenant, because every request of an organization updates the same monthly counter
+  row, twice (when it is reserved and when it completes). Measured with `pgbench` against the
+  current schema and queries, 24 concurrent clients, each running a full request lifecycle
+  (reserve, accept, complete; three short transactions), PostgreSQL 16 in a local
+  container on a development laptop (WSL2):
+
+  | Scenario | Full lifecycles per second | Average latency |
+  |---|---|---|
+  | One organization, durable commit (the shipped setting) | about 320 | 75 ms |
+  | 24 organizations, durable commit | about 930 | 26 ms |
+  | One organization, `synchronous_commit = off` (not used) | about 610 | 40 ms |
+
+  So a single tenant is limited to a few hundred model requests per second on this hardware,
+  independent tenants do not slow each other down, and relaxing commit durability would have
+  roughly doubled the single-tenant ceiling at the cost of losing the last moments of usage
+  counts after a database crash; the platform does not do that. This measures the database
+  work only; the application adds its own overhead (a stale-reservation sweep and the
+  provider round trip, which is far longer than any of this). Disk flush latency dominates
+  the durable figures, so measure on your own storage before capacity planning.
 * **Sessions per host (Docker).** Each runner reserves memory; size hosts by
   `concurrent active conversations × runner memory` plus Hermes sandboxes.
 * **Sign-in cost** is one indexed lookup and, in the common case, no write.

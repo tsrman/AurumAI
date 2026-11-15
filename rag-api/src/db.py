@@ -29,6 +29,14 @@ class Document(Base):
     status: Mapped[str | None] = mapped_column(String(20), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int | None] = mapped_column(Integer, default=0)
+    # How a finished document differs from the ideal: chunks indexed without their
+    # contextual-retrieval context, and chunks dropped at the per-document cap.
+    uncontextualized_chunks: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    truncated_chunks: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

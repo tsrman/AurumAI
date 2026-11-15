@@ -38,6 +38,13 @@ async def main() -> None:
         activities=[register_index_execution, index_document, mark_document_failed],
     )
     
+    logging.info(
+        "contextual_retrieval enabled=%s mock=%s model=%s gateway=%s",
+        settings.contextual_retrieval_enabled,
+        settings.contextual_retrieval_mock,
+        settings.contextual_model,
+        settings.llm_gateway_url,
+    )
     logging.info(f"Starting rag-worker on task queue '{settings.task_queue}'")
     await worker.run()
 
