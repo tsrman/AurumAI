@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Contextual retrieval is now off in the base Compose stack, which has no gateway the RAG worker can
+  call, and on with `docker-compose.llm-gateway.yml` (`RAG_CONTEXTUAL_RETRIEVAL_ENABLED`; choose the
+  model with `RAG_CONTEXTUAL_MODEL`). Before, every document in the base stack was reported as
+  "indexed without context" although the feature had never been set up; the notice now points at a
+  real problem.
+
 ## v0.0.9 (2026-11-15)
 
 Knowledge search grows up: optional reranking, visible indexing quality, a rebuild tool for vectors and chunks that inherit their knowledge base's grants; plus Hermes fixes and dependency updates (gunicorn 26, websockets 17, uvicorn 0.54).

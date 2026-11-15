@@ -69,6 +69,10 @@ services:
       # (indexing/contextual.py) — Bifrost needs no Authorization header at
       # all, so RAG_WORKER_OPENAI_API_KEY is left unset.
       RAG_WORKER_LLM_GATEWAY_URL: "http://bifrost:8080/v1/chat/completions"
+      # With a real gateway contextual retrieval is worth its cost. Set RAG_CONTEXTUAL_MODEL
+      # to a model the gateway serves; a wrong one shows as "indexed without context" on
+      # every document in the knowledge-base page.
+      RAG_WORKER_CONTEXTUAL_RETRIEVAL_ENABLED: "${RAG_CONTEXTUAL_RETRIEVAL_ENABLED:-true}"
     depends_on:
       bifrost:
         condition: service_started
