@@ -43,7 +43,6 @@ async def test_search_milvus_hybrid_returns_relevance_score_not_score():
             limit=5,
             org_id="org-1",
             knowledge_base_id="base-1",
-            acl=None,
         )
 
     assert warnings == []
@@ -70,7 +69,6 @@ async def test_search_milvus_hybrid_clamps_limit_to_search_max_limit(monkeypatch
             limit=10**6,
             org_id="org-1",
             knowledge_base_id="base-1",
-            acl=None,
         )
 
     call_kwargs = fake_client.hybrid_search.call_args.kwargs
@@ -96,7 +94,6 @@ async def test_search_milvus_hybrid_filters_every_request_by_org_and_knowledge_b
             limit=5,
             org_id="org-1",
             knowledge_base_id="base-1",
-            acl=None,
         )
 
     assert [call.kwargs["expr"] for call in request_factory.call_args_list] == [
@@ -163,3 +160,24 @@ def test_an_undescribable_collection_is_not_reported_as_drifted():
 
     with patch("src.milvus_store.get_milvus_client", return_value=fake_client):
         assert missing_collection_fields() == ()
+
+
+@pytest.mark.asyncio
+async def test_search_results_carry_no_access_list():
+    """Visibility is the knowledge base's live grants; a chunk's own list is neither read
+    nor returned, so a stale copy cannot widen or narrow what a person finds."""
+    fake_client = MagicMock()
+    fake_client.has_collection.return_value = True
+    hit = _make_hit("doc-1", 0.42)
+    hit["entity"]["acl_json"] = json.dumps(["user:somebody-else"])
+    fake_client.hybrid_search.return_value = [[hit]]
+
+    with patch("src.milvus_store.get_milvus_client", return_value=fake_client):
+        results, _ = await search_milvus_hybrid(
+            query="q", embedding=[0.1, 0.2], limit=5, org_id="org-1", knowledge_base_id="base-1"
+        )
+
+    assert len(results) == 1
+    assert "acl" not in results[0]["metadata"]
+    fields = fake_client.hybrid_search.call_args.kwargs["output_fields"]
+    assert "acl_json" not in fields

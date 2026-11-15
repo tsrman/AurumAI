@@ -18,7 +18,6 @@ class ChunkDocument(BaseModel):
     embedding: list[float] = Field(min_length=1)
     org_id: str
     knowledge_base_id: str
-    acl: list[str] = Field(default_factory=lambda: ["public"])
     document_id: str
     document_title: str = ""
     source_type: str = "document"

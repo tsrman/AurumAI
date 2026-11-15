@@ -42,12 +42,10 @@ async def ingest_parsed_document(
     *,
     org_id: str,
     knowledge_base_id: str,
-    acl: Optional[list[str]] = None,
     doc_version: int = 1,
     document_id: Optional[str] = None,
     persist_to_postgres: bool = True,
 ) -> dict[str, Any]:
-    acl = acl or [f"org:{org_id}"]
     document_id = document_id or str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     excerpt = parsed.text[:1200]
@@ -138,7 +136,6 @@ async def ingest_parsed_document(
             embedding=embedding,
             org_id=org_id,
             knowledge_base_id=knowledge_base_id,
-            acl=acl,
             document_id=document_id,
             document_title=parsed.title,
             source_type=parsed.source_type,
