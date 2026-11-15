@@ -1052,6 +1052,11 @@ services:
       # docker-compose.llm-gateway.yml overrides this to point at Bifrost,
       # which needs no auth, once a real gateway is configured.
       RAG_WORKER_LLM_GATEWAY_URL: "http://backend:8000/v1/chat/completions"
+      # Off while that is the gateway: the call can only fail, and every document would then
+      # be reported as indexed without context. docker-compose.llm-gateway.yml turns it on;
+      # RAG_CONTEXTUAL_MODEL must be a model the gateway serves.
+      RAG_WORKER_CONTEXTUAL_RETRIEVAL_ENABLED: "${RAG_CONTEXTUAL_RETRIEVAL_ENABLED:-false}"
+      RAG_WORKER_CONTEXTUAL_MODEL: "${RAG_CONTEXTUAL_MODEL:-gpt-4o-mini}"
       # Read original uploaded files from object storage using keys supplied
       # by rag-api. Business-backend owns the upload/write path;
       # this worker consumes source bytes for indexing.

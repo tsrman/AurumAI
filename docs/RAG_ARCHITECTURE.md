@@ -367,9 +367,11 @@ the chunk is indexed without context. It is **counted**, not silent: the worker 
 not break ingestion; look at the per-document counts (and the `contextual_retrieval` line the
 worker logs at start, which shows whether it is enabled and against which gateway) when recall
 looks poor. The call goes
-to `*_LLM_GATEWAY_URL` with `contextual_model`; in the default Compose stack it points at the
-backend's protected endpoint, which the worker has no token for, so contextualization is
-effectively off until a gateway is configured (the gateway overlay does this).
+to `*_LLM_GATEWAY_URL` with `contextual_model`. The base Compose stack has no gateway the worker
+can call, so it ships with the feature **off** (`RAG_CONTEXTUAL_RETRIEVAL_ENABLED=false`) and the
+gateway overlay turns it **on**; set `RAG_CONTEXTUAL_MODEL` to a model the gateway serves. Because
+the setting reflects what is configured, the "indexed without context" notice means something went
+wrong (wrong model, gateway down), not that the feature was never set up.
 
 **Embedding.** Chunks are embedded in batches of `embed_batch_size` (32) by the embedding
 service with a 120 s timeout per call; the dimension must equal `embedding_dim` or the
