@@ -192,14 +192,33 @@ test.describe("Hermes Agent with a real model", () => {
       const memory = section(settings, "Hermes Agent memory");
       await expect(memory).toContainText(colour, { timeout: 30_000 });
 
-      // A skill the model writes waits for review.
+      // A skill the model writes waits for review. A real model sometimes answers as if it had made
+      // the skill without ever calling skill_manage (seen with deepseek-flash: the turn had no tool
+      // call and nothing in the sandbox), which says nothing about the platform. So insist once, and
+      // judge the platform only after a tool card proves the model really called the tool.
+      const skillCards = member.getByLabel(/^Using a skill: /);
+      const before = await skillCards.count();
       await ask(
         member,
         `Create a new skill with your skill_manage tool: name ${skillName}, category e2e, and a SKILL.md whose ` +
           `frontmatter has name ${skillName} and description "Says hello for the e2e test" and whose body is ` +
-          '"Reply with hello." Then confirm in one short sentence.',
+          '"Reply with hello." You must call the skill_manage tool; do not answer before it has returned. ' +
+          "Then confirm in one short sentence.",
         /\S/u
       );
+      if ((await skillCards.count()) === before) {
+        await ask(
+          member,
+          `You did not call skill_manage. Call it now with action "create" for the skill ${skillName} ` +
+            "(category e2e) and wait for its result before you answer.",
+          /\S/u
+        );
+      }
+      expect(
+        await skillCards.count(),
+        `the model never called skill_manage for ${skillName}: its answers claimed a skill that was not made. ` +
+          "This is the model, not the platform; run again or use a model that follows tool instructions"
+      ).toBeGreaterThan(before);
       await settings.reload();
       const draft = section(settings, "Hermes Agent skills").getByRole("listitem").filter({ hasText: skillName });
       await expect(draft).toContainText("Waiting for review", { timeout: 30_000 });
